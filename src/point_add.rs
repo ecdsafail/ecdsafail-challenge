@@ -120,48 +120,66 @@ fn uma(b: &mut Builder, x: QubitId, y: QubitId, w: QubitId) {
 }
 
 /// In-place addition `acc += a mod 2^n` on quantum n-bit registers.
-/// * `c_in`, `z` are fresh ancilla qubits at 0. `c_in` returns to 0;
-///   `z` returns holding the n-th output carry bit (XORed into its
-///   entry value).
-/// * `a` unchanged; `acc` becomes (a + acc) mod 2^n with the top carry in `z`.
-fn cuccaro_add(b: &mut Builder, a: &[QubitId], acc: &[QubitId], c_in: QubitId, z: QubitId) {
+/// * `c_in` is a fresh ancilla qubit at 0 on entry and returns to 0.
+/// * `a` unchanged; `acc` becomes (a + acc) mod 2^n.
+/// Pure mod-2^n: the high carry is discarded (no `z` ancilla). This is
+/// honestly reversible because the last MAJ/UMA pair cancel out the
+/// carry information on `a[n-1]`.
+fn cuccaro_add(b: &mut Builder, a: &[QubitId], acc: &[QubitId], c_in: QubitId) {
     let n = a.len();
     assert_eq!(n, acc.len());
     if n == 0 { return; }
+    if n == 1 {
+        // acc[0] += a[0] + c_in  mod 2 ; c_in → 0
+        b.cx(c_in, acc[0]);
+        b.cx(a[0], acc[0]);
+        return;
+    }
 
     // Forward MAJ sweep.
     maj(b, c_in, acc[0], a[0]);
-    for i in 1..n {
+    for i in 1..n - 1 {
         maj(b, a[i - 1], acc[i], a[i]);
     }
 
-    // Output carry: a[n-1] now holds the carry-out; copy to z.
-    b.cx(a[n - 1], z);
+    // Final sum bit: sum[n-1] = acc[n-1] XOR a[n-1] XOR carry_in_to_n-1,
+    // where carry_in_to_n-1 is in a[n-2] after the MAJ sweep.
+    b.cx(a[n - 2], acc[n - 1]);
+    b.cx(a[n - 1], acc[n - 1]);
 
-    // Reverse UMA sweep.
-    for i in (1..n).rev() {
+    // Reverse UMA sweep (skips the final MAJ since we didn't do it).
+    for i in (1..n - 1).rev() {
         uma(b, a[i - 1], acc[i], a[i]);
     }
     uma(b, c_in, acc[0], a[0]);
 }
 
 /// Reverse of `cuccaro_add`: performs `acc -= a mod 2^n`.
-/// Implemented as the inverse sequence of `cuccaro_add`.
-fn cuccaro_sub(b: &mut Builder, a: &[QubitId], acc: &[QubitId], c_in: QubitId, z: QubitId) {
+/// Implemented as the exact inverse gate sequence of `cuccaro_add`.
+fn cuccaro_sub(b: &mut Builder, a: &[QubitId], acc: &[QubitId], c_in: QubitId) {
     let n = a.len();
     assert_eq!(n, acc.len());
     if n == 0 { return; }
+    if n == 1 {
+        // Inverse of (cx c_in acc; cx a acc) is the same two gates in reverse.
+        b.cx(a[0], acc[0]);
+        b.cx(c_in, acc[0]);
+        return;
+    }
 
-    // Reverse of: uma(c_in, acc[0], a[0])
-    //   original: CCX; CX(w,x); CX(x,y)
-    //   inverse (inner): CX(x,y); CX(w,x); CCX
-    // We'll just run the `uma` / `maj` patterns backwards.
+    // Inverse of `uma(c_in, acc[0], a[0])`, then the rest of UMA sweep
+    // in reverse order.
     inv_uma(b, c_in, acc[0], a[0]);
-    for i in 1..n {
+    for i in 1..n - 1 {
         inv_uma(b, a[i - 1], acc[i], a[i]);
     }
-    b.cx(a[n - 1], z);
-    for i in (1..n).rev() {
+
+    // Inverse of the final sum writes (both CX self-inverse; reverse order).
+    b.cx(a[n - 1], acc[n - 1]);
+    b.cx(a[n - 2], acc[n - 1]);
+
+    // Inverse of the forward MAJ sweep.
+    for i in (1..n - 1).rev() {
         inv_maj(b, a[i - 1], acc[i], a[i]);
     }
     inv_maj(b, c_in, acc[0], a[0]);
@@ -363,17 +381,14 @@ fn mod_neg_inplace(b: &mut Builder, v: &[QubitId], p: U256) {
 fn add_nbit_qq(b: &mut Builder, a: &[QubitId], acc: &[QubitId]) {
     assert_eq!(a.len(), acc.len());
     let c_in = b.alloc_qubit();
-    let z = b.alloc_qubit();
-    cuccaro_add(b, a, acc, c_in, z);
-    b.free_qubit(z);
+    cuccaro_add(b, a, acc, c_in);
     b.free_qubit(c_in);
 }
 
 fn sub_nbit_qq(b: &mut Builder, a: &[QubitId], acc: &[QubitId]) {
+    assert_eq!(a.len(), acc.len());
     let c_in = b.alloc_qubit();
-    let z = b.alloc_qubit();
-    cuccaro_sub(b, a, acc, c_in, z);
-    b.free_qubit(z);
+    cuccaro_sub(b, a, acc, c_in);
     b.free_qubit(c_in);
 }
 
@@ -685,34 +700,55 @@ fn cmp_lt_into(b: &mut Builder, u: &[QubitId], v: &[QubitId], flag: QubitId) {
     let _ = (ue, ve);
 }
 
-/// flag ^= (v != 0).  Computes OR of all bits.
+/// flag ^= (v != 0). Computes OR of all bits of v into a scratch ancilla,
+/// CXs into flag, then properly uncomputes the scratch.
+///
+/// We use the simple chain: `or[0] = v[0]`, `or[i] = or[i-1] OR v[i]`.
+/// OR via de Morgan: `or[i] = NOT((NOT or[i-1]) AND (NOT v[i]))`, i.e.
+///   x(or[i-1]); x(v[i]); ccx(or[i-1], v[i], or[i]); x(or[i]);
+///   x(v[i]); x(or[i-1]);
+/// Each `or[i]` is a fresh ancilla. We compute the chain, CX `or[n-1]`
+/// into `flag`, then reverse the chain to return every ancilla to |0⟩.
 fn cmp_neq_zero_into(b: &mut Builder, v: &[QubitId], flag: QubitId) {
-    // Compute or = OR(v). Then flag ^= NOT or.
-    // We build a tree of CCX-based ORs (a OR b = NOT( NOT a AND NOT b ),
-    // implementable as: c = a^b^(a&b)).  Simpler: any_set := 1 iff any bit set.
-    // Use a chain ancilla.
     let n = v.len();
-    let any = b.alloc_qubit();
-    // any := OR of v[0..n].  Implement: for each bit i, if v[i]=1 then any:=1.
-    // Reversible OR: any := any XOR v[i] XOR (any AND v[i]). With any starting 0:
-    //   iter 0: any := 0 XOR v0 XOR 0 = v0
-    //   iter 1: any := v0 XOR v1 XOR (v0 AND v1) = v0 OR v1
-    // Pattern: ccx(any, v[i], tmp_then_swap)... easier: use 2 ancillas?
-    // Simpler: any starts 0. For each i:
-    //   tmp := any AND v[i]   (ccx)
-    //   any ^= v[i]
-    //   any ^= tmp
-    //   free tmp dirty
-    for i in 0..n {
-        let t = b.alloc_qubit();
-        b.ccx(any, v[i], t);
-        b.cx(v[i], any);
-        b.cx(t, any);
-        b.free_qubit(t);
+    assert!(n > 0);
+    if n == 1 {
+        b.cx(v[0], flag);
+        return;
     }
-    // flag ^= any (which is OR(v) = (v != 0))
-    b.cx(any, flag);
-    b.free_qubit(any);
+
+    let or_chain: Vec<QubitId> = b.alloc_qubits(n - 1);
+    // or_chain[0] = v[0] OR v[1]
+    or_step(b, v[0], v[1], or_chain[0]);
+    for i in 1..n - 1 {
+        or_step(b, or_chain[i - 1], v[i + 1], or_chain[i]);
+    }
+
+    // flag ^= or_chain[n-2]
+    b.cx(or_chain[n - 2], flag);
+
+    // Uncompute.
+    for i in (1..n - 1).rev() {
+        or_step(b, or_chain[i - 1], v[i + 1], or_chain[i]);
+    }
+    or_step(b, v[0], v[1], or_chain[0]);
+
+    b.free_qubits_vec(&or_chain);
+}
+
+/// out ^= (x OR y). `out` starts 0. Uses the de-Morgan form:
+///   x(x); x(y); ccx(x, y, out); x(out); x(y); x(x);
+/// After this, out = x OR y (assuming out started at 0). Its inverse is
+/// the same gate sequence run in reverse — since it's symmetric (all gates
+/// involutions, palindromic structure), running the exact same helper
+/// again uncomputes it.
+fn or_step(b: &mut Builder, x: QubitId, y: QubitId, out: QubitId) {
+    b.x(x);
+    b.x(y);
+    b.ccx(x, y, out);
+    b.x(out);
+    b.x(y);
+    b.x(x);
 }
 
 fn kaliski_inv_inplace(b: &mut Builder, v_in: &[QubitId], p: U256) {
