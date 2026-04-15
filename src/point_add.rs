@@ -767,22 +767,44 @@ fn cmod_halve_inplace(b: &mut Builder, v: &[QubitId], p: U256, ctrl: QubitId) {
     b.assert_zero_and_free(ovf);
 }
 
-/// flag ^= (u < v).  u and v are n-wide qubit registers, both holding values
-/// in [0, 2^{n-1}) so a difference fits in n bits with sign in the top bit.
-/// We extend by one ancilla for safety.
+/// flag ^= (u < v).  Non-destructive on u and v.
+///
+/// Uses a MAJ-only carry chain instead of the full sub+add pattern.
+/// Identity: u < v iff carry-out of (~u + v) = 1, since
+///   ~u + v = (2^n - 1 - u) + v = (v - u) + (2^n - 1)
+/// which overflows 2^n iff v - u ≥ 1 iff v > u. We negate u in place,
+/// run a forward MAJ sweep over (~u, v, c_in=0), capture u[n-1] (which
+/// holds the high carry after the chain), then run the inverse MAJ
+/// sweep + un-negate to restore u and v. Cost ≈ 2n CCX, half of the
+/// previous sub+add (≈ 4n CCX).
 fn cmp_lt_into(b: &mut Builder, u: &[QubitId], v: &[QubitId], flag: QubitId) {
     let n = u.len();
     assert_eq!(n, v.len());
-    let u_top = b.alloc_qubit();
-    let v_top = b.alloc_qubit();
-    let mut ue: Vec<QubitId> = u.to_vec(); ue.push(u_top);
-    let mut ve: Vec<QubitId> = v.to_vec(); ve.push(v_top);
-    sub_nbit_qq(b, &ve, &ue);
-    b.cx(u_top, flag);
-    add_nbit_qq(b, &ve, &ue);
-    b.assert_zero_and_free(v_top);
-    b.assert_zero_and_free(u_top);
-    let _ = (ue, ve);
+
+    let c_in = b.alloc_qubit();
+
+    // ~u in place (X is free in the metric).
+    for i in 0..n { b.x(u[i]); }
+
+    // Forward MAJ sweep — n MAJs (one more than cuccaro_add, which omits
+    // the top one because it doesn't need the carry-out).
+    maj(b, c_in, v[0], u[0]);
+    for i in 1..n {
+        maj(b, u[i - 1], v[i], u[i]);
+    }
+    // u[n-1] now holds the high carry = (u < v).
+    b.cx(u[n - 1], flag);
+
+    // Inverse sweep restores u and v to their (negated u) state.
+    for i in (1..n).rev() {
+        inv_maj(b, u[i - 1], v[i], u[i]);
+    }
+    inv_maj(b, c_in, v[0], u[0]);
+
+    // Un-negate u.
+    for i in 0..n { b.x(u[i]); }
+
+    b.assert_zero_and_free(c_in);
 }
 
 /// flag ^= (v != 0). Computes OR of all bits of v into a scratch ancilla,
