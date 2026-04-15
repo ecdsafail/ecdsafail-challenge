@@ -1184,25 +1184,22 @@ fn kaliski_iteration(
     mcx2_polar(b, f, true, b_f, false, add_f);
     {
         let tmp = b.alloc_qubits(n1);
-        // Load tmp[0..n] = add_f AND u
+        // Load tmp[0..n] = add_f AND u. tmp[n] stays 0.
         for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
-        // v_w -= tmp[0..n]
         sub_nbit_qq(b, &tmp[..n], v_w);
         // Transform tmp[0..n] from "add_f AND u" to "add_f AND r".
-        // Step A: u ^= r (in place, free CX).
         for i in 0..n { b.cx(r[i], u[i]); }
-        // Step B: tmp[i] ^= add_f AND (u XOR r) = (add_f AND u_orig) XOR (add_f AND r).
-        //         Combined with pre-existing tmp[i] = add_f AND u_orig, gives
-        //         tmp[i] = add_f AND r[i].
         for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
-        // Step C: restore u via another cx(r, u).
         for i in 0..n { b.cx(r[i], u[i]); }
-        // Load tmp[n] = add_f AND r[n] (was 0).
-        b.ccx(add_f, r[n], tmp[n]);
-        // s += tmp[0..n+1]
+        // Cuccaro add on (n+1)-bit tmp+s with tmp[n]=0: computes
+        // s[0..n-1] += tmp[0..n-1] with carry propagation into s[n].
+        // s[n] gets s[n]_orig XOR carry_into_n (but NOT the r[n] contribution).
         add_nbit_qq(b, &tmp, s);
-        // Unload tmp = add_f AND r
-        for i in 0..n1 { b.ccx(add_f, r[i], tmp[i]); }
+        // XOR the missing (add_f AND r[n]) bit into s[n] directly. Saves the
+        // pair of load/unload CCX that would otherwise target tmp[n].
+        b.ccx(add_f, r[n], s[n]);
+        // Unload tmp[0..n]; tmp[n] is already 0.
+        for i in 0..n { b.ccx(add_f, r[i], tmp[i]); }
         b.assert_zero_and_free_vec(&tmp);
     }
 
