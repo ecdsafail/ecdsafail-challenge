@@ -1363,13 +1363,12 @@ fn kaliski_forward(b: &mut Builder, v_in: &[QubitId], st: &KaliskiState, p: U256
 
     // After the loop for nonzero v_in, classical invariants give:
     //   u = 1, v_w = 0, f = 0, a = b = add = 0
-    //   r = raw coefficient (related to -v^{-1} * 2^{2n})
+    //   r = raw coefficient (the NEGATIVE form: r = -v^{-1} * 2^{2n} mod p)
     //   s = some coefficient
-    // Apply inpl_rsub to r so st.r contains the POSITIVE raw inverse form:
-    //   r := (p - r) mod 2^(n+1)
-    // via `x(r); add_nbit_const(r, p+1)` on the full (n+1)-bit register.
-    for &q in &st.r { b.x(q); }
-    add_nbit_const(b, &st.r, p.wrapping_add(U256::from(1)));
+    // We skip the `x(r); add_nbit_const(r, p+1)` negation (~2n CCX per call,
+    // 4 calls total ≈ 8n Toffoli saved). Callers compensate by using the
+    // negated inv: body multiplications that would normally `mul_add` with
+    // +inv become `mul_sub` with -inv, and vice versa.
 }
 
 /// Run `body` with `inv` holding `v_in^{-1} mod p`, leaving `v_in`
@@ -1497,10 +1496,10 @@ pub fn build(b: &mut Builder) -> Layout {
 
     let lam = b.alloc_qubits(N);
 
-    // Pair 1: keep tx holding dx throughout, compute dx^{-1} into inv via
-    // with_kal_inv, use it, let with_kal_inv handle the uncompute.
+    // Pair 1: with inv = -dx^{-1} (kaliski's native form, neg skipped),
+    // `mod_mul_sub` on lam gives +λ: lam -= ty*inv = dy*dx^{-1} = λ.
     with_kal_inv(b, &tx, p, |b, inv| {
-        mod_mul_add_qq(b, &lam, &ty, inv, p);        // lam += dy · dx^{-1} = λ
+        mod_mul_sub_qq(b, &lam, &ty, inv, p);        // lam -= dy·(-dx^{-1}) = λ
         mod_mul_sub_qq(b, &ty, &lam, &tx, p);        // Py -= λ·dx = 0
     });
 
@@ -1530,8 +1529,11 @@ pub fn build(b: &mut Builder) -> Layout {
     // because λ = (Ry+Qy)/(Qx-Rx) = -(Ry+Qy)/(Rx-Qx) = -inv·(Ry+Qy).
     mod_sub_qb(b, &tx, &ox, p);                   // tx = Rx - Qx
     with_kal_inv(b, &tx, p, |b, inv| {
+        // inv = -(Rx - Qx)^{-1} (native kaliski negative form).
+        // We want lam = 0 from lam = λ. λ = (Ry+Qy)/(Qx-Rx) = -(Ry+Qy)·(Rx-Qx)^{-1} = inv·(Ry+Qy).
+        // So mod_mul_sub: lam -= inv·(Ry+Qy) = lam - λ = 0.
         mod_add_qb(b, &ty, &oy, p);                   // ty = Ry + Qy
-        mod_mul_add_qq(b, &lam, inv, &ty, p);         // lam += inv·(Ry + Qy) = -λ → lam = 0
+        mod_mul_sub_qq(b, &lam, inv, &ty, p);         // lam -= inv·(Ry + Qy) = 0
         mod_sub_qb(b, &ty, &oy, p);                   // ty = Ry
     });
     mod_add_qb(b, &tx, &ox, p);                   // tx = Rx
