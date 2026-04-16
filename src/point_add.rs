@@ -1112,37 +1112,36 @@ fn mod_mul_sub_qq(
     p: U256,
 ) {
     // acc -= x * y mod p. Negate x, run schoolbook ADD (cheaper than sub),
-    // un-negate. Use 2 negs when x≠y (keep x negated during copy/uncopy).
-    // For squaring (x=y), must use 4 negs to avoid negating the control bits.
+    // then restore x. For x≠y we can walk the negated multiplicand in place
+    // and halve it back afterwards, avoiding the doubled tmp register. For
+    // squaring we snapshot the original control bits once into `ctrl_copy`,
+    // then reuse the same in-place walk on the negated x.
     let n = acc.len();
-    let tmp = b.alloc_qubits(n);
     let is_squaring = x[0] == y[0]; // same register → squaring
     if is_squaring {
-        // 4 negs: negate, copy, restore, loop, restore-halve, negate, uncopy, restore.
-        mod_neg_inplace_fast(b, x, p);
-        for i in 0..n { b.cx(x[i], tmp[i]); }
+        // Hold the original x bits fixed for control while x itself walks
+        // through (-x)*2^i mod p.
+        let ctrl_copy = b.alloc_qubits(n);
+        for i in 0..n { b.cx(x[i], ctrl_copy[i]); }
         mod_neg_inplace_fast(b, x, p);
         for i in 0..n {
-            cmod_add_qq(b, acc, &tmp, y[i], p);
-            if i < n - 1 { mod_double_inplace_fast(b, &tmp, p); }
+            cmod_add_qq(b, acc, x, ctrl_copy[i], p);
+            if i < n - 1 { mod_double_inplace_fast(b, x, p); }
         }
-        for _ in 0..(n - 1) { mod_halve_inplace_fast(b, &tmp, p); }
+        for _ in 0..(n - 1) { mod_halve_inplace_fast(b, x, p); }
         mod_neg_inplace_fast(b, x, p);
-        for i in 0..n { b.cx(x[i], tmp[i]); }
-        mod_neg_inplace_fast(b, x, p);
+        for i in 0..n { b.cx(x[i], ctrl_copy[i]); }
+        b.free_vec(&ctrl_copy);
     } else {
-        // 2 negs: keep x negated during loop.
+        // Keep x negated during the loop and walk it in place.
         mod_neg_inplace_fast(b, x, p);
-        for i in 0..n { b.cx(x[i], tmp[i]); }
         for i in 0..n {
-            cmod_add_qq(b, acc, &tmp, y[i], p);
-            if i < n - 1 { mod_double_inplace_fast(b, &tmp, p); }
+            cmod_add_qq(b, acc, x, y[i], p);
+            if i < n - 1 { mod_double_inplace_fast(b, x, p); }
         }
-        for _ in 0..(n - 1) { mod_halve_inplace_fast(b, &tmp, p); }
-        for i in 0..n { b.cx(x[i], tmp[i]); }
+        for _ in 0..(n - 1) { mod_halve_inplace_fast(b, x, p); }
         mod_neg_inplace_fast(b, x, p);
     }
-    b.free_vec(&tmp);
 }
 
 fn mod_mul_add_qb(
@@ -2356,5 +2355,4 @@ pub fn build() -> Vec<Op> {
 
     b.ops.clone()
 }
-
 
