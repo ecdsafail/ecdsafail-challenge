@@ -105,3 +105,4 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776375801	c7350f4	8450544.000	46009668.594	3080	64090735	OK	fold mod_neg+mod_sub_qb into mod_add_qb+mod_neg
 1776375808	c7350f4	8450544.000	46009668.594	3080	64090735	OK	fold mod_neg+mod_sub_qb into mod_add_qb+mod_neg
 1776378067	e69a39d	8280984.000	43807033.016	3080	61512947	OK	schoolbook squarer for mod_mul_sub_qq
+1776378172	a85389c	8174935.000	42278491.766	3080	59694524	OK	schoolbook for mid mul (ty += lam*tx)

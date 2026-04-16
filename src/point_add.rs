@@ -1153,6 +1153,95 @@ fn mod_mul_horner_sub_qq(
     }
 }
 
+/// Schoolbook: tmp_ext (2n bits) += x * y. Generic for x == y (squaring) or
+/// x != y. Each row i adds (y[i] AND x) shifted by i, captured in n+1 bits
+/// to absorb carry into position i+n.
+fn schoolbook_mul_into(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: &[QubitId]) {
+    let n = x.len();
+    debug_assert_eq!(n, y.len());
+    debug_assert_eq!(tmp_ext.len(), 2 * n);
+    for i in 0..n {
+        let row = b.alloc_qubits(n);
+        for k in 0..n {
+            b.ccx(y[i], x[k], row[k]);
+        }
+        let pad = b.alloc_qubit();
+        let mut row_padded = row.clone();
+        row_padded.push(pad);
+        let slice: Vec<QubitId> = tmp_ext[i..i+n+1].to_vec();
+        let c_in = b.alloc_qubit();
+        cuccaro_add_fast(b, &row_padded, &slice, c_in);
+        b.free(c_in);
+        b.free(pad);
+        for k in 0..n {
+            let m = b.alloc_bit();
+            b.hmr(row[k], m);
+            b.cz_if(y[i], x[k], m);
+        }
+        b.free_vec(&row);
+    }
+}
+
+fn schoolbook_mul_into_inverse(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: &[QubitId]) {
+    let n = x.len();
+    for i in (0..n).rev() {
+        let row = b.alloc_qubits(n);
+        for k in 0..n {
+            b.ccx(y[i], x[k], row[k]);
+        }
+        let pad = b.alloc_qubit();
+        let mut row_padded = row.clone();
+        row_padded.push(pad);
+        let slice: Vec<QubitId> = tmp_ext[i..i+n+1].to_vec();
+        let c_in = b.alloc_qubit();
+        cuccaro_sub_fast(b, &row_padded, &slice, c_in);
+        b.free(c_in);
+        b.free(pad);
+        for k in 0..n {
+            let m = b.alloc_bit();
+            b.hmr(row[k], m);
+            b.cz_if(y[i], x[k], m);
+        }
+        b.free_vec(&row);
+    }
+}
+
+/// Add x*y mod p to acc, via schoolbook into a wide accumulator + Solinas
+/// reduction + Bennett uncompute. Saves ~100k CCX vs Horner-on-acc per call.
+fn mod_mul_add_into_acc_schoolbook(
+    b: &mut B,
+    acc: &[QubitId],
+    x: &[QubitId],
+    y: &[QubitId],
+    p: U256,
+) {
+    let n = acc.len();
+    debug_assert_eq!(n, 256);
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+
+    let tmp_ext = b.alloc_qubits(2 * n);
+    schoolbook_mul_into(b, x, y, &tmp_ext);
+
+    let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
+    let hi: Vec<QubitId> = tmp_ext[n..2*n].to_vec();
+    mod_add_qq_fast(b, acc, &lo, p);
+    let max_set_bit: usize = 32;
+    for k in 0..=max_set_bit {
+        if bit(c, k) {
+            mod_add_qq_fast(b, acc, &hi, p);
+        }
+        if k < max_set_bit {
+            mod_double_inplace_fast(b, &hi, p);
+        }
+    }
+    for _ in 0..max_set_bit {
+        mod_halve_inplace_fast(b, &hi, p);
+    }
+
+    schoolbook_mul_into_inverse(b, x, y, &tmp_ext);
+    b.free_vec(&tmp_ext);
+}
+
 /// Schoolbook squarer with Bennett uncompute. For squaring `tmp_ext = x*x`
 /// (2n bits, no mod reduction), then sub from acc with on-the-fly Solinas
 /// reduction, then uncompute tmp_ext via gate-level inverse. Saves ~170k
@@ -2438,7 +2527,7 @@ pub fn build() -> Vec<Op> {
     // cheaper than mod_sub_qb by n CCX. Result equivalent: tx = Rx - Qx.
     mod_add_qb(b, &tx, &ox, p);                          // tx = dx - λ² + 3Qx
     mod_neg_inplace_fast(b, &tx, p);                     // tx = -(...)= Rx - Qx
-    mod_mul_horner_add_qq(b, &ty, &lam, &tx, p);          // ty += (-λ)·(Rx - Qx) = +(Ry + Qy)
+    mod_mul_add_into_acc_schoolbook(b, &ty, &lam, &tx, p); // ty += lam·tx via schoolbook
     with_kal_inv_raw(b, &tx, p, |b, inv_raw| {
         // MSB-first Horner: end lam = 2^(N-1)·init + inv_raw·ty. Choose init
         // = -λ·2^N (so 2^(N-1)·init = -λ·2^(2N-1)) by pre-doubling N times
