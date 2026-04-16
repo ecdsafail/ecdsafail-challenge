@@ -528,16 +528,14 @@ fn mod_sub_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
     // Step 2: flag = acc_ovf (=1 iff underflow, i.e. acc < a).
     let flag = b.alloc_qubit();
     b.cx(acc_ovf, flag);
+    // We only need the borrow as a separate flag; the low register is
+    // corrected modulo 2^n, so clear the extension bit immediately.
+    b.cx(flag, acc_ovf);
 
-    // Step 3: if flag=1, add p (correction). acc_ovf ends at 0 in both cases.
-    {
-        let n1 = acc_ext.len();
-        let ca = b.alloc_qubits(n1);
-        for i in 0..n1 { if bit(p, i) { b.cx(flag, ca[i]); } }
-        add_nbit_qq_fast(b, &ca, &acc_ext);
-        for i in 0..n1 { if bit(p, i) { b.cx(flag, ca[i]); } }
-        b.free_vec(&ca);
-    }
+    // Step 3: underflow correction. With p = 2^n - c, the wrapped 256-bit
+    // subtraction needs only a conditional subtract of c on the low register.
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+    csub_nbit_const_fast(b, &acc_ext[..n], c, flag);
 
     // Step 4: uncompute flag. Identity: flag = NOT(acc_final < (p - a)).
     // Negate a in place, compare, un-negate.

@@ -91,3 +91,4 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776365890	ff8d569	9903574.000	60185148.062	3082	81282856	OK	reverse Horner cleanup for known products
 1776365972	d7ddb51	9774546.000	58708970.625	3082	78855876	OK	reverse Horner unadd uses negated add path
 1776366192	a8e042e	9118682.000	52460160.734	3082	71582676	OK	single sparse add/sub for mod double/halve
+1776366492	c413d6d	9118678.000	52458320.969	3082	71580692	OK	mod_sub underflow via sparse c correction
