@@ -256,6 +256,59 @@ fn uma(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
     b.cx(x, y);
 }
 
+/// Fast Cuccaro add using carry ancillae + measurement-based UMA.
+/// Same interface as `cuccaro_add` but uses n-1 carry ancillae so the
+/// UMA sweep costs 0 Toffoli (measurement only). NOT emit_inverse-safe.
+fn cuccaro_add_fast(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: QubitId) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    if n == 0 { return; }
+    if n == 1 {
+        b.cx(c_in, acc[0]);
+        b.cx(a[0], acc[0]);
+        return;
+    }
+
+    let carries = b.alloc_qubits(n - 1);
+
+    // Forward MAJ sweep with carry ancillae.
+    // Step 0: MAJ(c_in, acc[0], a[0]) → carry into carries[0]
+    b.cx(a[0], acc[0]);
+    b.cx(a[0], c_in);
+    b.ccx(c_in, acc[0], carries[0]);
+    b.cx(carries[0], a[0]);
+    // Steps 1..n-2: MAJ(a[i-1], acc[i], a[i]) → carry into carries[i]
+    for i in 1..n - 1 {
+        b.cx(a[i], acc[i]);
+        b.cx(a[i], a[i - 1]);
+        b.ccx(a[i - 1], acc[i], carries[i]);
+        b.cx(carries[i], a[i]);
+    }
+
+    // Final sum bit (same as original cuccaro_add)
+    b.cx(a[n - 2], acc[n - 1]);
+    b.cx(a[n - 1], acc[n - 1]);
+
+    // Backward UMA sweep with measurement-based carry uncompute (0 Toffoli).
+    for i in (1..n - 1).rev() {
+        b.cx(carries[i], a[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(a[i - 1], acc[i], m);
+        b.cx(a[i], a[i - 1]);
+        b.cx(a[i - 1], acc[i]);
+    }
+    // Step 0 UMA:
+    b.cx(carries[0], a[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(c_in, acc[0], m0);
+    b.cx(a[0], c_in);
+    b.cx(c_in, acc[0]);
+
+    b.free_vec(&carries);
+}
+
 /// In-place addition `acc += a mod 2^n` on quantum n-bit registers.
 /// * `c_in` is a fresh ancilla qubit at 0 on entry and returns to 0.
 /// * `a` unchanged; `acc` becomes (a + acc) mod 2^n.
@@ -510,6 +563,73 @@ fn mod_neg_inplace(b: &mut B, v: &[QubitId], p: U256) {
 //  Non-modular n-bit primitives
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Fast Cuccaro sub: `acc -= a mod 2^n` with measurement UMA (0 Toffoli
+/// for UMA sweep). Exact gate-level inverse of `cuccaro_add_fast`.
+fn cuccaro_sub_fast(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: QubitId) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    if n == 0 { return; }
+    if n == 1 {
+        b.cx(a[0], acc[0]);
+        b.cx(c_in, acc[0]);
+        return;
+    }
+
+    let carries = b.alloc_qubits(n - 1);
+
+    // Forward inv_UMA sweep with carry ancillae (reversed UMA from cuccaro_sub).
+    // Step 0:
+    b.cx(c_in, acc[0]);
+    b.cx(a[0], c_in);
+    b.ccx(c_in, acc[0], carries[0]);
+    b.cx(carries[0], a[0]);
+    // Steps 1..n-2:
+    for i in 1..n - 1 {
+        b.cx(a[i - 1], acc[i]);
+        b.cx(a[i], a[i - 1]);
+        b.ccx(a[i - 1], acc[i], carries[i]);
+        b.cx(carries[i], a[i]);
+    }
+
+    // Final sum bit (reversed from cuccaro_add)
+    b.cx(a[n - 1], acc[n - 1]);
+    b.cx(a[n - 2], acc[n - 1]);
+
+    // Backward inv_MAJ sweep with measurement.
+    for i in (1..n - 1).rev() {
+        b.cx(carries[i], a[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(a[i - 1], acc[i], m);
+        b.cx(a[i], a[i - 1]);
+        b.cx(a[i], acc[i]);
+    }
+    b.cx(carries[0], a[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(c_in, acc[0], m0);
+    b.cx(a[0], c_in);
+    b.cx(a[0], acc[0]);
+
+    b.free_vec(&carries);
+}
+
+/// Fast `acc += a mod 2^n` using measurement-based Cuccaro.
+fn add_nbit_qq_fast(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
+    assert_eq!(a.len(), acc.len());
+    let c_in = b.alloc_qubit();
+    cuccaro_add_fast(b, a, acc, c_in);
+    b.free(c_in);
+}
+
+/// Fast `acc -= a mod 2^n` using measurement-based Cuccaro.
+fn sub_nbit_qq_fast(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
+    assert_eq!(a.len(), acc.len());
+    let c_in = b.alloc_qubit();
+    cuccaro_sub_fast(b, a, acc, c_in);
+    b.free(c_in);
+}
+
 /// `acc += a mod 2^n`. Caller must pre-extend both slices if they want the
 /// top carry absorbed into the accumulator (i.e. pass n+1-bit slices with
 /// top bits 0 to get a full n+1-bit add). The carry-out beyond the slice
@@ -712,13 +832,28 @@ fn mod_add_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
     let (acc_ext, acc_ovf) = ext_reg(b, acc);
     let (a_ext, a_ovf) = ext_reg(b, a);
 
-    add_nbit_qq(b, &a_ext, &acc_ext);
+    // Use fast (measurement-based) Cuccaro everywhere.
+    add_nbit_qq_fast(b, &a_ext, &acc_ext);
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
-    add_nbit_const(b, &acc_ext, c);
+    // add_nbit_const with fast Cuccaro
+    {
+        let n1 = acc_ext.len();
+        let ca = load_const(b, n1, c);
+        add_nbit_qq_fast(b, &ca, &acc_ext);
+        unload_const(b, &ca, c);
+    }
     let flag = b.alloc_qubit();
     b.cx(acc_ovf, flag);
     b.x(flag);
-    csub_nbit_const(b, &acc_ext, c, flag);
+    // csub_nbit_const with fast Cuccaro
+    {
+        let n1 = acc_ext.len();
+        let ca = b.alloc_qubits(n1);
+        for i in 0..n1 { if bit(c, i) { b.cx(flag, ca[i]); } }
+        sub_nbit_qq_fast(b, &ca, &acc_ext);
+        for i in 0..n1 { if bit(c, i) { b.cx(flag, ca[i]); } }
+        b.free_vec(&ca);
+    }
     b.x(flag);
     b.cx(flag, acc_ovf);
     cmp_lt_into_fast(b, &acc_ext[..n], &a_ext[..n], flag);
@@ -1368,15 +1503,13 @@ fn kaliski_iteration(
         let tmp = b.alloc_qubits(n1);
         // Load tmp[0..n] = add_f AND u. tmp[n] stays 0.
         for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
-        sub_nbit_qq(b, &tmp[..n], v_w);
+        sub_nbit_qq_fast(b, &tmp[..n], v_w);
         // Transform tmp[0..n] from "add_f AND u" to "add_f AND r".
         for i in 0..n { b.cx(r[i], u[i]); }
         for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
         for i in 0..n { b.cx(r[i], u[i]); }
-        // Cuccaro add on (n+1)-bit tmp+s with tmp[n]=0: computes
-        // s[0..n-1] += tmp[0..n-1] with carry propagation into s[n].
-        // s[n] gets s[n]_orig XOR carry_into_n (but NOT the r[n] contribution).
-        add_nbit_qq(b, &tmp, s);
+        // Cuccaro add on (n+1)-bit tmp+s with tmp[n]=0.
+        add_nbit_qq_fast(b, &tmp, s);
         // XOR the missing (add_f AND r[n]) bit into s[n] directly. Saves the
         // pair of load/unload CCX that would otherwise target tmp[n].
         b.ccx(add_f, r[n], s[n]);
@@ -1410,12 +1543,24 @@ fn kaliski_iteration(
         let n1 = r.len();
         let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
         // r' = r + c (fits in n+1 bits since r < 2p and c = 2^n - p).
-        add_nbit_const(b, r, c);
+        // Fast Cuccaro for add_nbit_const
+        {
+            let ca = load_const(b, n1, c);
+            add_nbit_qq_fast(b, &ca, r);
+            unload_const(b, &ca, c);
+        }
         let flag = b.alloc_qubit();
         b.cx(r[n1 - 1], flag);   // flag := top bit of r' = (r ≥ p)
         // If flag=0: undo the add of c (we don't reduce).
         b.x(flag);
-        csub_nbit_const(b, r, c, flag);
+        // Fast Cuccaro for csub_nbit_const
+        {
+            let ca = b.alloc_qubits(n1);
+            for i in 0..n1 { if bit(c, i) { b.cx(flag, ca[i]); } }
+            sub_nbit_qq_fast(b, &ca, r);
+            for i in 0..n1 { if bit(c, i) { b.cx(flag, ca[i]); } }
+            b.free_vec(&ca);
+        }
         b.x(flag);
         // If flag=1: clear top bit, giving r + c - 2^n = r - p.
         b.cx(flag, r[n1 - 1]);
@@ -1708,14 +1853,14 @@ fn kaliski_iteration_backward(
         for i in 0..n { b.ccx(add_f, r[i], tmp[i]); }
         // Reversed (G): CCX(add_f, r[n], s[n])
         b.ccx(add_f, r[n], s[n]);
-        // Reversed (F): sub_nbit_qq(tmp, s)
-        sub_nbit_qq(b, &tmp, s);
+        // Reversed (F): sub_nbit_qq_fast(tmp, s)
+        sub_nbit_qq_fast(b, &tmp, s);
         // Reversed (E): transform tmp from AND(add_f,r) → AND(add_f,u)
         for i in 0..n { b.cx(r[i], u[i]); }
         for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
         for i in 0..n { b.cx(r[i], u[i]); }
-        // Reversed (D): add_nbit_qq(tmp[..n], v_w)
-        add_nbit_qq(b, &tmp[..n], v_w);
+        // Reversed (D): add_nbit_qq_fast(tmp[..n], v_w)
+        add_nbit_qq_fast(b, &tmp[..n], v_w);
         // Reversed (C): unload AND(add_f,u) via measurement (0 Toffoli)
         for i in 0..n {
             let m = b.alloc_bit();
