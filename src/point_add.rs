@@ -1752,9 +1752,6 @@ fn kaliski_iteration(
         for i in 0..n { b.cx(r[i], u[i]); }
         // Cuccaro add on (n+1)-bit tmp+s with tmp[n]=0.
         add_nbit_qq_fast(b, &tmp, s);
-        // XOR the missing (add_f AND r[n]) bit into s[n] directly. Saves the
-        // pair of load/unload CCX that would otherwise target tmp[n].
-        b.ccx(add_f, r[n], s[n]);
         // Unload tmp[0..n] via measurement-based AND uncompute (0 Toffoli).
         // tmp[i] = add_f AND r[i], unchanged by Cuccaro add (addend preserved).
         for i in 0..n {
@@ -2057,8 +2054,6 @@ fn kaliski_iteration_backward(
         let tmp = b.alloc_qubits(n1);
         // Load tmp = AND(add_f, r[0..n]) for the reversed add
         for i in 0..n { b.ccx(add_f, r[i], tmp[i]); }
-        // Reversed (G): CCX(add_f, r[n], s[n])
-        b.ccx(add_f, r[n], s[n]);
         // Reversed (F): sub_nbit_qq_fast(tmp, s)
         sub_nbit_qq_fast(b, &tmp, s);
         // Reversed (E): transform tmp from AND(add_f,r) → AND(add_f,u)
