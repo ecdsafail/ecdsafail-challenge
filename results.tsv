@@ -147,3 +147,4 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776398330	84948e6	5778026.000	30418172.203	3336	42941733	OK	session end
 1776409491	8b370d1	5760640.000	30264741.516	3336	42722112	FAIL	measurement-based flag uncompute in mod_add/sub_qq_fast | PHASE GARBAGE: global_phase = 0x379ce41922e06277 across 64 live shots (must be 0)
 1776409931	8b370d1	5778026.000	30418172.203	3336	42941733	OK	verify after revert
+1776412177	e9dc235	5778026.000	30418172.203	3336	42941733	OK	ralph-loop iteration: analysis confirms 5.78M may beat HRS standalone
