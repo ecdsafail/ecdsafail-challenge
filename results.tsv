@@ -140,3 +140,4 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776394730	afa876f	6037106.000	31842952.188	3336	46309773	OK	STEP 4 late-iter load/sub/transform/add truncation
 1776394805	06ca561	5907566.000	31519280.953	3336	44496213	OK	STEP 0 OR chain truncated for late iter
 1776394851	49419b0	5778026.000	30418172.203	3336	42941733	OK	STEP 2 with_gt truncated for late iter
+1776395687	3992b28	5778026.000	30418172.203	3336	42941733	OK	verify best state
