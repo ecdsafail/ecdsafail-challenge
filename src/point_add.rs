@@ -2031,33 +2031,38 @@ fn kaliski_iteration(
     mcx2_polar(b, f, true, b_f, false, add_f);
     {
         let tmp = b.alloc_qubits(n);
-        // Load tmp = add_f AND u.
-        for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
-        sub_nbit_qq_fast(b, &tmp[..n], v_w);
+        // Load tmp = add_f AND u. Late-iter bound: u[i]=0 for i >= 2n-iter.
+        let load_width = if iter_idx < n { n } else { 2 * n - iter_idx };
+        for i in 0..load_width { b.ccx(add_f, u[i], tmp[i]); }
+        // Sub v_w -= tmp. Late-iter: both high bits 0, truncate to load_width.
+        let tmp_sub_slice: Vec<QubitId> = tmp[0..load_width].to_vec();
+        let v_w_sub_slice: Vec<QubitId> = v_w[0..load_width].to_vec();
+        sub_nbit_qq_fast(b, &tmp_sub_slice, &v_w_sub_slice);
         // Transform tmp from "add_f AND u" to "add_f AND r".
-        // Truncated: for i >= iter_idx+2, r[i]=0 so the ccx effectively zeroes
-        // tmp[i] anyway (flips by add_f AND u[i], canceling load). By skipping,
-        // tmp[i] stays at add_f AND u[i] — which is fine since the subsequent
-        // truncated add doesn't touch those bits. Unload uses correct phase.
+        // Small-iter: truncate to iter_idx+2 (r high bits 0).
+        // Late-iter: full transform (r unbounded but u high bits 0 so CCX at
+        // high bits effectively produces add_f AND r from tmp=0).
         let transform_width = if iter_idx + 2 < n { iter_idx + 2 } else { n };
         for i in 0..transform_width { b.cx(r[i], u[i]); }
         for i in 0..transform_width { b.ccx(add_f, u[i], tmp[i]); }
         for i in 0..transform_width { b.cx(r[i], u[i]); }
-        // Cuccaro add: sum s+tmp ≤ 2^{iter_idx+1} fits in iter_idx+2 bits.
+        // Add s += tmp. Width = transform_width.
         let add_width = transform_width;
         let tmp_slice: Vec<QubitId> = tmp[0..add_width].to_vec();
         let s_slice: Vec<QubitId> = s[0..add_width].to_vec();
         add_nbit_qq_fast(b, &tmp_slice, &s_slice);
-        // Unload tmp via measurement. Bits < transform_width: tmp = add_f AND r.
-        // Bits >= transform_width: tmp = add_f AND u (transform skipped).
+        // Unload: bits < transform_width have tmp = add_f AND r;
+        // bits [transform_width..load_width) have tmp = add_f AND u (transform skipped, load done);
+        // bits >= load_width have tmp = 0 (load skipped).
         for i in 0..n {
             let m = b.alloc_bit();
             b.hmr(tmp[i], m);
             if i < transform_width {
                 b.cz_if(add_f, r[i], m);
-            } else {
+            } else if i < load_width {
                 b.cz_if(add_f, u[i], m);
             }
+            // else: tmp[i]=0, no phase correction needed.
         }
         b.free_vec(&tmp);
     }
@@ -2369,26 +2374,41 @@ fn kaliski_iteration_backward(
     // ── Reverse STEP 4 (with measurement uncompute for unload) ─────────
     {
         let tmp = b.alloc_qubits(n);
-        // Load tmp = AND(add_f, r). Truncated: for i >= iter_idx+1, r[i]=0,
-        // so CCX is no-op. Skip to save (n-iter_idx-1) CCXs.
+        // Load tmp = AND(add_f, r). Small-iter: r[i]=0 for i >= iter+1.
         let load_width = if iter_idx + 1 < n { iter_idx + 1 } else { n };
         for i in 0..load_width { b.ccx(add_f, r[i], tmp[i]); }
-        // Reversed (F): sub_nbit_qq_fast(tmp, s) — truncated.
+        // Reversed (F): sub tmp from s. Small-iter width iter+2.
         let sub_width = if iter_idx + 2 < n { iter_idx + 2 } else { n };
-        let tmp_slice: Vec<QubitId> = tmp[0..sub_width].to_vec();
+        let tmp_sub_slice: Vec<QubitId> = tmp[0..sub_width].to_vec();
         let s_slice: Vec<QubitId> = s[0..sub_width].to_vec();
-        sub_nbit_qq_fast(b, &tmp_slice, &s_slice);
-        // Reversed (E): transform tmp from AND(add_f,r) → AND(add_f,u)
-        for i in 0..n { b.cx(r[i], u[i]); }
-        for i in 0..n { b.ccx(add_f, u[i], tmp[i]); }
-        for i in 0..n { b.cx(r[i], u[i]); }
-        // Reversed (D): add_nbit_qq_fast(tmp[..n], v_w)
-        add_nbit_qq_fast(b, &tmp[..n], v_w);
-        // Reversed (C): unload AND(add_f,u) via measurement (0 Toffoli)
+        sub_nbit_qq_fast(b, &tmp_sub_slice, &s_slice);
+        // Reversed (E): transform tmp from AND(add_f,r) → AND(add_f,u).
+        // Late-iter: u high bits 0, so transform at those bits: cx(r,u=0)→u=r,
+        //   ccx(add_f, u=r, tmp) flips tmp. tmp goes 0 → add_f AND r. Not what we
+        //   want (need add_f AND u=0). For late iter, truncate transform to uv_width.
+        let transform_width = if iter_idx < n { n } else { 2 * n - iter_idx };
+        for i in 0..transform_width { b.cx(r[i], u[i]); }
+        for i in 0..transform_width { b.ccx(add_f, u[i], tmp[i]); }
+        for i in 0..transform_width { b.cx(r[i], u[i]); }
+        // Reversed (D): add tmp to v_w. Truncated to uv_width (late iter bound).
+        let add_width = transform_width;
+        let tmp_add_slice: Vec<QubitId> = tmp[0..add_width].to_vec();
+        let v_w_slice: Vec<QubitId> = v_w[0..add_width].to_vec();
+        add_nbit_qq_fast(b, &tmp_add_slice, &v_w_slice);
+        // Unload: bits < min(load_width, transform_width) both apply (tmp = add_f AND u after transform).
+        // For bits where transform was applied, tmp = add_f AND u. For bits where transform skipped
+        // (i >= transform_width), tmp stays at whatever load left it (either add_f AND r or 0).
         for i in 0..n {
             let m = b.alloc_bit();
             b.hmr(tmp[i], m);
-            b.cz_if(add_f, u[i], m);
+            if i < transform_width {
+                // Transform applied: tmp = add_f AND u.
+                b.cz_if(add_f, u[i], m);
+            } else if i < load_width {
+                // Load done but transform skipped: tmp = add_f AND r.
+                b.cz_if(add_f, r[i], m);
+            }
+            // else: tmp = 0, no phase.
         }
         b.free_vec(&tmp);
     }

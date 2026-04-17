@@ -137,3 +137,4 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776393894	46ddcfa	6685316.000	33721468.562	3336	48901083	OK	truncated STEP 3+9 (r,s) cswap for small iter
 1776394106	46ddcfa	6555266.000	33591938.672	3336	48641493	OK	transform trunc + load skip in STEP 4
 1776394561	b0c47ed	6296186.000	33073700.766	3336	47864253	OK	truncate (u,v_w) cswaps for late iters
+1776394730	afa876f	6037106.000	31842952.188	3336	46309773	OK	STEP 4 late-iter load/sub/transform/add truncation
