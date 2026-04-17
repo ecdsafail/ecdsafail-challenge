@@ -2036,9 +2036,12 @@ fn kaliski_iteration(
     b.cx(m_i, b_f);
     b.cx(a_f, b_f);
 
-    // ─── STEP 6: v_w := v_w / 2 (shift right by 1), controlled by f ───
-    // At this point, if f=1 then v_w is even (low bit 0).
-    c_shift_right_1(b, v_w, f);
+    // ─── STEP 6: v_w := v_w / 2 (shift right by 1). Unconditional swap chain.
+    // Invariant: v_w[0]=0 before this step whether f=1 (STEP 4 made v_w even)
+    // or f=0 (algorithm terminated with v_w=0). Unconditional shift of 0 is 0.
+    // Saves 255 CCX per iter vs cswap-controlled version.
+    let _ = f;
+    for i in 0..(n - 1) { b.swap(v_w[i], v_w[i + 1]); }
 
     // ─── STEP 7 + 8: r := 2*r mod p ───────────────────────────────────
     // This is the same secp256k1 pseudo-Mersenne doubling we already use
@@ -2298,10 +2301,9 @@ fn kaliski_iteration_backward(
     // Inverse of the fast secp256k1 doubling used in the forward pass.
     mod_halve_inplace_fast(b, r, p);
 
-    // ── Reverse STEP 6 (conditional shift-right → shift-left) ───────────
-    for i in (0..(n - 1)).rev() {
-        cswap(b, f, v_w[i], v_w[i + 1]);
-    }
+    // ── Reverse STEP 6 (unconditional shift-left) ───────────
+    let _ = f;
+    for i in (0..(n - 1)).rev() { b.swap(v_w[i], v_w[i + 1]); }
 
     // ── Reverse STEP 5 ─────────────────────────────────────────────────
     b.cx(a_f, b_f);
