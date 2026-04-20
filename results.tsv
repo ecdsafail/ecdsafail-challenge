@@ -199,3 +199,6 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776725110	8d50635	4927684.000	25498202.057	3247	36582064	OK	autoresearch-checks
 1776726556	9990029	4680924.000	24187383.126	3505	34901120	OK	swap 4 muls to 1-level Karatsuba 
 1776726567	9990029	4680924.000	24187392.611	3505	34901120	OK	autoresearch-checks
+1776727430	cc427db	1527817.922	7895491.401	3505	34741035	FAIL	2-level Karatsuba at between-pair mul + pair2 iters 397->398 for seed slack  | PHASE GARBAGE: global_phase = 0x0010000000000000 across 64 live shots (must be 0)
+1776728237	cc427db	4672931.000	24152002.855	3507	34863147	OK	2-level Karatsuba at between-pair mul + pair iters 400/400 for safety 
+1776728248	cc427db	4672931.000	24151995.506	3507	34863147	OK	autoresearch-checks

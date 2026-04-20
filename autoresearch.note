@@ -1,1 +1,1 @@
-swap 4 muls to 1-level Karatsuba
+2-level Karatsuba at between-pair mul + pair iters 400/400 for safety
