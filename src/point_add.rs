@@ -71,11 +71,12 @@ struct B {
     pub peak_ops_idx: usize,
     pub peak_phase: &'static str,
     pub phase: &'static str,
+    pub peak_log: Vec<(u32, &'static str, usize)>,
 }
 
 impl B {
     fn new() -> Self {
-        Self { ops: Vec::new(), next_qubit: 0, next_bit: 0, next_register: 0, free_qubits: Vec::new(), active_qubits: 0, peak_qubits: 0, peak_ops_idx: 0, peak_phase: "", phase: "init" }
+        Self { ops: Vec::new(), next_qubit: 0, next_bit: 0, next_register: 0, free_qubits: Vec::new(), active_qubits: 0, peak_qubits: 0, peak_ops_idx: 0, peak_phase: "", phase: "init", peak_log: Vec::new() }
     }
     fn set_phase(&mut self, p: &'static str) { self.phase = p; }
     fn alloc_qubit(&mut self) -> QubitId {
@@ -84,6 +85,9 @@ impl B {
             self.peak_qubits = self.active_qubits;
             self.peak_ops_idx = self.ops.len();
             self.peak_phase = self.phase;
+        }
+        if std::env::var("TRACE_PEAK").is_ok() && self.active_qubits + 10 >= self.peak_qubits {
+            self.peak_log.push((self.active_qubits, self.phase, self.ops.len()));
         }
         if let Some(q) = self.free_qubits.pop() { QubitId(q) }
         else { let q = self.next_qubit; self.next_qubit += 1; QubitId(q) }
@@ -1882,13 +1886,18 @@ fn mod_mul_write_into_zero_acc_karatsuba_with_tmp_ext(
 
     let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
     let hi: Vec<QubitId> = tmp_ext[n..2*n].to_vec();
+    b.set_phase("sol_addlo");
     mod_add_qq_fast_from_zero(b, acc, &lo, p);
+    b.set_phase("sol_add0");
     mod_add_qq_fast(b, acc, &hi, p);
     for _ in 0..4 { mod_double_inplace_fast(b, &hi, p); }
+    b.set_phase("sol_add4");
     mod_add_qq_fast(b, acc, &hi, p);
     for _ in 0..2 { mod_double_inplace_fast(b, &hi, p); }
+    b.set_phase("sol_sub6");
     mod_sub_qq_fast(b, acc, &hi, p);
     for _ in 0..4 { mod_double_inplace_fast(b, &hi, p); }
+    b.set_phase("sol_add10");
     mod_add_qq_fast(b, acc, &hi, p);
     b.set_phase("kara_solinas_shift22L");
     let (spill, flag_inv, ovf) = mod_shift_left_by_k(b, &hi, p, 22);
@@ -3637,8 +3646,8 @@ pub fn build() -> Vec<Op> {
     // the register declarations so the harness interface is validated.
 
     let p = SECP256K1_P;
-    let pair1_iters = 2 * N - 112;
-    let pair2_iters = 2 * N - 112;
+    let pair1_iters = 2 * N - 113;
+    let pair2_iters = 2 * N - 113;
 
     // Step 1-2: Px -= Qx, Py -= Qy
     mod_sub_qb(b, &tx, &ox, p);
@@ -3685,6 +3694,21 @@ pub fn build() -> Vec<Op> {
     mod_add_qb(b, &tx, &ox, p);                           // tx = Rx
 
     b.free_vec(&lam);
+
+    if std::env::var("TRACE_PEAK").is_ok() {
+        eprintln!("DEBUG peak_qubits={} at phase='{}' ops_idx={} total_ops={}", b.peak_qubits, b.peak_phase, b.peak_ops_idx, b.ops.len());
+        let pk = b.peak_qubits;
+        let mut uniq: std::collections::BTreeMap<&'static str, (u32, usize)> = std::collections::BTreeMap::new();
+        for (a, ph, op) in &b.peak_log {
+            if *a + 5 >= pk {
+                let entry = uniq.entry(ph).or_insert((*a, *op));
+                if *a > entry.0 { *entry = (*a, *op); }
+            }
+        }
+        for (ph, (a, op)) in uniq.iter() {
+            eprintln!("DEBUG near_peak active={} phase='{}' ops_idx={}", a, ph, op);
+        }
+    }
 
     b.ops.clone()
 }
