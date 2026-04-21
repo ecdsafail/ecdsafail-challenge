@@ -220,3 +220,7 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1776734929	a008bee	4339137.000	24093360.799	3614	34310073	OK	autoresearch-checks
 1776735210	28737ac	4306887.000	24086266.771	3614	34255151	OK	Litinski addsub inside 2-level Karatsuba middle mul 
 1776735220	28737ac	4306887.000	24086292.985	3614	34255151	OK	autoresearch-checks
+1776792179	63a0bff	87903.484	551493.198	4894	47529650	FAIL	diag: Montgomery compute+uncompute around original algorithm | PHASE GARBAGE: global_phase = 0x4b42cb49c970221c across 64 live shots (must be 0)
+1776792215	63a0bff	87903.484	551494.303	4894	47529650	FAIL	diag | PHASE GARBAGE: global_phase = 0x9d66e18d29bb18e3 across 64 live shots (must be 0)
+1776792606	63a0bff	4306887.000	24086279.753	3614	34255151	OK	Litinski addsub inside 2-level Karatsuba middle mul 
+1776792616	63a0bff	4306887.000	24086294.101	3614	34255151	OK	autoresearch-checks
