@@ -1224,7 +1224,7 @@ fn mod_mul_write_into_zero_acc_schoolbook(
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
 
     let tmp_ext = b.alloc_qubits(2 * n);
-    schoolbook_mul_into(b, x, y, &tmp_ext);
+    schoolbook_mul_into_addsub(b, x, y, &tmp_ext);
 
     let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
     let hi: Vec<QubitId> = tmp_ext[n..2*n].to_vec();
@@ -1246,7 +1246,7 @@ fn mod_mul_write_into_zero_acc_schoolbook(
         mod_halve_inplace_fast(b, &hi, p);
     }
 
-    schoolbook_mul_into_inverse(b, x, y, &tmp_ext);
+    schoolbook_mul_into_addsub_inverse(b, x, y, &tmp_ext);
     b.free_vec(&tmp_ext);
 }
 
@@ -2141,7 +2141,7 @@ fn mod_mul_add_into_acc_schoolbook(
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
 
     let tmp_ext = b.alloc_qubits(2 * n);
-    schoolbook_mul_into(b, x, y, &tmp_ext);
+    schoolbook_mul_into_addsub(b, x, y, &tmp_ext);
 
     let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
     let hi: Vec<QubitId> = tmp_ext[n..2*n].to_vec();
@@ -2163,7 +2163,7 @@ fn mod_mul_add_into_acc_schoolbook(
         mod_halve_inplace_fast(b, &hi, p);
     }
 
-    schoolbook_mul_into_inverse(b, x, y, &tmp_ext);
+    schoolbook_mul_into_addsub_inverse(b, x, y, &tmp_ext);
     b.free_vec(&tmp_ext);
 }
 
@@ -3667,8 +3667,8 @@ pub fn build() -> Vec<Op> {
     // the register declarations so the harness interface is validated.
 
     let p = SECP256K1_P;
-    let pair1_iters = 2 * N - 114;
-    let pair2_iters = 2 * N - 114;
+    let pair1_iters = 2 * N - 112;
+    let pair2_iters = 2 * N - 112;
 
     // Step 1-2: Px -= Qx, Py -= Qy
     mod_sub_qb(b, &tx, &ox, p);
@@ -3682,11 +3682,11 @@ pub fn build() -> Vec<Op> {
     b.set_phase("pair1_kaliski_forward");
     with_kal_inv_raw(b, &tx, p, pair1_iters, |b, inv_raw| {
         b.set_phase("pair1_mul1");
-        mod_mul_write_into_zero_acc_karatsuba(b, &lam, &ty, inv_raw, p);
+        mod_mul_write_into_zero_acc_schoolbook(b, &lam, &ty, inv_raw, p);
         b.set_phase("pair1_halve");
         for _ in 0..pair1_iters { mod_halve_inplace_fast(b, &lam, p); }
         b.set_phase("pair1_mul2");
-        mod_mul_add_into_acc_karatsuba(b, &ty, &lam, &tx, p);
+        mod_mul_add_into_acc_schoolbook(b, &ty, &lam, &tx, p);
         b.set_phase("pair1_kaliski_backward");
     });
 
@@ -3707,7 +3707,7 @@ pub fn build() -> Vec<Op> {
         b.set_phase("pair2_double");
         for _ in 0..pair2_iters { mod_double_inplace_fast(b, &lam, p); }
         b.set_phase("pair2_mul");
-        mod_mul_add_into_acc_karatsuba(b, &lam, inv_raw, &ty, p);
+        mod_mul_add_into_acc_schoolbook(b, &lam, inv_raw, &ty, p);
         b.set_phase("pair2_cleanup");
         mod_sub_qb(b, &ty, &oy, p);
         b.set_phase("pair2_kaliski_backward");
