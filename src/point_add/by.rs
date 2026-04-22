@@ -398,7 +398,7 @@ pub fn survey(
 // conditional-add/sub operations. So we measure the empirical distribution of
 // entry sizes on random low-word inputs.
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TransitionMatrix {
     pub m00: i128,
     pub m01: i128,
@@ -588,6 +588,66 @@ pub fn jump_matrix_entry_survey(seed: &[u8], n_samples: usize, w: usize) -> Jump
     stats
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct JumpHistogram {
+    pub samples: usize,
+    pub distinct_matrices: usize,
+    pub most_common_count: usize,
+    pub most_common_matrix: Option<TransitionMatrix>,
+    pub total_unique_rows: usize,
+}
+
+/// Enumerate all possible low-word states for a given w and record how many
+/// distinct transition matrices actually occur.
+///
+/// State space:
+///   - delta in [-20, 20] (empirical |delta| cap from the 10k secp256k1 survey)
+///   - f_low odd w-bit value
+///   - g_low arbitrary w-bit value
+///
+/// This is the exact state space a fixed-width jumped-BY step would need to
+/// handle if we bound delta to the observed range.
+pub fn jump_matrix_histogram_all_states(w: usize) -> JumpHistogram {
+    use std::collections::BTreeMap;
+    let mut counts: BTreeMap<TransitionMatrix, usize> = BTreeMap::new();
+    let f_states: usize = 1usize << (w - 1); // odd w-bit values
+    let g_states: usize = 1usize << w;
+    let mut samples = 0usize;
+    for delta in -20i64..=20i64 {
+        for f_odd in 0..f_states {
+            let f_low: i128 = ((f_odd << 1) | 1) as i128;
+            for g_raw in 0..g_states {
+                let g_low: i128 = g_raw as i128;
+                let (_, _, _, m) = jump_matrix_direct_lowword(w, w, delta, f_low, g_low);
+                *counts.entry(m).or_insert(0) += 1;
+                samples += 1;
+            }
+        }
+    }
+    let distinct_matrices = counts.len();
+    let mut most_common_count = 0usize;
+    let mut most_common_matrix = None;
+    for (m, c) in &counts {
+        if *c > most_common_count {
+            most_common_count = *c;
+            most_common_matrix = Some(*m);
+        }
+    }
+    JumpHistogram {
+        samples,
+        distinct_matrices,
+        most_common_count,
+        most_common_matrix,
+        total_unique_rows: counts.values().filter(|&&c| c == 1).count(),
+    }
+}
+
+/// Count how many distinct low-w states can reach the *same* jump matrix.
+///
+/// If the number of distinct matrices is dramatically smaller than the state
+/// space, a reversible implementation can use a QROM indexed by a compressed
+/// class rather than by all (delta, f_low, g_low) tuples.
+
 /// Env-gated smoke output used by `src/point_add/mod.rs` when BY_TEST=1.
 pub fn run_classical_test() {
     let p = SECP256K1_P;
@@ -701,6 +761,27 @@ mod tests {
             eprintln!("===========================================");
             assert!(stats.max_entry_abs <= (1i128 << w),
                 "w={} entry {} exceeded 2^w", w, stats.max_entry_abs);
+        }
+    }
+
+    #[test]
+    fn jumpdivstep_matrix_histogram() {
+        // New moonshot stress-test: even if entries hit 2^w, maybe the NUMBER
+        // of distinct matrices is tiny, allowing a heavily-compressed QROM.
+        // This keeps the moonshot alive only if strong collapse occurs.
+        for &w in &[4usize, 6, 8] {
+            let hist = jump_matrix_histogram_all_states(w);
+            eprintln!("=== jumpdivstep matrix histogram (w={}) ===", w);
+            eprintln!("samples              : {}", hist.samples);
+            eprintln!("distinct matrices    : {}", hist.distinct_matrices);
+            eprintln!("most common count    : {}", hist.most_common_count);
+            eprintln!("unique singleton mats: {}", hist.total_unique_rows);
+            if let Some(m) = hist.most_common_matrix {
+                eprintln!("most common matrix   : [[{}, {}], [{}, {}]]", m.m00, m.m01, m.m10, m.m11);
+            }
+            eprintln!("compression factor   : {:.2}", hist.samples as f64 / hist.distinct_matrices as f64);
+            eprintln!("============================================");
+            assert!(hist.distinct_matrices >= 1);
         }
     }
 }
