@@ -182,14 +182,14 @@ metadata (which would cost qubits / logic in the eventual quantum version).
 I added `src/point_add/kaliski_jump_extra.rs` and measured how much the branch-
 sequence ambiguity drops as we augment the key.
 
-For `w = 8`, `t = 4` on 10,000 secp256k1 trajectories:
+For `w = 8`, `t = 4` on 10,000 real secp256k1 trajectories:
 
 | key | mean sequences/class | max sequences/class | singleton classes |
 |---|---:|---:|---:|
-| `low = (u mod 2^8, v mod 2^8)` | 4.492 | 16 | 4,102 |
-| `low + cmp0` where `cmp0 = (u > v)` | 2.570 | 8 | 28,731 |
-| `low + cmp0 + cmp1` where `cmp1 = (u1 > v1)` | 1.742 | 4 | 78,817 |
-| `low + cmp0 + cmp1 + low1` where `low1 = (u1 mod 2^8, v1 mod 2^8)` | **1.696** | **4** | **163,675** |
+| `low = (u_low, v_low)` | 4.492 | 16 | 4,102 |
+| `low + cmp0` | 2.570 | 8 | 28,731 |
+| `low + cmp0 + cmp1` | 1.742 | 4 | 78,817 |
+| `low + cmp0 + cmp1 + low1` | 1.696 | 4 | 163,675 |
 
 Interpretation:
 - Just adding the **initial compare bit** nearly halves the ambiguity.
@@ -204,11 +204,41 @@ This is a huge deal:
 - and that a small amount of dynamically-computed side information may be enough
   to select from a very small family of local transition classes.
 
+## New strongest result: brute-force key search finds a nearly-deterministic 3-bit side channel
+
+I added `src/point_add/kaliski_key_search.rs` and brute-forced feature subsets
+of size up to 4 over a reasonable feature family built from:
+- compare bits `cmp0, cmp1, cmp2`,
+- a few low bits of `(u1, v1)` and `(u2, v2)`.
+
+On 300 random secp256k1 trajectories (~108k 4-step windows), the best key found was:
+
+> **`(u_low, v_low, cmp0, cmp1, cmp2)`**
+
+with statistics:
+
+| key | mean sequences/class | max sequences/class | singleton classes |
+|---|---:|---:|---:|
+| `(u_low, v_low, cmp0, cmp1, cmp2)` | **1.034** | **2** | **80,193** |
+
+This is dramatically better than the hand-picked `(cmp0, cmp1)` key.
+Interpretation:
+- three compare bits almost completely determine the 4-step branch sequence,
+- the residual ambiguity is only 2-way in the worst observed class,
+- and most classes are effectively deterministic.
+
+This is the first evidence that a hybrid Kaliski-jump primitive could plausibly
+be driven by:
+- low 8 bits of `(u, v)`
+- plus just **three compare bits**
+
+instead of a large branch-history register.
+
 ## Current best moonshot conclusion
 
 **Conclusion: `hybrid Kaliski-jump is the bet.`**
 
-This is now stronger than the previous statement.
+This is now stronger than before.
 
 ### Why full B-Y replacement is not the best bet
 Full BY jumpdivsteps2 still has two major problems:
@@ -217,25 +247,19 @@ Full BY jumpdivsteps2 still has two major problems:
 
 So a *full* B-Y replacement remains very high-risk.
 
-### Why the histogram result matters
-The exact histogram shows there are vastly fewer distinct local transition
-matrices than raw low-word states. That suggests a more focused route:
+### Why the new key-search result matters
+The exact histogram showed the local transition family is small.
+The ambiguity survey showed compare bits collapse the family.
+The brute-force key search now shows that **three compare bits are almost
+sufficient to identify the exact 4-step branch sequence**.
 
-> keep Kaliski's global state machine and cleanup structure,
-> but replace short local runs of the `(u, v_w)` update path with
-> **compressed pre-batched transition classes**.
+That means a plausible hybrid primitive could work like:
+1. read `(u_low, v_low)`,
+2. compute `cmp0, cmp1, cmp2`,
+3. lookup 1 of a tiny set of candidate 4-step transforms,
+4. if needed, resolve a residual 2-way ambiguity with one extra cheap bit.
 
-This attacks the actual hot path while preserving the machinery that we already
-know is reversible and correct.
-
-### Why the ambiguity result matters
-The ambiguity survey says the lookup key can likely be made *small*:
-- low bits of `(u, v)`
-- plus 1–2 compare bits
-- maybe plus one-step-ahead low bits if needed
-
-That is a much more realistic reversible interface than “lookup on the whole
-quantum state.”
+That is the most concrete reversible interface I have found so far.
 
 ## New classical proposal: hybrid Kaliski-jump
 
@@ -264,8 +288,8 @@ possible `P_t` arise?
 ### Best current empirical lead
 For `w = 8`, `t = 4`:
 - only **125** joint `(uv, rs)` transition classes globally,
-- only ~**1.74** branch sequences per `(low, cmp0, cmp1)` class on average,
-- at most **4** possibilities in the worst observed class,
+- key `(u_low, v_low, cmp0, cmp1, cmp2)` gives mean ambiguity **1.034**,
+- worst observed ambiguity only **2**,
 - matrices bounded by `|entry| ≤ 16`.
 
 This is currently the most actionable structural lead toward reducing the 81%
@@ -279,37 +303,29 @@ For `t = 4`, produce:
 - the exact `(uv_mat, rs_mat)` pair,
 - the low-bit preconditions / compare-bit conditions under which they occur.
 
-This remains the final classical step before a real reversible design sketch.
+This is the final classical step before a real reversible design sketch.
 
-### P2. Design a compressed reversible lookup interface
-Use the ambiguity results to design a plausible lookup key.
+### P2. Build a concrete reversible selector cost model
+Now that the best key is effectively
+`(u_low, v_low, cmp0, cmp1, cmp2)` with max ambiguity 2,
+we should estimate the true reversible cost of:
+- forming the three compare bits,
+- indexing the candidate class set,
+- resolving the residual 2-way ambiguity.
 
-Current best empirical candidate for `w = 8, t = 4`:
-- key = `(u_low, v_low, cmp0, cmp1)`
-- ambiguity = **mean 1.742 classes**, max 4.
-
-This is already small enough that a reversible selector could plausibly choose
-among a handful of candidate 4-step transforms instead of indexing a huge QROM.
-
-### P3. Choose between `t = 4` and `t = 6`
-`t = 4` has tiny matrices and tiny alphabet.
-`t = 6` has larger matrices but still a modest family (1133).
-Need to compare fewer batches vs. more expensive matrix-apply.
-
-Current empirical leaning: `t = 4` is the better first prototype because:
-- only 125 joint classes globally,
-- max entry only 16,
-- and ambiguity can be pushed near 1.7 with just two compare bits.
+### P3. Compare `t = 4` vs `t = 6`
+`t = 4` has tiny matrices and nearly-deterministic keys.
+`t = 6` has larger matrices and larger class ambiguity, but fewer windows.
+Current evidence strongly favors `t = 4` as the first real prototype.
 
 ## Bottom line
 
 The strongest current research judgement is:
 
-> The best moonshot is **not** full B-Y replacement.
-> The best moonshot is **hybrid Kaliski-jump batching** over short windows,
-> because the exact local transition family is very small on both the state
-> side `(u, v_w)` and the coefficient side `(r, s)`, and a tiny amount of
-> extra side information appears to almost determine the branch sequence.
+> The best moonshot is **hybrid Kaliski-jump batching** over 4-step windows,
+> keyed by low bits plus three compare bits, because the exact local transition
+> family is tiny on both the state side `(u, v_w)` and the coefficient side
+> `(r, s)`, and the branch-sequence ambiguity is almost gone.
 
 That's still novel research, but unlike the other moonshots, it now has
 clear empirical support directly tied to the 81%-of-budget hot path.
