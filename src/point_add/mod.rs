@@ -944,7 +944,12 @@ fn mod_halve_no_corr(b: &mut B, v: &[QubitId]) {
 ///
 /// k must be small enough that spill·c < p. For k≤22 with secp256k1 this holds.
 fn lowq_shift22() -> bool {
-    std::env::var("LOWQ_SHIFT22").is_ok()
+    // Default ON: -20 qubits of peak at the cost of +17k Toffoli. Worth it
+    // for the qubit headroom we need for bigger structural changes.
+    match std::env::var("LOWQ_SHIFT22") {
+        Ok(v) => v != "0",
+        Err(_) => true,
+    }
 }
 
 fn mod_shift_left_by_k(b: &mut B, v: &[QubitId], p: U256, k: usize) -> (Vec<QubitId>, QubitId, QubitId) {
