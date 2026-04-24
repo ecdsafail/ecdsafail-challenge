@@ -69,6 +69,7 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 pub mod by;
 pub mod kaliski_equiv;
 pub mod kaliski_jump;
+pub mod microbench;
 pub mod test_timeout;
 
 struct B {
@@ -1969,6 +1970,67 @@ fn controlled_add_subtract_fast(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl:
     b.free(pad);
 }
 
+/// Low-peak variant of `controlled_add_subtract_fast` using non-fast
+/// Cuccaro (no carry ancillae). Saves ~n qubits of transient peak at the
+/// cost of ~n extra Toffolis per call. Useful when called inside the
+/// Kaliski-body mul sites where peak is tight.
+fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
+    let n = x.len();
+    debug_assert_eq!(acc.len(), n + 1);
+
+    let pad = b.alloc_qubit();
+    let mut x_ext = x.to_vec();
+    x_ext.push(pad);
+
+    let c_in = b.alloc_qubit();
+
+    b.x(ctrl);
+    for i in 0..n {
+        b.cx(ctrl, x_ext[i]);
+    }
+    b.cx(ctrl, c_in);
+
+    cuccaro_add(b, &x_ext, acc, c_in);
+
+    b.cx(ctrl, c_in);
+    for i in 0..n {
+        b.cx(ctrl, x_ext[i]);
+    }
+    b.x(ctrl);
+
+    b.free(c_in);
+    b.free(pad);
+}
+
+/// Inverse of `controlled_add_subtract_lowq`.
+fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
+    let n = x.len();
+    debug_assert_eq!(acc.len(), n + 1);
+
+    let pad = b.alloc_qubit();
+    let mut x_ext = x.to_vec();
+    x_ext.push(pad);
+
+    let c_in = b.alloc_qubit();
+
+    b.x(ctrl);
+    for i in 0..n {
+        b.cx(ctrl, x_ext[i]);
+    }
+    b.cx(ctrl, c_in);
+
+    cuccaro_sub(b, &x_ext, acc, c_in);
+
+    b.cx(ctrl, c_in);
+    for i in 0..n {
+        b.cx(ctrl, x_ext[i]);
+    }
+    b.x(ctrl);
+
+    b.free(c_in);
+    b.free(pad);
+}
+
 /// Inverse of controlled_add_subtract_fast: swap add↔sub.
 ///   ctrl=1 : acc -= x
 ///   ctrl=0 : acc += x
@@ -2087,6 +2149,142 @@ fn schoolbook_mul_into_addsub(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: 
     b.free(low);
 }
 
+/// Low-peak variant of `schoolbook_mul_into_addsub`: uses non-fast Cuccaro
+/// (`cuccaro_add`) inside the `controlled_add_subtract` core and in the
+/// correction adders. Saves roughly `n` transient qubits at peak vs. the
+/// `_fast` variant at the cost of ~n extra Toffolis per row. Top-level
+/// semantics identical to `schoolbook_mul_into_addsub`.
+fn schoolbook_mul_into_addsub_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
+    let n = x.len();
+    debug_assert_eq!(y.len(), n);
+    debug_assert_eq!(tmp_ext.len(), 2 * n);
+
+    let low = b.alloc_qubit();
+    let mut wide: Vec<QubitId> = Vec::with_capacity(2 * n + 1);
+    wide.push(low);
+    wide.extend_from_slice(tmp_ext);
+
+    for k in 0..n {
+        let slice: Vec<QubitId> = wide[k..k + n + 1].to_vec();
+        controlled_add_subtract_lowq(b, x, &slice, y[k]);
+    }
+
+    // +2^n * (y + 1)
+    {
+        let pad = b.alloc_qubit();
+        let mut y_ext = y.to_vec();
+        y_ext.push(pad);
+        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
+        let c_in = b.alloc_qubit();
+        b.x(c_in);
+        cuccaro_add(b, &y_ext, &slice, c_in);
+        b.x(c_in);
+        b.free(c_in);
+        b.free(pad);
+    }
+
+    // -2^{2n}
+    b.x(wide[2 * n]);
+
+    // -x full (2n+1)-bit sub
+    {
+        let mut x_ext: Vec<QubitId> = x.to_vec();
+        while x_ext.len() < 2 * n + 1 {
+            x_ext.push(b.alloc_qubit());
+        }
+        let c_in = b.alloc_qubit();
+        cuccaro_sub(b, &x_ext, &wide, c_in);
+        b.free(c_in);
+        for _ in n..2 * n + 1 {
+            let q = x_ext.pop().unwrap();
+            b.free(q);
+        }
+    }
+
+    // +2^n * x
+    {
+        let pad = b.alloc_qubit();
+        let mut x_ext = x.to_vec();
+        x_ext.push(pad);
+        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
+        let c_in = b.alloc_qubit();
+        cuccaro_add(b, &x_ext, &slice, c_in);
+        b.free(c_in);
+        b.free(pad);
+    }
+
+    b.free(low);
+}
+
+/// Exact gate-level inverse of `schoolbook_mul_into_addsub_lowq`.
+fn schoolbook_mul_into_addsub_lowq_inverse(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
+    let n = x.len();
+    debug_assert_eq!(y.len(), n);
+    debug_assert_eq!(tmp_ext.len(), 2 * n);
+
+    let low = b.alloc_qubit();
+    let mut wide: Vec<QubitId> = Vec::with_capacity(2 * n + 1);
+    wide.push(low);
+    wide.extend_from_slice(tmp_ext);
+
+    // Reverse correction 4: sub x at bit n.
+    {
+        let pad = b.alloc_qubit();
+        let mut x_ext = x.to_vec();
+        x_ext.push(pad);
+        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
+        let c_in = b.alloc_qubit();
+        cuccaro_sub(b, &x_ext, &slice, c_in);
+        b.free(c_in);
+        b.free(pad);
+    }
+    // Reverse correction 3.
+    {
+        let mut x_ext: Vec<QubitId> = x.to_vec();
+        while x_ext.len() < 2 * n + 1 {
+            x_ext.push(b.alloc_qubit());
+        }
+        let c_in = b.alloc_qubit();
+        cuccaro_add(b, &x_ext, &wide, c_in);
+        b.free(c_in);
+        for _ in n..2 * n + 1 {
+            let q = x_ext.pop().unwrap();
+            b.free(q);
+        }
+    }
+    // Reverse correction 2.
+    b.x(wide[2 * n]);
+    // Reverse correction 1.
+    {
+        let pad = b.alloc_qubit();
+        let mut y_ext = y.to_vec();
+        y_ext.push(pad);
+        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
+        let c_in = b.alloc_qubit();
+        b.x(c_in);
+        cuccaro_sub(b, &y_ext, &slice, c_in);
+        b.x(c_in);
+        b.free(c_in);
+        b.free(pad);
+    }
+    for k in (0..n).rev() {
+        let slice: Vec<QubitId> = wide[k..k + n + 1].to_vec();
+        controlled_add_subtract_lowq_inverse(b, x, &slice, y[k]);
+    }
+
+    b.free(low);
+}
+
 /// Exact gate-level inverse of `schoolbook_mul_into_addsub`.
 fn schoolbook_mul_into_addsub_inverse(
     b: &mut B,
@@ -2171,6 +2369,34 @@ fn karatsuba_half_sum_compute(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[
     b.free(hi_pad);
 }
 
+/// Low-peak variant of `karatsuba_half_sum_compute` using non-fast Cuccaro.
+/// Saves ~h carry qubits at peak at the cost of ~h extra Toffolis.
+fn karatsuba_half_sum_compute_lowq(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
+    let h = lo.len();
+    debug_assert_eq!(h, hi.len());
+    debug_assert_eq!(acc.len(), h + 1);
+    for i in 0..h {
+        b.cx(lo[i], acc[i]);
+    }
+    let hi_pad = b.alloc_qubit();
+    let mut hi_ext = hi.to_vec();
+    hi_ext.push(hi_pad);
+    add_nbit_qq(b, &hi_ext, acc);
+    b.free(hi_pad);
+}
+
+fn karatsuba_half_sum_uncompute_lowq(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
+    let h = lo.len();
+    let hi_pad = b.alloc_qubit();
+    let mut hi_ext = hi.to_vec();
+    hi_ext.push(hi_pad);
+    sub_nbit_qq(b, &hi_ext, acc);
+    b.free(hi_pad);
+    for i in 0..h {
+        b.cx(lo[i], acc[i]);
+    }
+}
+
 fn karatsuba_half_sum_uncompute(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
     let h = lo.len();
     let hi_pad = b.alloc_qubit();
@@ -2240,6 +2466,179 @@ fn karatsuba_forward(
         add_nbit_qq_fast(b, &z1_ext, &acc_slice);
         b.free_vec(&pad);
     }
+}
+
+/// Low-peak variant of `karatsuba_forward`. Uses `schoolbook_mul_into_addsub_lowq`
+/// for all three inner schoolbook muls and non-fast half-sum adders, saving
+/// ~n qubits of peak at the cost of extra Toffolis.
+fn karatsuba_forward_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    tmp_ext: &[QubitId],
+    z1_reg: &[QubitId],
+) {
+    let n = x.len();
+    let h = n / 2;
+    let x_lo: Vec<QubitId> = x[0..h].to_vec();
+    let x_hi: Vec<QubitId> = x[h..n].to_vec();
+    let y_lo: Vec<QubitId> = y[0..h].to_vec();
+    let y_hi: Vec<QubitId> = y[h..n].to_vec();
+
+    {
+        let slice: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
+        schoolbook_mul_into_addsub_lowq(b, &x_lo, &y_lo, &slice);
+    }
+    {
+        let slice: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
+        schoolbook_mul_into_addsub_lowq(b, &x_hi, &y_hi, &slice);
+    }
+
+    let x_sum = b.alloc_qubits(h + 1);
+    let y_sum = b.alloc_qubits(h + 1);
+    karatsuba_half_sum_compute_lowq(b, &x_lo, &x_hi, &x_sum);
+    karatsuba_half_sum_compute_lowq(b, &y_lo, &y_hi, &y_sum);
+    schoolbook_mul_into_addsub_lowq(b, &x_sum, &y_sum, z1_reg);
+    karatsuba_half_sum_uncompute_lowq(b, &y_lo, &y_hi, &y_sum);
+    karatsuba_half_sum_uncompute_lowq(b, &x_lo, &x_hi, &x_sum);
+    b.free_vec(&y_sum);
+    b.free_vec(&x_sum);
+
+    {
+        let pad = b.alloc_qubits(2);
+        let mut z0_ext: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
+        z0_ext.extend_from_slice(&pad);
+        sub_nbit_qq(b, &z0_ext, z1_reg);
+        b.free_vec(&pad);
+    }
+    {
+        let pad = b.alloc_qubits(2);
+        let mut z2_ext: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
+        z2_ext.extend_from_slice(&pad);
+        sub_nbit_qq(b, &z2_ext, z1_reg);
+        b.free_vec(&pad);
+    }
+    {
+        let pad = b.alloc_qubits(3 * h - 2 * (h + 1));
+        let mut z1_ext: Vec<QubitId> = z1_reg.to_vec();
+        z1_ext.extend_from_slice(&pad);
+        let acc_slice: Vec<QubitId> = tmp_ext[h..4 * h].to_vec();
+        b.set_phase("kara_z1_add");
+        add_nbit_qq(b, &z1_ext, &acc_slice);
+        b.free_vec(&pad);
+    }
+}
+
+/// Low-peak variant of `karatsuba_inverse`, paired with `karatsuba_forward_lowq`.
+fn karatsuba_inverse_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    tmp_ext: &[QubitId],
+    z1_reg: &[QubitId],
+) {
+    let n = x.len();
+    let h = n / 2;
+    let x_lo: Vec<QubitId> = x[0..h].to_vec();
+    let x_hi: Vec<QubitId> = x[h..n].to_vec();
+    let y_lo: Vec<QubitId> = y[0..h].to_vec();
+    let y_hi: Vec<QubitId> = y[h..n].to_vec();
+
+    {
+        let pad = b.alloc_qubits(3 * h - 2 * (h + 1));
+        let mut z1_ext: Vec<QubitId> = z1_reg.to_vec();
+        z1_ext.extend_from_slice(&pad);
+        let acc_slice: Vec<QubitId> = tmp_ext[h..4 * h].to_vec();
+        sub_nbit_qq(b, &z1_ext, &acc_slice);
+        b.free_vec(&pad);
+    }
+    {
+        let pad = b.alloc_qubits(2);
+        let mut z2_ext: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
+        z2_ext.extend_from_slice(&pad);
+        add_nbit_qq(b, &z2_ext, z1_reg);
+        b.free_vec(&pad);
+    }
+    {
+        let pad = b.alloc_qubits(2);
+        let mut z0_ext: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
+        z0_ext.extend_from_slice(&pad);
+        add_nbit_qq(b, &z0_ext, z1_reg);
+        b.free_vec(&pad);
+    }
+
+    let x_sum = b.alloc_qubits(h + 1);
+    let y_sum = b.alloc_qubits(h + 1);
+    karatsuba_half_sum_compute_lowq(b, &x_lo, &x_hi, &x_sum);
+    karatsuba_half_sum_compute_lowq(b, &y_lo, &y_hi, &y_sum);
+    schoolbook_mul_into_addsub_lowq_inverse(b, &x_sum, &y_sum, z1_reg);
+    karatsuba_half_sum_uncompute_lowq(b, &y_lo, &y_hi, &y_sum);
+    karatsuba_half_sum_uncompute_lowq(b, &x_lo, &x_hi, &x_sum);
+    b.free_vec(&y_sum);
+    b.free_vec(&x_sum);
+
+    {
+        let slice: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
+        schoolbook_mul_into_addsub_lowq_inverse(b, &x_hi, &y_hi, &slice);
+    }
+    {
+        let slice: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
+        schoolbook_mul_into_addsub_lowq_inverse(b, &x_lo, &y_lo, &slice);
+    }
+}
+
+fn mod_mul_add_into_acc_karatsuba_lowq_with_tmp_ext(
+    b: &mut B,
+    acc: &[QubitId],
+    x: &[QubitId],
+    y: &[QubitId],
+    p: U256,
+    tmp_ext: &[QubitId],
+) {
+    let n = acc.len();
+    debug_assert_eq!(n, 256);
+    debug_assert_eq!(tmp_ext.len(), 2 * n);
+    let h = n / 2;
+    let z1_reg = b.alloc_qubits(2 * (h + 1));
+    karatsuba_forward_lowq(b, x, y, tmp_ext, &z1_reg);
+
+    let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
+    let hi: Vec<QubitId> = tmp_ext[n..2 * n].to_vec();
+    mod_add_qq_fast(b, acc, &lo, p);
+    mod_add_qq_fast(b, acc, &hi, p);
+    for _ in 0..4 {
+        mod_double_inplace_fast(b, &hi, p);
+    }
+    mod_add_qq_fast(b, acc, &hi, p);
+    for _ in 0..2 {
+        mod_double_inplace_fast(b, &hi, p);
+    }
+    mod_sub_qq_fast(b, acc, &hi, p);
+    for _ in 0..4 {
+        mod_double_inplace_fast(b, &hi, p);
+    }
+    mod_add_qq_fast(b, acc, &hi, p);
+    let (spill, flag_inv, ovf) = mod_shift_left_by_k(b, &hi, p, 22);
+    mod_add_qq(b, acc, &hi, p);
+    mod_shift_right_by_k(b, &hi, p, 22, spill, flag_inv, ovf);
+    for _ in 0..10 {
+        mod_halve_inplace_fast(b, &hi, p);
+    }
+
+    karatsuba_inverse_lowq(b, x, y, tmp_ext, &z1_reg);
+    b.free_vec(&z1_reg);
+}
+
+fn mod_mul_add_into_acc_karatsuba_lowq(
+    b: &mut B,
+    acc: &[QubitId],
+    x: &[QubitId],
+    y: &[QubitId],
+    p: U256,
+) {
+    let tmp_ext = b.alloc_qubits(2 * acc.len());
+    mod_mul_add_into_acc_karatsuba_lowq_with_tmp_ext(b, acc, x, y, p, &tmp_ext);
+    b.free_vec(&tmp_ext);
 }
 
 fn karatsuba_inverse(
