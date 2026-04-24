@@ -150,6 +150,99 @@ fn sub_mod_p(a: U256, b: U256, p: U256) -> U256 {
     }
 }
 
+/// Gate-level inverse of `kim_iteration_forward` on basis-state inputs.
+/// Takes the per-iter flag qubits (m, both_odd) that forward left live,
+/// clears them, and restores (u, v, r, s) to their pre-forward values.
+pub(crate) fn kim_iteration_backward(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    r: &[QubitId],
+    s: &[QubitId],
+    m: QubitId,
+    both_odd: QubitId,
+    iter_idx: usize,
+) {
+    let nu = u.len();
+    let nv = v.len();
+    let nr = r.len();
+    let ns = s.len();
+    debug_assert_eq!(nu, nv);
+    debug_assert_eq!(nr, ns);
+    let n = nu.saturating_sub(1);
+    let uv_width = if iter_idx < n { nu } else { (2 * n - iter_idx).max(1) };
+    let rs_width = if iter_idx + 2 < nr { iter_idx + 2 } else { nr };
+
+    // Reverse of final cswaps on (u,v),(r,s).
+    for j in 0..rs_width {
+        cswap(b, m, r[j], s[j]);
+    }
+    for j in 0..uv_width {
+        cswap(b, m, u[j], v[j]);
+    }
+
+    // Reverse of r <<= 1 (was high-to-low swap chain; inverse is low-to-high).
+    for i in 0..rs_width.saturating_sub(1) {
+        b.swap(r[i], r[i + 1]);
+    }
+    // Reverse of v >>= 1 (was low-to-high; inverse is high-to-low).
+    for i in (0..uv_width.saturating_sub(1)).rev() {
+        b.swap(v[i], v[i + 1]);
+    }
+
+    // Reverse of: s += r controlled on both_odd. Reverse: s -= r controlled.
+    let tmp_r = b.alloc_qubits(rs_width);
+    for i in 0..rs_width {
+        b.ccx(both_odd, r[i], tmp_r[i]);
+    }
+    let s_slice: Vec<QubitId> = s[..rs_width].to_vec();
+    sub_nbit_qq_fast(b, &tmp_r, &s_slice);
+    for i in 0..rs_width {
+        b.ccx(both_odd, r[i], tmp_r[i]);
+    }
+    b.free_vec(&tmp_r);
+
+    // Reverse of: v -= u controlled on both_odd. Reverse: v += u controlled.
+    let tmp_u = b.alloc_qubits(uv_width);
+    for i in 0..uv_width {
+        b.ccx(both_odd, u[i], tmp_u[i]);
+    }
+    let v_slice: Vec<QubitId> = v[..uv_width].to_vec();
+    add_nbit_qq_fast(b, &tmp_u, &v_slice);
+    for i in 0..uv_width {
+        b.ccx(both_odd, u[i], tmp_u[i]);
+    }
+    b.free_vec(&tmp_u);
+
+    // Now v has been restored to its pre-sub value (v_pre). Uncompute
+    // both_odd via ccx with the restored v[0].
+    b.ccx(u[0], v[0], both_odd);
+
+    // Reverse of initial cswaps on (u,v),(r,s).
+    for j in 0..rs_width {
+        cswap(b, m, r[j], s[j]);
+    }
+    for j in 0..uv_width {
+        cswap(b, m, u[j], v[j]);
+    }
+
+    // Reverse of m setup: repeat forward's m-setup (XOR is self-inverse).
+    let t = b.alloc_qubit();
+    b.ccx(u[0], v[0], t);
+    let l_gt = b.alloc_qubit();
+    let u_slice: Vec<QubitId> = u[..uv_width].to_vec();
+    let v_slice: Vec<QubitId> = v[..uv_width].to_vec();
+    with_gt(b, &u_slice, &v_slice, l_gt, |b| {
+        b.ccx(l_gt, t, m);
+    });
+    b.free(l_gt);
+    b.ccx(u[0], v[0], t);
+    b.free(t);
+    b.x(u[0]);
+    b.cx(u[0], m);
+    b.x(u[0]);
+}
+
 /// Reversible wide-r Kim-style Kaliski iteration (forward only for now).
 ///
 /// Register widths:
@@ -181,6 +274,7 @@ pub(crate) fn kim_iteration_forward(
     r: &[QubitId],
     s: &[QubitId],
     m: QubitId,
+    both_odd: QubitId,
     iter_idx: usize,
 ) {
     let nu = u.len();
@@ -233,10 +327,8 @@ pub(crate) fn kim_iteration_forward(
         cswap(b, m, r[j], s[j]);
     }
 
-    // Now (u,v) have the "v odd, u even/odd without u>v" layout. If u and
-    // v are both odd (v[0]=1 and u[0]=1), we conditionally do v-=u, s+=r.
-    // Gate on (u[0] & v[0]).
-    let both_odd = b.alloc_qubit();
+    // Persistent both_odd flag for this iter (caller allocates and owns it).
+    // both_odd := u[0] AND v[0] (on post-cswap (u,v)).
     b.ccx(u[0], v[0], both_odd);
     // v -= u (width nu); s += r (width nr), each controlled on both_odd.
     //
@@ -264,9 +356,9 @@ pub(crate) fn kim_iteration_forward(
     }
     b.free_vec(&tmp_r);
 
-    // Uncompute both_odd.
-    b.ccx(u[0], v[0], both_odd);
-    b.free(both_odd);
+    // Do NOT uncompute both_odd — it is an output of the iteration,
+    // needed by the backward to cleanly undo the conditional sub/add.
+    // Backward will clear it symmetrically.
 
     // Unconditional v >>= 1 (shift right by swap chain on uv_width bits).
     for i in 0..uv_width.saturating_sub(1) {
@@ -411,7 +503,8 @@ mod tests {
         let r: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
         let s: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
         let m = b.alloc_qubit();
-        kim_iteration_forward(&mut b, &u, &v, &r, &s, m, 0);
+        let bo = b.alloc_qubit();
+        kim_iteration_forward(&mut b, &u, &v, &r, &s, m, bo, 0);
         let ops = b.ops.clone();
         let num_qubits = b.next_qubit as usize;
         let num_bits = b.next_bit as usize;
@@ -495,10 +588,13 @@ mod tests {
         let r: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
         let s: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
         let mut m_bits: Vec<QubitId> = Vec::with_capacity(ITERS);
+        let mut bo_bits: Vec<QubitId> = Vec::with_capacity(ITERS);
         for i in 0..ITERS {
             let m = b.alloc_qubit();
-            kim_iteration_forward(&mut b, &u, &v, &r, &s, m, i);
+            let bo = b.alloc_qubit();
+            kim_iteration_forward(&mut b, &u, &v, &r, &s, m, bo, i);
             m_bits.push(m);
+            bo_bits.push(bo);
         }
         let ops = b.ops.clone();
         let num_qubits = b.next_qubit as usize;
@@ -564,6 +660,65 @@ mod tests {
         }
     }
 
+    /// Round-trip: forward then `kim_iteration_backward` in reverse order
+    /// should fully restore the input state and zero the per-iter flag qubits.
+    #[test]
+    fn kim_inversion_round_trip_returns_to_initial_state() {
+        const NU: usize = 257;
+        const NR: usize = 513;
+        const ITERS: usize = 512;
+
+        let mut b = B::new();
+        let u: Vec<QubitId> = (0..NU).map(|_| b.alloc_qubit()).collect();
+        let v: Vec<QubitId> = (0..NU).map(|_| b.alloc_qubit()).collect();
+        let r: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
+        let s: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
+        let m_bits: Vec<QubitId> = (0..ITERS).map(|_| b.alloc_qubit()).collect();
+        let bo_bits: Vec<QubitId> = (0..ITERS).map(|_| b.alloc_qubit()).collect();
+        for i in 0..ITERS {
+            kim_iteration_forward(&mut b, &u, &v, &r, &s, m_bits[i], bo_bits[i], i);
+        }
+        for i in (0..ITERS).rev() {
+            kim_iteration_backward(&mut b, &u, &v, &r, &s, m_bits[i], bo_bits[i], i);
+        }
+        let ops = b.ops.clone();
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+
+        let mut rng = 0xaaaa_bbbb_cccc_ddddu64;
+        for trial in 0..3 {
+            let u0 = SECP256K1_P;
+            let v0 = rand_u256(&mut rng);
+            if v0.is_zero() { continue; }
+
+            let mut hasher = sha3::Shake128::default();
+            use sha3::digest::{ExtendableOutput, Update};
+            hasher.update(b"kim-roundtrip-v2");
+            hasher.update(&(trial as u32).to_le_bytes());
+            let mut xof = hasher.finalize_xof();
+            let mut sim = Simulator::new(num_qubits, num_bits, &mut xof);
+            set_slice_u256(&mut sim, &u, u0);
+            set_slice_u256(&mut sim, &v, v0);
+            set_slice_u512(&mut sim, &r, U512::ZERO);
+            set_slice_u512(&mut sim, &s, U512::from(1u64));
+            sim.apply(&ops);
+
+            let u_back = get_slice_u256(&sim, &u);
+            let v_back = get_slice_u256(&sim, &v);
+            let r_back = get_slice_u512(&sim, &r);
+            let s_back = get_slice_u512(&sim, &s);
+            let m_sum: u64 = m_bits.iter().map(|&q| sim.qubit(q) & 1).sum();
+            let bo_sum: u64 = bo_bits.iter().map(|&q| sim.qubit(q) & 1).sum();
+
+            assert_eq!(u_back, u0, "trial {trial}: u not restored");
+            assert_eq!(v_back, v0, "trial {trial}: v not restored");
+            assert_eq!(r_back, U512::ZERO, "trial {trial}: r not restored");
+            assert_eq!(s_back, U512::from(1u64), "trial {trial}: s not restored");
+            assert_eq!(m_sum, 0, "trial {trial}: some m_bits not cleared");
+            assert_eq!(bo_sum, 0, "trial {trial}: some both_odd flags not cleared");
+        }
+    }
+
     /// Measure the Toffoli count of the full-width, full-iter Kim forward
     /// inversion. This is just a cost report, no correctness claim.
     #[test]
@@ -579,7 +734,8 @@ mod tests {
         let s: Vec<QubitId> = (0..NR).map(|_| b.alloc_qubit()).collect();
         for i in 0..ITERS {
             let m = b.alloc_qubit();
-            kim_iteration_forward(&mut b, &u, &v, &r, &s, m, i);
+            let bo = b.alloc_qubit();
+            kim_iteration_forward(&mut b, &u, &v, &r, &s, m, bo, i);
         }
         let ccx_count = b
             .ops
