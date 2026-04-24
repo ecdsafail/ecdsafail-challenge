@@ -19,10 +19,16 @@ increasing) with the bilinear invariant
 This means `bitlen(r_{i-1}) + bitlen(t_i) ≤ n+1`, so the two values
 **share a single n+2 qubit register** with a known split. Luo pushes
 this further: `(r_{i-1}, t_i, q_i)` can all share one n+2 register.
-Net saving for the inversion state: from our current `4n + iters`
-(= `4·256 + 407 = 1431` qubits) down to **~n+O(log n)**, saving ~3n ≈
-**768 qubits** at n=256. That alone cuts our 2716q peak to roughly
-1950q — below the 2800q session cap even before any Toffoli work.
+
+I added `src/point_add/luo_proto.rs` to budget this numerically against our
+current scaffold. Results at n=256:
+- conservative swap-in estimate: **2084q** total,
+- optimistic overlap estimate: **1828q** total,
+- savings vs current 2716q: **632–888 qubits**.
+
+So Luo is definitely a *real* qubit lever.
+However, even the optimistic estimate is still far above the user's rough
+budget of `512 + 600 = 1112` total qubits.
 
 Cost: Luo uses a long-division-style EEA (Proos-Zalka shape), not
 Kaliski's halving-based one, so the per-round Toffoli profile is
@@ -202,7 +208,23 @@ Revised combined hope with 1+2:
 - likely best stable target around **3.55M to 3.75M Toffoli @ ~2460q**.
 
 If Kim 2a+2b lands on top of that, the floor could move toward
-**3.1M–3.3M**, but with a much heavier inversion rewrite. If Luo register
-sharing also lands, qubits could drop to ~2.0k-ish, still not enough to
-meet the user's aspirational ~1100–1200 total without a broader scaffold
-collapse.
+**3.1M–3.3M**, but with a much heavier inversion rewrite.
+
+If Luo register sharing also lands, qubits plausibly drop to
+**~1.83k–2.08k** in our affine scaffold (measured in `luo_proto.rs`),
+still not enough to meet the user's aspirational ~1100–1200 total
+without a broader scaffold collapse.
+
+### Hard conclusion from the budget work
+To hit the user's qubit target, **inversion tricks alone are insufficient**.
+Even a hypothetical *free* inversion block would leave the current affine
+scaffold at:
+- `tx,ty` live: 512q
+- non-inversion affine scaffold: 772q
+- total: **1284q**
+
+So after Luo-style inversion sharing, we still also need to collapse at least
+~172 qubits from the surrounding affine scaffold — practically, this means:
+- kill or fold `lam`, and/or
+- eliminate one wide mul transient, and/or
+- change the add choreography so one whole n-wide register never exists.

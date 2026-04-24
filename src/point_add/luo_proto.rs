@@ -64,15 +64,25 @@ fn luo_inversion_total_qubits(n: usize) -> usize {
     3 * n + 4 * (n.ilog2() as usize)
 }
 
-/// Lower-bound point-add budget if we swapped our Kaliski block for a Luo/PZ
+/// Conservative point-add budget if we swapped our Kaliski block for a Luo/PZ
 /// block *without* changing anything else in the affine scaffold.
-fn naive_luo_point_add_budget(n: usize, current_other_peak: usize) -> usize {
-    // Keep tx,ty live. Add the Luo inversion block. Keep the rest of the
+fn naive_luo_point_add_budget_conservative(n: usize, current_other_peak: usize) -> usize {
+    // Keep tx,ty live. Add the full Luo inversion block. Keep the rest of the
     // current non-inversion transients as-is.
     let tx_ty = 2 * n;
     let inversion_total = luo_inversion_total_qubits(n);
-    // current_other_peak is "everything except tx_ty and current inversion".
     tx_ty + inversion_total + current_other_peak
+}
+
+/// Optimistic overlap model for the same swap.
+///
+/// Luo's `3n + 4 log n` inversion count already includes the n-bit inversion
+/// input register. In our point-add scaffold that register is already part of
+/// tx/ty, so only `luo_total - n` is really "extra".
+fn naive_luo_point_add_budget_optimistic(n: usize, current_other_peak: usize) -> usize {
+    let tx_ty = 2 * n;
+    let inversion_extra = luo_inversion_total_qubits(n) - n;
+    tx_ty + inversion_extra + current_other_peak
 }
 
 /// Clean arithmetic helper for a tiny classical sanity check.
@@ -94,23 +104,16 @@ mod tests {
         let cur = current_budget_estimate(n, 407);
         eprintln!("current budget estimate: {:?}", cur);
 
-        // Everything that's NOT tx/ty or persistent Kaliski state.
         let current_other_peak = cur.lambda_and_mul_state;
-        let luo_total = naive_luo_point_add_budget(n, current_other_peak);
-        eprintln!("naive Luo swap-in peak estimate: {luo_total}");
+        let luo_cons = naive_luo_point_add_budget_conservative(n, current_other_peak);
+        let luo_opt = naive_luo_point_add_budget_optimistic(n, current_other_peak);
+        eprintln!("naive Luo swap-in peak estimate: conservative={luo_cons}, optimistic={luo_opt}");
 
-        // Current live peak is 2716. Luo Table 1 claims inversion itself is
-        // only ~800 qubits total, vs our current inversion state + body share
-        // of ~1948 qubits. Even the naive swap should cut a lot.
-        assert!(luo_total < cur.total, "Luo-style inversion must reduce peak");
+        assert!(luo_cons < cur.total, "Luo-style inversion must reduce peak (conservative)");
+        assert!(luo_opt < cur.total, "Luo-style inversion must reduce peak (optimistic)");
 
-        // User asked for only ~600 qubits over the 512 input point coords,
-        // i.e. roughly 1112 total. A naive Luo swap alone will NOT get us
-        // there — the rest of the affine scaffold is still too wide.
-        assert!(
-            luo_total > 1112,
-            "If this ever flips, Luo-alone got us into the user budget; revisit immediately"
-        );
+        // User budget is ~600 qubits over the 512 input coords.
+        assert!(luo_opt > 1112, "If this flips, Luo-alone got us into the user budget");
     }
 
     #[test]
@@ -118,20 +121,52 @@ mod tests {
         let n = 256usize;
         let cur = current_budget_estimate(n, 407);
         let current_other_peak = cur.lambda_and_mul_state;
-        let luo_total = naive_luo_point_add_budget(n, current_other_peak);
+        let luo_cons = naive_luo_point_add_budget_conservative(n, current_other_peak);
+        let luo_opt = naive_luo_point_add_budget_optimistic(n, current_other_peak);
 
-        // This is the key conclusion for next actions:
-        // Luo's register sharing plausibly drops us from ~2716 to ~2k-ish,
-        // but not all the way to ~1100 by itself. So Luo is only worth it if
-        // paired with an affine-scaffold collapse (single inversion,
-        // different coordinate flow, or killing lam/m_hist simultaneously).
         eprintln!(
-            "luo_total={}, current_total={}, saved={} qubits",
-            luo_total,
+            "luo_cons={}, luo_opt={}, current_total={}, saved_cons={}, saved_opt={}",
+            luo_cons,
+            luo_opt,
             cur.total,
-            cur.total - luo_total
+            cur.total - luo_cons,
+            cur.total - luo_opt
         );
-        assert!(cur.total - luo_total >= 500, "Luo should save ~500+ qubits");
+        assert!(cur.total - luo_cons >= 500, "Luo should save ~500+ qubits conservatively");
+        assert!(cur.total - luo_opt >= 800, "Luo should save ~800+ qubits optimistically");
+    }
+
+    #[test]
+    fn even_free_inversion_needs_scaffold_collapse_to_hit_user_budget() {
+        let n = 256usize;
+        let cur = current_budget_estimate(n, 407);
+        let target_total = 512 + 600;
+        let inversion_free_total = cur.tx_ty + cur.lambda_and_mul_state;
+        eprintln!(
+            "inversion-free affine scaffold total={}, target_total={}, excess={}",
+            inversion_free_total,
+            target_total,
+            inversion_free_total - target_total
+        );
+        assert_eq!(inversion_free_total, 1284);
+        assert_eq!(inversion_free_total - target_total, 172);
+        assert!(inversion_free_total > target_total);
+    }
+
+    #[test]
+    fn optimistic_luo_still_needs_hundreds_more_qubits_cut() {
+        let n = 256usize;
+        let cur = current_budget_estimate(n, 407);
+        let target_total = 512 + 600;
+        let luo_opt = naive_luo_point_add_budget_optimistic(n, cur.lambda_and_mul_state);
+        eprintln!(
+            "optimistic Luo total={}, target_total={}, remaining_gap={}",
+            luo_opt,
+            target_total,
+            luo_opt - target_total
+        );
+        assert_eq!(luo_opt, 1828);
+        assert_eq!(luo_opt - target_total, 716);
     }
 
     #[test]
