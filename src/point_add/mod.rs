@@ -4127,7 +4127,13 @@ fn kaliski_iteration_bulk_prefix3(
     b.free(l_gt);
 
     b.set_phase("kal_bulk_step3_cswap");
-    for j in 0..u.len() {
+    // Late-iter truncation: bitlen(u)+bitlen(v_w) ≤ 2n-iter_idx (Kaliski invariant).
+    let uv_width_step3 = if iter_idx < u.len() {
+        u.len()
+    } else {
+        2 * u.len() - iter_idx
+    };
+    for j in 0..uv_width_step3 {
         cswap(b, a_f, u[j], v_w[j]);
     }
     let rs_width_step3 = if iter_idx + 1 < u.len() {
@@ -4214,7 +4220,13 @@ fn kaliski_iteration_bulk_prefix3(
     }
 
     b.set_phase("kal_bulk_step9_cswap");
-    for j in 0..u.len() {
+    // Late-iter truncation: same uv-width bound as step3.
+    let uv_width_step9 = if iter_idx < u.len() {
+        u.len()
+    } else {
+        2 * u.len() - iter_idx
+    };
+    for j in 0..uv_width_step9 {
         cswap(b, a_f, u[j], v_w[j]);
     }
     let rs_width_step9 = if iter_idx + 2 < u.len() {
@@ -4717,7 +4729,9 @@ fn kaliski_iteration_bulk_prefix3_backward(
     for j in (0..rs_width_step9).rev() {
         cswap(b, a_f, r[j], s[j]);
     }
-    for j in (0..n).rev() {
+    // Late-iter truncation mirrors forward step9.
+    let uv_width_step9 = if iter_idx < n { n } else { 2 * n - iter_idx };
+    for j in (0..uv_width_step9).rev() {
         cswap(b, a_f, u[j], v_w[j]);
     }
 
@@ -4795,7 +4809,9 @@ fn kaliski_iteration_bulk_prefix3_backward(
     for j in (0..rs_width_step3).rev() {
         cswap(b, a_f, r[j], s[j]);
     }
-    for j in (0..n).rev() {
+    // Late-iter truncation mirrors forward step3.
+    let uv_width_step3 = if iter_idx < n { n } else { 2 * n - iter_idx };
+    for j in (0..uv_width_step3).rev() {
         cswap(b, a_f, u[j], v_w[j]);
     }
 
