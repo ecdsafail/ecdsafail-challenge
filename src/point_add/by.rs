@@ -2100,6 +2100,130 @@ mod tests {
         assert!(ccx < 20_000, "forward rows too expensive for BY window budget");
     }
 
+    fn emit_positive_triangular_old_cleanup_for_test(
+        b: &mut super::super::B,
+        x0: &[super::super::QubitId],
+        x1: &[super::super::QubitId],
+        y0: &[super::super::QubitId],
+        y1: &[super::super::QubitId],
+    ) -> (Vec<super::super::QubitId>, Vec<super::super::QubitId>) {
+        // Matrix [[2^16,0],[2^16-1,1]]. Outputs satisfy:
+        //   y0 = x0
+        //   2^16*y1 = (2^16-1)x0 + x1 + m*p
+        // Therefore z = 2^16*y1 - (2^16-1)y0 = x1 + m*p.
+        // To zero x1, subtract z low bits (leaving m*c) and then subtract m*c.
+        let m = b.alloc_qubits(16);
+        compute_row_correction_m_from_sources(b, 65535, x0, 1, x1, &m, false);
+        let z = b.alloc_qubits(274);
+        add_coeff_times_for_cost(b, 65536, y1, &z);
+        add_coeff_times_for_cost(b, -65535, y0, &z);
+        let z_low = z[..256].to_vec();
+        super::super::sub_nbit_qq_fast(b, &z_low, x1);
+        for &sh in &[0usize, 4, 6, 7, 8, 9, 32] {
+            add_shifted_small_reg_for_cost(b, &m, x1, sh, true);
+        }
+        // Approximate m cleanup from z's high bits. For z=x1+m*p with x1<p,
+        // top bits equal m except the same tiny x1<m*c exception as before.
+        for i in 0..16 {
+            b.cx(z[256 + i], m[i]);
+        }
+        // Uncompute z from y.
+        add_coeff_times_for_cost(b, 65535, y0, &z);
+        add_coeff_times_for_cost(b, -65536, y1, &z);
+        // x0 cleanup is exact: y0=x0 for this triangular matrix.
+        let y0_low = y0[..256].to_vec();
+        super::super::sub_nbit_qq_fast(b, &y0_low, x0);
+        (m, z)
+    }
+
+    #[test]
+    fn adjugate_m_correction_is_integral_for_sampled_by_matrices() {
+        // General cleanup formula behind the triangular prototype. If
+        // 2^w*y = P*x + p*m and det(P)=s*2^w, then
+        //   s*adj(P)*y = x + p * (s*adj(P)*m / 2^w).
+        // The correction vector is integral for valid BY rows, so old-row
+        // cleanup can in principle use the same low-word m values computed
+        // from the original sources, not a dense modular inverse matrix.
+        const W: usize = 16;
+        let p = SECP256K1_P;
+        let pinv = 51_919i128;
+        let mask = (1i128 << W) - 1;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-adjugate-m-integral-v1");
+        let mut reader = hasher.finalize_xof();
+        let mut buf = [0u8; 88];
+        for _ in 0..2_000 {
+            reader.read(&mut buf);
+            let f_low = (u64::from_le_bytes(buf[0..8].try_into().unwrap()) as i128) | 1;
+            let g_low = u64::from_le_bytes(buf[8..16].try_into().unwrap()) as i128;
+            let delta = (u64::from_le_bytes(buf[16..24].try_into().unwrap()) % 41) as i64 - 20;
+            let x0 = U256::from_le_slice(&buf[24..56]) % p;
+            let x1 = U256::from_le_slice(&buf[56..88]) % p;
+            let (_, _, _, mtx) = jump_matrix_direct_lowword(W, W, delta, f_low, g_low);
+            let t0_low = (mtx.m00 * (x0.as_limbs()[0] as i128) + mtx.m01 * (x1.as_limbs()[0] as i128)) & mask;
+            let t1_low = (mtx.m10 * (x0.as_limbs()[0] as i128) + mtx.m11 * (x1.as_limbs()[0] as i128)) & mask;
+            let m0 = (-t0_low * pinv) & mask;
+            let m1 = (-t1_low * pinv) & mask;
+            let sgn = det_sign_pow2(mtx, W);
+            let c0_num = sgn * (mtx.m11 * m0 - mtx.m01 * m1);
+            let c1_num = sgn * (-mtx.m10 * m0 + mtx.m00 * m1);
+            assert_eq!(c0_num & mask, 0, "adjugate m correction 0 not divisible by 2^w");
+            assert_eq!(c1_num & mask, 0, "adjugate m correction 1 not divisible by 2^w");
+        }
+    }
+
+    #[test]
+    fn positive_triangular_fixed_matrix_replacement_cleans_old_rows() {
+        const WIDTH: usize = 274;
+        let mtx = jump_matrix_direct_lowword(16, 16, -20, 1, 1).3;
+        assert_eq!((mtx.m00, mtx.m01, mtx.m10, mtx.m11), (65536, 0, 65535, 1));
+        let mut b = super::super::B::new();
+        let x0 = b.alloc_qubits(256);
+        let x1 = b.alloc_qubits(256);
+        let y0 = b.alloc_qubits(WIDTH);
+        let y1 = b.alloc_qubits(WIDTH);
+        emit_positive_row_scaled_from_sources_for_test(&mut b, mtx.m00, &x0, mtx.m01, &x1, &y0);
+        emit_positive_row_scaled_from_sources_for_test(&mut b, mtx.m10, &x0, mtx.m11, &x1, &y1);
+        let (m_reg, z_reg) = emit_positive_triangular_old_cleanup_for_test(&mut b, &x0, &x1, &y0, &y1);
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let p512 = u256_to_u512_for_by_tests(SECP256K1_P);
+        let pinv = 51_919u64;
+        let mask = (1u64 << 16) - 1;
+        let mut sx = Sampler::new(b"by-positive-tri-repl-x0-v1", SECP256K1_P);
+        let mut sy = Sampler::new(b"by-positive-tri-repl-x1-v1", SECP256K1_P);
+        for _ in 0..32 {
+            let a = sx.next();
+            let c = sy.next();
+            let exp0 = u256_to_u512_for_by_tests(a);
+            let t1 = u256_to_u512_for_by_tests(a) * U512::from(65535u64)
+                + u256_to_u512_for_by_tests(c);
+            let corr1 = (t1.as_limbs()[0] & mask).wrapping_mul((!pinv).wrapping_add(1)) & mask;
+            let exp1: U512 = (t1 + U512::from(corr1) * p512) >> 16usize;
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"by-positive-tri-repl-sim-v1");
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+            set_slice_u512_by(&mut sim, &x0, u256_to_u512_for_by_tests(a));
+            set_slice_u512_by(&mut sim, &x1, u256_to_u512_for_by_tests(c));
+            sim.apply(&ops);
+            assert_eq!(get_slice_u512_by(&sim, &x0), U512::ZERO, "x0 not zero");
+            assert_eq!(get_slice_u512_by(&sim, &x1), U512::ZERO, "x1 not zero");
+            assert_eq!(get_slice_u512_by(&sim, &m_reg), U512::ZERO, "m not zero");
+            assert_eq!(get_slice_u512_by(&sim, &z_reg), U512::ZERO, "z not zero");
+            assert_eq!(get_slice_u512_by(&sim, &y0), exp0, "y0 changed");
+            assert_eq!(get_slice_u512_by(&sim, &y1), exp1, "y1 mismatch");
+        }
+        eprintln!(
+            "positive triangular BY fixed-matrix replacement: ccx={ccx}, peak={peak}q"
+        );
+        assert!(ccx < 35_000, "fixed positive replacement too costly");
+        assert!(peak < 2_500, "fixed positive replacement peak too high");
+    }
+
     #[test]
     fn noncanonical_scaled_pair_map_is_injective_on_canonical_domain() {
         // Row scaling alone loses representative quotient (T and T+p collide),

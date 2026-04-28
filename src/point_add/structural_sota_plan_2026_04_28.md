@@ -385,14 +385,23 @@ Positive forward-row progress:
   matrix `[[65536,0],[65535,1]]`: correction `m` is computed from the original
   sources and uncomputed from those same sources after the shift. It matches
   the classical rows on 32 random basis states at `8772 CCX`, peak `1624q` for
-  forward rows only. Old-row cleanup remains open.
+  forward rows only.
+- `adjugate_m_correction_is_integral_for_sampled_by_matrices` proves the
+  general cleanup algebra on samples: if `2^w y = P x + p m` and
+  `det(P)=s 2^w`, then `s adj(P) y = x + p*(s adj(P)m/2^w)`, and the
+  correction vector is integral.
+- `positive_triangular_fixed_matrix_replacement_cleans_old_rows` uses that
+  formula to build the first complete fixed-matrix replacement for the
+  triangular positive matrix. It computes both scaled rows, recomputes `m` from
+  the old sources, zeros the old rows using the noncanonical adjugate residual,
+  uncomputes `m` from residual high bits, and uncomputes the residual. It
+  simulates correctly on 32 random basis states at `20146 CCX`, peak `1898q`.
 
 This reopens BY as a live SOTA-shaped route but with precise remaining
-obstacles: quotient cleanup for noncanonical row scaling, and branch/matrix
-history compression. Approximate scaled modular jump is plausibly comparable to
-the integer denominator jump only if quotient cleanup is fused cheaply with row
-formation. The next implementation target is a fixed-matrix row circuit that
-proves old-row quotient cleanup, then a BY tagged-DIV scaffold.
+obstacles: signed/general matrix replacement and branch/matrix history
+compression. The next implementation target is to generalize the fixed-matrix
+replacement from the triangular positive matrix to arbitrary signed BY matrices;
+then attempt a BY tagged-DIV scaffold.
 
 ### Program B — triangular one-inversion schedule (highest payoff, highest risk)
 
