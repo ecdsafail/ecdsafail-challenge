@@ -500,12 +500,28 @@ sample fixed window: 34,489 CCX, peak 1,285q, factor_ops=10
 ```
 
 This confirms the scratch breakthrough but also shows that naive Euclidean
-shear synthesis is more expensive than double-buffer fixed rows. It is still in
-SOTA range if it deletes a full inversion-sized object, but the next structural
-work is selected-factor synthesis and cheaper unimodular application, not local
-adder tuning. The remaining hard part is that `U,V,e` depend on quantum branch
-bits; coherent selected-factor application must avoid generic variable-coefficient
-multiplication.
+shear synthesis is more expensive than double-buffer fixed rows. A better route
+is to use the 16 branch bits directly as a numerator microprogram and postpone
+the common scaling. `fixed_branch_numerator_window_matches_scaled_by_matrix`
+implements the fixed-control circuit:
+
+```text
+for each branch bit: apply A/B/C numerator matrix
+then halve both rows 16 times
+sample window: 18,890 CCX, peak 1,029q
+64-sample distribution: mean 22,883 CCX, p90 27,588, max 30,913
+35 windows: ≈800,900 CCX, peak 1,029q
+```
+
+This is now both lower-Toffoli than the double-buffer fixed rows and has the
+right scratch shape. But `quantum_controlled_branch_numerator_replay_is_too_expensive_naively`
+shows the control tax: implementing every step with generic quantum-controlled
+modular adds costs `77,728 CCX/window`, or `≈2.72M` for 35 windows. Therefore
+the remaining SOTA blocker is precise: keep the branch-numerator arithmetic,
+but avoid paying generic controlled full-width modular adds for the branch
+selection. Needed ideas include a signed-add/sub mux primitive, blockwise
+branch specialization, or a reversible history scheme that turns branch bits
+into low-cost fixed-control blocks without huge QROM.
 
 This reopens BY as a live SOTA-shaped route but with precise remaining
 obstacles: branch/matrix history compression, selected Hermite-factor

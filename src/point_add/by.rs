@@ -3098,6 +3098,176 @@ mod tests {
         assert!(ccx < 80_000, "fixed Hermite in-place sample window too costly");
     }
 
+    fn emit_fixed_branch_numerator_scaled_window_for_test(
+        b: &mut super::super::B,
+        mut delta: i64,
+        bits: &[bool],
+        x0: &[super::super::QubitId],
+        x1: &[super::super::QubitId],
+        p: U256,
+    ) -> (usize, usize, usize) {
+        // Apply the 16 numerator microstep matrices directly, then apply the
+        // common 2^-16 scaling to both rows. This uses the branch bits as the
+        // circuit description and avoids Hermite-factor synthesis entirely in
+        // the fixed-control model.
+        let mut a_cases = 0usize;
+        let mut b_cases = 0usize;
+        let mut c_cases = 0usize;
+        for &odd in bits {
+            if delta > 0 && odd {
+                // A: (x0,x1) -> (2*x1, x1-x0)
+                super::super::mod_sub_qq_fast(b, x1, x0, p);
+                super::super::mod_add_qq_fast(b, x0, x1, p);
+                super::super::mod_double_inplace_fast(b, x0, p);
+                delta = 1 - delta;
+                a_cases += 1;
+            } else if odd {
+                // B: (x0,x1) -> (2*x0, x0+x1)
+                super::super::mod_add_qq_fast(b, x1, x0, p);
+                super::super::mod_double_inplace_fast(b, x0, p);
+                delta = 1 + delta;
+                b_cases += 1;
+            } else {
+                // C: (x0,x1) -> (2*x0, x1)
+                super::super::mod_double_inplace_fast(b, x0, p);
+                delta = 1 + delta;
+                c_cases += 1;
+            }
+        }
+        for _ in 0..bits.len() {
+            super::super::mod_halve_inplace_fast(b, x0, p);
+            super::super::mod_halve_inplace_fast(b, x1, p);
+        }
+        (a_cases, b_cases, c_cases)
+    }
+
+    #[test]
+    fn fixed_branch_numerator_window_matches_scaled_by_matrix() {
+        const W: usize = 16;
+        let p_mod = SECP256K1_P;
+        let delta = 1i64;
+        let f_low = 1i128;
+        let g_low = 3i128;
+        let bits = branch_bits_for_lowword_window(W, delta, f_low, g_low);
+        let (_, _, _, pmat) = jump_matrix_direct_lowword(W, W, delta, f_low, g_low);
+        let mut b = super::super::B::new();
+        let x0 = b.alloc_qubits(256);
+        let x1 = b.alloc_qubits(256);
+        let cases = emit_fixed_branch_numerator_scaled_window_for_test(&mut b, delta, &bits, &x0, &x1, p_mod);
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let inv2w = inv_pow2_mod_p_for_test(W, p_mod);
+        let row_expected = |a: U256, c: U256, c0: i128, c1: i128| -> U256 {
+            let t0 = mulm(signed_i128_mod_p(c0, p_mod), a, p_mod);
+            let t1 = mulm(signed_i128_mod_p(c1, p_mod), c, p_mod);
+            mulm(addm(t0, t1, p_mod), inv2w, p_mod)
+        };
+        let mut sx = Sampler::new(b"by-branch-num-x0-v1", p_mod);
+        let mut sy = Sampler::new(b"by-branch-num-x1-v1", p_mod);
+        for _ in 0..32 {
+            let a = sx.next();
+            let c = sy.next();
+            let exp0 = row_expected(a, c, pmat.m00, pmat.m01);
+            let exp1 = row_expected(a, c, pmat.m10, pmat.m11);
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"by-branch-num-sim-v1");
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+            set_slice_u512_by(&mut sim, &x0, u256_to_u512_for_by_tests(a));
+            set_slice_u512_by(&mut sim, &x1, u256_to_u512_for_by_tests(c));
+            sim.apply(&ops);
+            assert_eq!(get_slice_u512_by(&sim, &x0), u256_to_u512_for_by_tests(exp0), "row0 mismatch");
+            assert_eq!(get_slice_u512_by(&sim, &x1), u256_to_u512_for_by_tests(exp1), "row1 mismatch");
+        }
+        eprintln!(
+            "BY fixed branch-numerator scaled window: ccx={ccx}, peak={peak}q, cases={cases:?}, matrix={pmat:?}"
+        );
+        assert!(peak < 1_200, "branch-numerator fixed window lost scratch advantage");
+        assert!(ccx < 35_000, "branch-numerator fixed window not cheaper than Hermite sample");
+    }
+
+    #[test]
+    fn quantum_controlled_branch_numerator_replay_is_too_expensive_naively() {
+        // The fixed branch-numerator window is the right arithmetic lower
+        // bound, but if every BY case is selected by live quantum controls with
+        // today's cmod_add/cmod_sub primitives, the control tax reverts to the
+        // old microstep bottleneck. Keep this as a guardrail: the selected
+        // implementation needs a structural trick, not generic controlled
+        // modular additions for all possible cases.
+        const W: usize = 16;
+        let p = SECP256K1_P;
+        let mut b = super::super::B::new();
+        let a_ctrl = b.alloc_qubit();
+        let b_ctrl = b.alloc_qubit();
+        let r = b.alloc_qubits(256);
+        let s = b.alloc_qubits(256);
+        let start = b.ops.len();
+        for _ in 0..W {
+            emit_tagged_modular_microstep_for_cost(&mut b, &r, &s, a_ctrl, b_ctrl, p);
+        }
+        for _ in 0..W {
+            super::super::mod_halve_inplace_fast(&mut b, &r, p);
+            super::super::mod_halve_inplace_fast(&mut b, &s, p);
+        }
+        let ccx = count_ccx(&b.ops[start..]);
+        let approx35 = ccx as f64 * 35.0;
+        eprintln!(
+            "BY naive quantum-controlled branch-numerator replay: window_ccx={ccx}, approx35≈{approx35:.0}, peak={}q",
+            b.peak_qubits
+        );
+        assert!(approx35 > 2_500_000.0, "naive controlled branch replay unexpectedly SOTA-shaped");
+    }
+
+    #[test]
+    fn fixed_branch_numerator_window_cost_distribution() {
+        const W: usize = 16;
+        let p_mod = SECP256K1_P;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-branch-numerator-cost-dist-v1");
+        let mut reader = hasher.finalize_xof();
+        let mut buf = [0u8; 24];
+        let samples = 64usize;
+        let mut costs = Vec::with_capacity(samples);
+        let mut peaks = Vec::with_capacity(samples);
+        let mut a_total = 0usize;
+        let mut b_total = 0usize;
+        let mut c_total = 0usize;
+        for _ in 0..samples {
+            reader.read(&mut buf);
+            let f_low = (u64::from_le_bytes(buf[0..8].try_into().unwrap()) as i128) | 1;
+            let g_low = u64::from_le_bytes(buf[8..16].try_into().unwrap()) as i128;
+            let delta = (u64::from_le_bytes(buf[16..24].try_into().unwrap()) % 41) as i64 - 20;
+            let bits = branch_bits_for_lowword_window(W, delta, f_low, g_low);
+            let mut b = super::super::B::new();
+            let x0 = b.alloc_qubits(256);
+            let x1 = b.alloc_qubits(256);
+            let (ac, bc, cc) = emit_fixed_branch_numerator_scaled_window_for_test(&mut b, delta, &bits, &x0, &x1, p_mod);
+            a_total += ac;
+            b_total += bc;
+            c_total += cc;
+            costs.push(count_ccx(&b.ops));
+            peaks.push(b.peak_qubits as usize);
+        }
+        costs.sort_unstable();
+        peaks.sort_unstable();
+        let mean = costs.iter().sum::<usize>() as f64 / samples as f64;
+        let p90 = costs[samples * 90 / 100];
+        let max = costs[samples - 1];
+        let approx35 = mean * 35.0;
+        eprintln!(
+            "BY fixed branch-numerator cost distribution: mean_ccx={mean:.1}, p90={p90}, max={max}, approx35≈{approx35:.0}, max_peak={}q, avg_cases=({:.2},{:.2},{:.2})",
+            peaks[samples - 1],
+            a_total as f64 / samples as f64,
+            b_total as f64 / samples as f64,
+            c_total as f64 / samples as f64
+        );
+        assert!(peaks[samples - 1] < 1_200, "branch-numerator distribution lost scratch advantage");
+        assert!(approx35 < 900_000.0, "fixed branch-numerator arithmetic not SOTA-shaped");
+    }
+
     #[test]
     fn fixed_hermite_inplace_window_cost_distribution() {
         const W: usize = 16;
