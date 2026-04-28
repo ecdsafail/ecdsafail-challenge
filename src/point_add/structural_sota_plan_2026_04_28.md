@@ -682,11 +682,20 @@ window-local A clear: 1,270,080 CCX, peak 2,221q, phase=1
 ```
 
 Classical tagged-DIV data is correct, but clearing controls early invalidates
-phase corrections left by the MBU modular add/halve primitives. Therefore a
-production replay needs either (a) keep A controls live until the end, (b)
-exact/phase-safe modular microsteps for window-local control clearing, or (c)
-a self-cleaning denominator/window design whose phase fixup includes the early
-control uncompute.
+phase corrections left by the MBU modular add/halve primitives. Exact modular
+microsteps were calibrated in
+`exact_scaled_microstep_is_phase_safe_but_too_expensive_for_window_local_clear`:
+
+```text
+fast MBU scaled microstep   = 2,046 CCX
+exact scaled microstep      = 4,350 CCX
+exact 560-step replay       ≈ 2,436,000 CCX
+```
+
+So the obvious exact/phase-safe replay would restore window-local control
+clearing but lose the SOTA Toffoli shape. A production replay therefore needs
+either (a) keep A controls live until the end, or (b) a more surgical phase-fix
+for early A clearing, ideally inside the self-cleaning denominator/window design.
 
 `compressed_pattern_history_scratch_model_is_600q_if_add_workspace_is_removed`
 spells out the remaining scratch equation:

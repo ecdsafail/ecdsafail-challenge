@@ -3700,6 +3700,52 @@ mod tests {
         super::super::add_nbit_const_fast(b, delta, U256::from(1u64));
     }
 
+    fn emit_cmod_neg_exact_for_test(
+        b: &mut super::super::B,
+        v: &[super::super::QubitId],
+        ctrl: super::super::QubitId,
+        p: U256,
+    ) {
+        for &q in v {
+            b.cx(ctrl, q);
+        }
+        super::super::cadd_nbit_const(b, v, p.wrapping_add(U256::from(1u64)), ctrl);
+    }
+
+    fn cmod_add_qq_exact_for_test(
+        b: &mut super::super::B,
+        acc: &[super::super::QubitId],
+        a: &[super::super::QubitId],
+        ctrl: super::super::QubitId,
+        p: U256,
+    ) {
+        let f = b.alloc_qubits(acc.len());
+        for i in 0..acc.len() {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+        super::super::mod_add_qq(b, acc, &f, p);
+        for i in 0..acc.len() {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+        b.free_vec(&f);
+    }
+
+    fn emit_scaled_by_controlled_microstep_exact_for_test(
+        b: &mut super::super::B,
+        r: &[super::super::QubitId],
+        s: &[super::super::QubitId],
+        odd_ctrl: super::super::QubitId,
+        a_ctrl: super::super::QubitId,
+        p: U256,
+    ) {
+        for i in 0..r.len() {
+            super::super::cswap(b, a_ctrl, r[i], s[i]);
+        }
+        emit_cmod_neg_exact_for_test(b, s, a_ctrl, p);
+        cmod_add_qq_exact_for_test(b, s, r, odd_ctrl, p);
+        super::super::mod_halve_inplace(b, s, p);
+    }
+
     fn emit_scaled_by_controlled_microstep_for_test(
         b: &mut super::super::B,
         r: &[super::super::QubitId],
@@ -4176,6 +4222,35 @@ mod tests {
             "BY inverse scaled 560-step product-clean scaffold: ccx={ccx}, peak={peak}q"
         );
         assert!(ccx < 1_400_000, "inverse scaled BY cleanup too costly");
+    }
+
+    #[test]
+    fn exact_scaled_microstep_is_phase_safe_but_too_expensive_for_window_local_clear() {
+        // Exact reversible modular arithmetic should allow controls to be
+        // cleared locally, unlike the MBU fast path. Quantify the tax before
+        // pursuing a full exact replay.
+        let p = SECP256K1_P;
+        let mut b = super::super::B::new();
+        let odd = b.alloc_qubit();
+        let a = b.alloc_qubit();
+        let r = b.alloc_qubits(256);
+        let s = b.alloc_qubits(256);
+        emit_scaled_by_controlled_microstep_exact_for_test(&mut b, &r, &s, odd, a, p);
+        let exact_ccx = count_ccx(&b.ops);
+        let exact_peak = b.peak_qubits;
+        let mut bf = super::super::B::new();
+        let oddf = bf.alloc_qubit();
+        let af = bf.alloc_qubit();
+        let rf = bf.alloc_qubits(256);
+        let sf = bf.alloc_qubits(256);
+        emit_scaled_by_controlled_microstep_for_test(&mut bf, &rf, &sf, oddf, af, p);
+        let fast_ccx = count_ccx(&bf.ops);
+        let approx560 = exact_ccx as f64 * 560.0;
+        eprintln!(
+            "BY exact scaled microstep: exact_ccx={exact_ccx}, fast_ccx={fast_ccx}, approx560≈{approx560:.0}, peak={exact_peak}q"
+        );
+        assert!(exact_ccx > fast_ccx + 1_000, "exact microstep tax unexpectedly small");
+        assert!(approx560 > 2_000_000.0, "exact replay might be SOTA-shaped; revisit window-local clear");
     }
 
     #[test]
