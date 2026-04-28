@@ -624,7 +624,10 @@ raw controls      = 1120 qubits
 So the full arithmetic scaffold fits the current 2800q cap even before history
 compression. It is not yet the user's 600-scratch design, but it is now an
 actual costed 560-step circuit skeleton, not only an extrapolated one-step
-number.
+number. `scaled_by_controlled_560_tagged_div_basis_simulation` goes one step
+further: for a sampled converged denominator it sets all 560 controls, starts
+`(r,s)=(0,y+x)`, simulates the full 1.145M-CCX circuit on basis states, verifies
+bottom channel zero, and recovers `y/x` as `sign(f)*r-1`.
 
 The raw `(odd,A)` controls can be compressed further because A is not an
 independent bit. `window_pattern_and_delta_reconstruct_a_controls` proves that a

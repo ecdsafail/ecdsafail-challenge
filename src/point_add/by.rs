@@ -3441,6 +3441,81 @@ mod tests {
     }
 
     #[test]
+    fn scaled_by_controlled_560_tagged_div_basis_simulation() {
+        let p = SECP256K1_P;
+        let inv2 = (p.wrapping_add(U256::from(1u64))) >> 1usize;
+        let mut sx = Sampler::new(b"by-scaled-560-sim-x-v1", p);
+        let mut sy = Sampler::new(b"by-scaled-560-sim-y-v1", p);
+        let (x, y, controls, exp_r, exp_s, f_final) = loop {
+            let x = sx.next();
+            let y = sy.next();
+            let mut delta = 1i64;
+            let mut f = SInt::from_u(p);
+            let mut g = SInt::from_u(x);
+            let mut r_exp = U256::ZERO;
+            let mut s_exp = addm(y, x, p);
+            let mut controls = Vec::with_capacity(560);
+            for _ in 0..560 {
+                let odd = g.bit0();
+                let a = delta > 0 && odd;
+                controls.push((odd, a));
+                if a {
+                    let nr = s_exp;
+                    let ns = mulm(subm(s_exp, r_exp, p), inv2, p);
+                    r_exp = nr;
+                    s_exp = ns;
+                } else if odd {
+                    s_exp = mulm(addm(s_exp, r_exp, p), inv2, p);
+                } else {
+                    s_exp = mulm(s_exp, inv2, p);
+                }
+                divstep_sint_state(&mut delta, &mut f, &mut g);
+            }
+            if g.is_zero() && (f.is_one_pos() || f.is_one_neg()) {
+                break (x, y, controls, r_exp, s_exp, f);
+            }
+        };
+
+        let mut b = super::super::B::new();
+        let odd = b.alloc_qubits(560);
+        let a_ctrl = b.alloc_qubits(560);
+        let r = b.alloc_qubits(256);
+        let s = b.alloc_qubits(256);
+        for i in 0..560 {
+            emit_scaled_by_controlled_microstep_for_test(&mut b, &r, &s, odd[i], a_ctrl[i], p);
+        }
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-scaled-560-sim-xof-v1");
+        let mut xof = hasher.finalize_xof();
+        let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+        for (i, &(odd_v, a_v)) in controls.iter().enumerate() {
+            if odd_v {
+                *sim.qubit_mut(odd[i]) |= 1;
+            }
+            if a_v {
+                *sim.qubit_mut(a_ctrl[i]) |= 1;
+            }
+        }
+        set_slice_u512_by(&mut sim, &r, U512::ZERO);
+        set_slice_u512_by(&mut sim, &s, u256_to_u512_for_by_tests(addm(y, x, p)));
+        sim.apply(&ops);
+        assert_eq!(get_slice_u512_by(&sim, &r), u256_to_u512_for_by_tests(exp_r), "r mismatch");
+        assert_eq!(get_slice_u512_by(&sim, &s), u256_to_u512_for_by_tests(exp_s), "s mismatch");
+        assert_eq!(exp_s, U256::ZERO, "bottom tagged channel did not zero");
+        let plus_one = if f_final.is_one_pos() { exp_r } else { negm(exp_r, p) };
+        let quotient = subm(plus_one, U256::from(1u64), p);
+        assert_eq!(quotient, mulm(y, fermat_modinv(x, p), p), "tagged quotient mismatch");
+        eprintln!(
+            "BY scaled controlled 560-step tagged-DIV basis sim: ccx={ccx}, peak={peak}q"
+        );
+    }
+
+    #[test]
     fn scaled_by_controlled_560_scaffold_cost_model_fits_current_cap() {
         let p = SECP256K1_P;
         let mut b = super::super::B::new();
