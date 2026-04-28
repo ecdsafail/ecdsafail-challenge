@@ -1,5 +1,7 @@
 # Autoresearch Ideas Backlog
 
+- Potential BY replay-cost breakthrough: fuse `cmod_add_qq(s,r,odd)` followed by `mod_halve(s)` into one reversible controlled modular average `s <- (s + odd*r)/2`. Irreversible case split is `T=s+odd*r`; if `T` is even output `T/2`, if odd output `(T+p)/2` for `T<p` or `(T-p)/2` for `T>=p`. A clean circuit must recover the modular-add carry from the final doubled output (analogous to `mod_add_qq_fast`'s `cmp_lt` flag recovery). If this removes one full modular-add correction per BY microstep, each replay could drop well below 1.145M.
+
 ## Current State (2026-04-28)
 - Best: **4,136,878 Toffoli @ 2716 qubits**, 24-seed phase-robust (commit b16e5d4 / later docs at 8b88c4c).
 - SOTA target: **2.7M Toffoli @ 1175 qubits** low-qubit and **2.1M @ 1425q** low-gate (Babbush-Zalcman-Gidney et al., arXiv:2603.28846 / Google ZKP).
