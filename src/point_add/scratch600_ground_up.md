@@ -487,9 +487,29 @@ the current baseline peak, and pair2 Kaliski again dominates peak qubits. It is
 also an invalidation of naive terminal-index replay as a Toffoli path: a 9-bit
 comparator inside every coefficient iteration costs far too much.
 
+The improved compressed variant `KAL_TAGGED_DIV_BRANCH_TERM_ROLL=1` keeps the
+same `m_hist+a_hist+term_idx` qubit shape, but carries a rolling active flag
+through coefficient replay. Each iteration only tests `term_idx == i` to toggle
+the active flag, then uses one add-control `active & !(a xor m)`. This avoids
+the double cmod-add and per-iteration greater-than comparator:
+
+```text
+KAL_TAGGED_DIV_BRANCH_TERM_ROLL=1 cargo run --release -- --note branch-term-roll-div
+avg_toffoli = 4,733,146
+qubits      = 2,714
+classical/phase/ancilla failures = 0
+peak phase  = pair2 Kaliski, not branch-DIV
+```
+
+This dominates both previous compressed versions in qubits and Toffoli, but it
+is still not SOTA: branch-history recording plus coefficient replay remains
+~600k Toffoli worse than the current default. The structural implication is
+clear: the branch-DIV qubit shape is plausible, but history replay must be
+removed or fused with the point-add body.
+
 So these scaffolds prove clean reversible tagged DIV below 2800q, but not SOTA
-Toffoli. The remaining gap is to eliminate/compress branch histories without a
-per-iteration comparator and/or make the branch predicate self-cleaning.
+Toffoli. The remaining gap is to eliminate/compress branch histories without
+full replay and/or make the branch predicate self-cleaning.
 
 Therefore a self-cleaning DIV now needs:
 

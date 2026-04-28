@@ -5480,6 +5480,66 @@ fn apply_coeff_channel_from_hist(
     }
 }
 
+fn with_eq_const_fast<F: FnOnce(&mut B)>(b: &mut B, bits: &[QubitId], c: usize, flag: QubitId, body: F) {
+    for (i, &q) in bits.iter().enumerate() {
+        if ((c >> i) & 1) != 0 {
+            b.x(q);
+        }
+    }
+    with_eq_zero_fast(b, bits, flag, body);
+    for (i, &q) in bits.iter().enumerate() {
+        if ((c >> i) & 1) != 0 {
+            b.x(q);
+        }
+    }
+}
+
+fn apply_coeff_channel_from_term_roll(
+    b: &mut B,
+    p: U256,
+    cr: &[QubitId],
+    cs: &[QubitId],
+    a_hist: &[QubitId],
+    m_hist: &[QubitId],
+    term_bits: &[QubitId],
+) {
+    assert_eq!(a_hist.len(), m_hist.len());
+    let active = b.alloc_qubit();
+    b.x(active); // active before the terminal iteration.
+    for i in 0..a_hist.len() {
+        b.set_phase("br_roll_term_update");
+        let eq_i = b.alloc_qubit();
+        with_eq_const_fast(b, term_bits, i, eq_i, |b| {
+            b.cx(eq_i, active);
+        });
+        b.free(eq_i);
+
+        b.set_phase("br_roll_coeff_cswap1");
+        coeff_channel_cswap(b, a_hist[i], cr, cs);
+
+        b.set_phase("br_roll_coeff_add");
+        let same = b.alloc_qubit();
+        b.x(same);
+        b.cx(a_hist[i], same);
+        b.cx(m_hist[i], same); // same = !(a xor m)
+        let add_ctrl = b.alloc_qubit();
+        b.ccx(active, same, add_ctrl);
+        coeff_channel_cadd(b, p, cr, cs, add_ctrl);
+        b.ccx(active, same, add_ctrl);
+        b.free(add_ctrl);
+        b.cx(m_hist[i], same);
+        b.cx(a_hist[i], same);
+        b.x(same);
+        b.free(same);
+
+        b.set_phase("br_roll_coeff_double");
+        coeff_channel_double(b, p, cr);
+        b.set_phase("br_roll_coeff_cswap2");
+        coeff_channel_cswap(b, a_hist[i], cr, cs);
+    }
+    b.free(active);
+}
+
 fn apply_coeff_channel_from_term_index(
     b: &mut B,
     p: U256,
@@ -5892,6 +5952,36 @@ fn kaliski_branch_record_backward_term(
             b.x(st.u[i]);
         }
     }
+}
+
+fn with_kal_branch_term_roll_tagged_div<F: FnOnce(&mut B)>(
+    b: &mut B,
+    v_in: &[QubitId],
+    p: U256,
+    iters: usize,
+    coeff: (&[QubitId], &[QubitId]),
+    body: F,
+) {
+    let n = v_in.len();
+    let mut st = alloc_kaliski_branch_state_no_add(b, n, iters);
+    let term_bits = b.alloc_qubits(9);
+    kaliski_branch_record_forward_term(b, v_in, &st, &term_bits, p, iters);
+
+    b.x(st.u[0]);
+    b.free_vec(&st.u);
+    b.free_vec(&st.v_w);
+    b.free(st.f_flag);
+
+    apply_coeff_channel_from_term_roll(b, p, coeff.0, coeff.1, &st.a_hist, &st.m_hist, &term_bits);
+    body(b);
+
+    st.u = b.alloc_qubits(n);
+    st.v_w = b.alloc_qubits(n);
+    st.f_flag = b.alloc_qubit();
+    b.x(st.u[0]);
+    kaliski_branch_record_backward_term(b, v_in, &st, &term_bits, p, iters);
+    b.free_vec(&term_bits);
+    free_kaliski_branch_state(b, st);
 }
 
 fn with_kal_branch_term_tagged_div<F: FnOnce(&mut B)>(
@@ -6414,10 +6504,12 @@ fn build_standard_point_add(
     let branch_hist_div = std::env::var("KAL_TAGGED_DIV_BRANCH_HIST").ok().as_deref() == Some("1");
     let branch_stream_div = std::env::var("KAL_TAGGED_DIV_BRANCH_STREAM").ok().as_deref() == Some("1");
     let branch_term_div = std::env::var("KAL_TAGGED_DIV_BRANCH_TERM").ok().as_deref() == Some("1");
+    let branch_term_roll_div = std::env::var("KAL_TAGGED_DIV_BRANCH_TERM_ROLL").ok().as_deref() == Some("1");
     let tagged_div_validate = coeff_channel_div
         || branch_hist_div
         || branch_stream_div
         || branch_term_div
+        || branch_term_roll_div
         || std::env::var("KAL_TAGGED_DIV_VALIDATE").ok().as_deref() == Some("1");
     let pair1_iters = 407;
     // The tagged validation paths change the op stream / Fiat-Shamir seed;
@@ -6434,7 +6526,31 @@ fn build_standard_point_add(
     }
 
     let lam_cell: std::cell::RefCell<Option<Vec<QubitId>>> = std::cell::RefCell::new(None);
-    if branch_term_div {
+    if branch_term_roll_div {
+        // Compressed branch stream with a rolling active flag. This keeps the
+        // 9-bit terminal index qubit saving, but avoids branch_term's expensive
+        // per-iteration `term_idx > i` comparator and double cmod-add replay.
+        let lam_inner = b.alloc_qubits(N);
+        let lam_coeff = lam_inner.clone();
+        let ty_coeff: Vec<QubitId> = ty.to_vec();
+        b.set_phase("pair1_kaliski_branch_term_roll");
+        with_kal_branch_term_roll_tagged_div(
+            b,
+            &tx,
+            p,
+            pair1_iters,
+            (&lam_coeff, &ty_coeff),
+            |b| {
+                b.set_phase("pair1_branch_term_roll_halve");
+                for _ in 0..pair1_iters {
+                    mod_halve_inplace_fast(b, &lam_inner, p);
+                }
+                b.set_phase("pair1_branch_term_roll_untag_lam");
+                mod_add_qc(b, &lam_inner, U256::from(1u64), p);
+                *lam_cell.borrow_mut() = Some(lam_inner);
+            },
+        );
+    } else if branch_term_div {
         // Compressed branch stream: store m_hist+a_hist plus a 9-bit terminal
         // index instead of a full add_hist. Coefficient replay reconstructs
         // active VG adds using term_idx > i.
