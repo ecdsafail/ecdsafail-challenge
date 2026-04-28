@@ -329,16 +329,46 @@ transform Kaliski. A viable design must be more radical: make `r` itself one
 of the final output registers, or use a different Euclidean transform whose
 matrix has a triangular form better suited to DIV.
 
-## 10. Fast invalidation tasks still open
+## 10. Output-register use of `r`: reduces to self-cleaning forward Kaliski
 
-1. **Output-register use of `r`**: allow Kaliski's coefficient `r` scratch to
-   become final `tx` or `ty`, with old data cleaned by the denominator state.
-   This is the remaining way to avoid requiring `rF` constant.
+If Kaliski coefficient `r` is allowed to become final `ty`, we can avoid the
+quotient-copy lower bound:
+
+```text
+start:   tx=x, ty=y, scratch r=0, scratch u=p
+forward coefficient Kaliski using ty as s:
+         r = k*y  (scaled quotient), ty/s = 0, u=1, tx/v=0-ish
+scale r by a known constant -> y/x
+compute remaining point-add arithmetic using r as the slope/output channel
+swap r into ty at the end, leaving r=0
+```
+
+This would fit the scratch budget (`u` + `r` = 512q plus small flags) **if and
+only if** forward Kaliski can be made self-cleaning, i.e. no persistent
+`m_hist` and no backward pass.
+
+The new test `end_state_needs_coefficient_registers_to_recover_branch` shows:
+
+- `(u,v,f)` at iteration end does **not** determine the branch; denominator-only
+  recovery has collisions.
+- `(u,v,r,s,f)` at iteration end **does** determine the branch on 200×407
+  sampled canonical coefficient trajectories.
+
+So a self-cleaning forward Kaliski is not information-theoretically dead, but
+its branch-recovery predicate must inspect the coefficient registers. It is not
+the cheap 4-bit start-state formula. This is the next hard synthesis problem.
+
+## 11. Fast invalidation tasks still open
+
+1. **End-state branch predicate synthesis**: derive a reversible predicate for
+   the previous branch from `(u',v',r',s',f', iter_idx)` cheap enough to replace
+   `m_hist`. If it costs ~one comparator + a few modular half/add candidate
+   checks per iter, forward-only DIV may still beat the 2-Kaliski scaffold.
+   If it costs a full inverse-step replay or many n-bit comparisons, kill it.
 
 2. **Direct DIV synthesis**: ignore current Kaliski structure and design a
    reversible Euclidean map for `(x,y)->(x,y/x)` where `y` is the coefficient
-   register throughout and no independent quotient copy is made. This is
-   probably what a 600-scratch solution needs.
+   register throughout and no independent quotient copy is made.
 
 3. **Alternative Euclidean transform search**: seek an update convention whose
    coefficient matrix has form `[[*, k],[0, 1]]` or similar, so that backward

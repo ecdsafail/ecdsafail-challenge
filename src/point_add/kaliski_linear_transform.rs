@@ -55,10 +55,23 @@ fn add_mod(a: U256, b: U256, p: U256) -> U256 {
     a.add_mod(b, p)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Branch {
     a_swap: bool,
     add: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LinState {
+    u: U256,
+    v: U256,
+    r: U256,
+    s: U256,
+    f: u8,
+}
+
+fn limbs(x: U256) -> [u64; 4] {
+    *x.as_limbs()
 }
 
 /// The branch sequence depends only on `(u,v,f)`, not on the coefficient
@@ -119,6 +132,40 @@ fn pow2_mod(e: usize) -> U256 {
     r
 }
 
+fn step_linear_canonical(st: &mut LinState) -> Branch {
+    let mut m = 0u8;
+    if st.f == 1 && st.v == U256::ZERO { m ^= 1; }
+    st.f ^= m;
+
+    let u0 = if st.u.bit(0) { 1u8 } else { 0u8 };
+    let v0 = if st.v.bit(0) { 1u8 } else { 0u8 };
+    let mut a = 0u8;
+    if st.f == 1 && u0 == 0 { a ^= 1; }
+    if st.f == 1 && u0 == 1 && v0 == 0 { m ^= 1; }
+    let b = a ^ m;
+    let gt = if st.u > st.v { 1u8 } else { 0u8 };
+    let delta = (st.f & gt) & (1 ^ b);
+    a ^= delta;
+    m ^= delta;
+    let br = Branch { a_swap: a == 1, add: (st.f & (1 ^ b)) == 1 };
+
+    if br.a_swap {
+        core::mem::swap(&mut st.u, &mut st.v);
+        core::mem::swap(&mut st.r, &mut st.s);
+    }
+    if br.add {
+        st.v = st.v.wrapping_sub(st.u);
+        st.s = add_mod(st.s, st.r, SECP256K1_P);
+    }
+    st.v >>= 1;
+    st.r = add_mod(st.r, st.r, SECP256K1_P);
+    if br.a_swap {
+        core::mem::swap(&mut st.u, &mut st.v);
+        core::mem::swap(&mut st.r, &mut st.s);
+    }
+    br
+}
+
 #[test]
 fn coefficient_transform_shape() {
     let p = SECP256K1_P;
@@ -155,6 +202,48 @@ fn dy_seeded_forward_computes_scaled_slope_and_zeroes_s() {
         assert_eq!(r, expect, "r = raw_inv(dx) * dy = scaled slope");
         assert_eq!(s, U256::ZERO, "s/ty is consumed to zero in canonical form");
     }
+}
+
+#[test]
+fn end_state_needs_coefficient_registers_to_recover_branch() {
+    // A forward-only low-qubit DIV would like to run Kaliski without storing
+    // m_hist. That requires each iteration's branch bit to be uncomputed from
+    // the updated live state. This diagnostic separates two facts:
+    //   1. denominator state alone (u,v,f) is NOT enough; many collisions occur.
+    //   2. full coefficient state (u,v,r,s,f) WAS enough on this sample set.
+    // So a self-cleaning DIV, if it exists, must use the coefficient registers
+    // in the branch-recovery predicate; a tiny parity/comparator fingerprint is
+    // not enough.
+    use std::collections::HashMap;
+
+    let mut denom_seen: HashMap<([u64; 4], [u64; 4], u8), Branch> = HashMap::new();
+    let mut full_seen: HashMap<([u64; 4], [u64; 4], [u64; 4], [u64; 4], u8), Branch> = HashMap::new();
+    let mut denom_conflicts = 0usize;
+    let mut full_conflicts = 0usize;
+
+    for seed in 1..=200u64 {
+        let mut st = LinState {
+            u: SECP256K1_P,
+            v: random_element(seed),
+            r: U256::ZERO,
+            s: random_element(seed + 10_000),
+            f: 1,
+        };
+        for _ in 0..ITERS {
+            let br = step_linear_canonical(&mut st);
+            let dk = (limbs(st.u), limbs(st.v), st.f);
+            if let Some(prev) = denom_seen.insert(dk, br) {
+                if prev != br { denom_conflicts += 1; }
+            }
+            let fk = (limbs(st.u), limbs(st.v), limbs(st.r), limbs(st.s), st.f);
+            if let Some(prev) = full_seen.insert(fk, br) {
+                if prev != br { full_conflicts += 1; }
+            }
+        }
+    }
+
+    assert!(denom_conflicts > 0, "denominator-only end-state unexpectedly recovered branches");
+    assert_eq!(full_conflicts, 0, "full end-state branch recovery collided in samples");
 }
 
 #[test]
