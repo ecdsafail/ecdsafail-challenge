@@ -1,10 +1,45 @@
 # Autoresearch Ideas Backlog
 
-## Current State (2026-04-26)
+## Current State (2026-04-26 / 2026-04-27)
 - Best: **4,136,878 Toffoli @ 2716 qubits**, 24-seed phase-robust (commit c1aeeb4).
 - SOTA target: **2.1M Toffoli @ 1175 qubits** (Babbush-Zalcman-Gidney et al., arXiv:2603.28846).
 - Gap: ~2M Toffoli, ~1500 qubits.
 - Already beats published HRSL 2020 (~12M) and Kim 2026 (~17M) by 3-4×.
+
+## 2026-04-27 PIVOTAL UNLOCK: m_hist is not irreducible state
+
+**Classically verified on 256,000 random samples** (see
+`src/point_add/kaliski_classical_replay.rs`):
+
+```
+  m_i = f AND u[0] AND (NOT v_w[0] OR (u > v_w))
+```
+
+Zero mismatches across 500 secp256k1 inputs × 512 iters each. Only 7 of 16
+F_min-fingerprint states are reachable; all are deterministic.
+
+**Consequences**:
+- 407 qubits of persistent m_hist can be replaced with per-iter recomputation.
+- Overhead: ~7 CCX/iter × 407 iters × 2 passes = ~5,700 CCX ≈ 0.14% of budget.
+- Combined with single-inversion scaffold + r-into-multiplier fusion,
+  projected peak ≈ **1156q** (see `src/point_add/kaliski_1200q_feasibility.md`).
+
+**Next-priority implementation**: port `m_i = f AND u[0] AND (NOT v_w[0] OR gt)`
+into `kaliski_iteration`:
+1. Replace m_hist[i] write with a fresh iter-local ancilla.
+2. At iter end, uncompute via the mirrored formula.
+3. In backward, recompute m_i at each iter from live state (same formula).
+4. Remove m_hist field from KaliskiState.
+
+**Expected gains**: peak 2716 → ~2309 qubits (-407). Toffoli: negligible change
+(+5.7k, -407q of alloc/free overhead = roughly neutral).
+
+**Blockers to study**: phase-correction protocol for measurement-uncomputed
+iter-local m_i (standard Gidney MBU pattern should apply, but the HMR
+call sequence interacts subtly with the backward replay — same failure
+mode seen with venting integration in prior sessions; needs careful
+derivation, not blind porting).
+
 
 ## Dead-ends proven in 2026-04-26 session (avoid re-exploring)
 - **Single-inversion B2 (any variant)**: 320 phase-batch signature is intrinsic. Fresh-output rewrite gave identical signature. Classical falsification proved no cheap polynomial uncompute of `lam_copy` from live outputs.
