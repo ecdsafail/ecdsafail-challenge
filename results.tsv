@@ -734,3 +734,9 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1777342964	9261c51	4672021.000	26906122.685	2977	34600006	OK	coeff-channel-div
 1777343158	9261c51	4132750.000	24414411.956	2716	31193208	OK	schoolbook addsub correction3: cuccaro_sub_fast -> cuccaro_sub (saves 2n peak carries) 
 1777343187	9261c51	4132750.000	24414411.956	2716	31193208	OK	autoresearch-checks
+1777344623	23cddbe	4729076.000	23498581.957	2870	32879965	OK	branch-hist-div-phase-allowed
+1777344666	23cddbe	4729076.000	23498581.957	2870	32879965	OK	branch-hist-peak
+1777344786	23cddbe	4729076.000	23500330.348	2763	32881701	OK	branch-stream-div
+1777344821	23cddbe	4729076.000	23500330.348	2763	32881701	OK	branch-stream-peak
+1777344876	23cddbe	4132750.000	24414411.956	2716	31193208	OK	schoolbook addsub correction3: cuccaro_sub_fast -> cuccaro_sub (saves 2n peak carries) 
+1777344906	23cddbe	4132750.000	24414411.956	2716	31193208	OK	autoresearch-checks

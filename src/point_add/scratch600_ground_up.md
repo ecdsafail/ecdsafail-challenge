@@ -448,9 +448,33 @@ A small positive result for that next scaffold is captured by
 alongside the existing `m_hist`, then `add = f & !(a xor m)` recovers the full
 branch pair. This suggests a branch-only Kaliski generator can replace the full
 ordinary `(r,s)` inverse sentinel with an `a_hist` bitstream. That saves only
-~105 qubits net (`r,s` = 512 removed, `a_hist` = 407 added) and still stores
-history, so it is not the final 600-scratch answer, but it is a concrete next
-circuit scaffold to test.
+~105 qubits net (`r,s` = 512 removed, `a_hist` = 407 added) if run interleaved,
+and still stores history.
+
+The more useful wired version is `KAL_TAGGED_DIV_BRANCH_STREAM=1`:
+
+1. run denominator Kaliski while recording `m_hist`, `a_hist`, and `add_hist`,
+2. free the known final denominator state `(u,v,f)=(1,0,0)`,
+3. replay the branch histories into the tagged coefficient channel `(lam,ty)`,
+4. uncompute the denominator histories.
+
+This passes the real harness and is the first low-qubit tagged-DIV scaffold
+under the current 2800q cap:
+
+```text
+KAL_TAGGED_DIV_BRANCH_STREAM=1 cargo run --release -- --note branch-stream-div
+avg_toffoli = 4,729,076
+qubits      = 2,763
+classical/phase/ancilla failures = 0
+peak phase  = br_rec_step2 / br_stream_coeff_add
+```
+
+It is still **not** a SOTA path as-is: Toffoli is worse than baseline because it
+stores 3 history streams and replays a full modular coefficient pass, with no
+Kaliski truncation in the branch generator. But it proves the y+x tagged DIV can
+be made into a clean reversible point-add sub-scaffold below 2800q. The
+remaining gap is to eliminate/compress branch histories and/or make the branch
+predicate self-cleaning.
 
 Therefore a self-cleaning DIV now needs:
 

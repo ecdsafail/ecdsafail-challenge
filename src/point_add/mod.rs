@@ -5210,6 +5210,597 @@ fn kaliski_backward(b: &mut B, v_in: &[QubitId], st: &KaliskiState, p: U256, ite
     }
 }
 
+/// Branch-history-only Kaliski denominator state for the tagged-DIV probes.
+/// Unlike `KaliskiState`, this does not carry qrisp's full inverse coefficient
+/// `(r,s)`. It stores the final swap bit `a` alongside the existing `m` bit;
+/// together they recover the add branch as `f & !(a xor m)`.
+struct KaliskiBranchState {
+    u: Vec<QubitId>,
+    v_w: Vec<QubitId>,
+    m_hist: Vec<QubitId>,
+    a_hist: Vec<QubitId>,
+    add_hist: Vec<QubitId>,
+    f_flag: QubitId,
+}
+
+fn alloc_kaliski_branch_state(b: &mut B, n: usize, max_iters: usize) -> KaliskiBranchState {
+    KaliskiBranchState {
+        u: b.alloc_qubits(n),
+        v_w: b.alloc_qubits(n),
+        m_hist: b.alloc_qubits(max_iters),
+        a_hist: b.alloc_qubits(max_iters),
+        add_hist: b.alloc_qubits(max_iters),
+        f_flag: b.alloc_qubit(),
+    }
+}
+
+fn free_kaliski_branch_state(b: &mut B, st: KaliskiBranchState) {
+    b.free(st.f_flag);
+    b.free_vec(&st.add_hist);
+    b.free_vec(&st.a_hist);
+    b.free_vec(&st.m_hist);
+    b.free_vec(&st.v_w);
+    b.free_vec(&st.u);
+}
+
+fn kaliski_branch_iteration_with_coeff(
+    b: &mut B,
+    p: U256,
+    u: &[QubitId],
+    v_w: &[QubitId],
+    m_i: QubitId,
+    a_i: QubitId,
+    f: QubitId,
+    coeff: (&[QubitId], &[QubitId]),
+) {
+    let n = u.len();
+    let b_f = b.alloc_qubit();
+    let add_f = b.alloc_qubit();
+    let _kal_saved_phase = b.phase;
+
+    b.set_phase("br_step0_eqzero");
+    with_eq_zero_fast(b, v_w, add_f, |b| {
+        b.ccx(f, add_f, m_i);
+    });
+    b.cx(m_i, f);
+
+    b.set_phase("br_step1");
+    b.ccx(f, u[0], b_f);
+    b.cx(f, a_i);
+    b.cx(b_f, a_i);
+    b.x(v_w[0]);
+    b.ccx(b_f, v_w[0], m_i);
+    b.x(v_w[0]);
+    {
+        let zm = b.alloc_bit();
+        b.hmr(b_f, zm);
+        b.cz_if(f, u[0], zm);
+    }
+    b.cx(a_i, b_f);
+    b.cx(m_i, b_f);
+
+    b.set_phase("br_step2");
+    let l_gt = b.alloc_qubit();
+    with_gt(b, u, v_w, l_gt, |b| {
+        b.x(b_f);
+        b.ccx(f, l_gt, add_f);
+        let t = b.alloc_qubit();
+        b.ccx(add_f, b_f, t);
+        b.cx(t, a_i);
+        b.cx(t, m_i);
+        {
+            let tm = b.alloc_bit();
+            b.hmr(t, tm);
+            b.cz_if(add_f, b_f, tm);
+        }
+        b.free(t);
+        {
+            let am = b.alloc_bit();
+            b.hmr(add_f, am);
+            b.cz_if(f, l_gt, am);
+        }
+        b.x(b_f);
+    });
+    b.free(l_gt);
+
+    b.set_phase("br_step3_cswap");
+    for j in 0..n {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+    coeff_channel_cswap(b, a_i, coeff.0, coeff.1);
+
+    b.set_phase("br_step4");
+    mcx2_polar(b, f, true, b_f, false, add_f);
+    cucc_sub_ctrl(b, u, v_w, add_f);
+    b.set_phase("br_coeff_step4_add");
+    coeff_channel_cadd(b, p, coeff.0, coeff.1, add_f);
+
+    b.set_phase("br_step5");
+    b.x(b_f);
+    {
+        let sm = b.alloc_bit();
+        b.hmr(add_f, sm);
+        b.cz_if(f, b_f, sm);
+    }
+    b.x(b_f);
+    b.cx(m_i, b_f);
+    b.cx(a_i, b_f);
+    b.free(add_f);
+    b.free(b_f);
+
+    b.set_phase("br_step6_8");
+    for i in 0..(n - 1) {
+        b.swap(v_w[i], v_w[i + 1]);
+    }
+    coeff_channel_double(b, p, coeff.0);
+
+    b.set_phase("br_step9_cswap");
+    for j in 0..n {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+    coeff_channel_cswap(b, a_i, coeff.0, coeff.1);
+
+    b.set_phase(_kal_saved_phase);
+}
+
+fn kaliski_branch_iteration_record(
+    b: &mut B,
+    u: &[QubitId],
+    v_w: &[QubitId],
+    m_i: QubitId,
+    a_i: QubitId,
+    add_i: QubitId,
+    f: QubitId,
+) {
+    let n = u.len();
+    let b_f = b.alloc_qubit();
+    let add_f = b.alloc_qubit();
+    let _kal_saved_phase = b.phase;
+
+    b.set_phase("br_rec_step0_eqzero");
+    with_eq_zero_fast(b, v_w, add_f, |b| {
+        b.ccx(f, add_f, m_i);
+    });
+    b.cx(m_i, f);
+
+    b.set_phase("br_rec_step1");
+    b.ccx(f, u[0], b_f);
+    b.cx(f, a_i);
+    b.cx(b_f, a_i);
+    b.x(v_w[0]);
+    b.ccx(b_f, v_w[0], m_i);
+    b.x(v_w[0]);
+    {
+        let zm = b.alloc_bit();
+        b.hmr(b_f, zm);
+        b.cz_if(f, u[0], zm);
+    }
+    b.cx(a_i, b_f);
+    b.cx(m_i, b_f);
+
+    b.set_phase("br_rec_step2");
+    let l_gt = b.alloc_qubit();
+    with_gt(b, u, v_w, l_gt, |b| {
+        b.x(b_f);
+        b.ccx(f, l_gt, add_f);
+        let t = b.alloc_qubit();
+        b.ccx(add_f, b_f, t);
+        b.cx(t, a_i);
+        b.cx(t, m_i);
+        {
+            let tm = b.alloc_bit();
+            b.hmr(t, tm);
+            b.cz_if(add_f, b_f, tm);
+        }
+        b.free(t);
+        {
+            let am = b.alloc_bit();
+            b.hmr(add_f, am);
+            b.cz_if(f, l_gt, am);
+        }
+        b.x(b_f);
+    });
+    b.free(l_gt);
+
+    b.set_phase("br_rec_step3_cswap");
+    for j in 0..n {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+
+    b.set_phase("br_rec_step4");
+    mcx2_polar(b, f, true, b_f, false, add_f);
+    b.cx(add_f, add_i);
+    cucc_sub_ctrl(b, u, v_w, add_f);
+
+    b.set_phase("br_rec_step5");
+    b.x(b_f);
+    {
+        let sm = b.alloc_bit();
+        b.hmr(add_f, sm);
+        b.cz_if(f, b_f, sm);
+    }
+    b.x(b_f);
+    b.cx(m_i, b_f);
+    b.cx(a_i, b_f);
+    b.free(add_f);
+    b.free(b_f);
+
+    b.set_phase("br_rec_step6");
+    for i in 0..(n - 1) {
+        b.swap(v_w[i], v_w[i + 1]);
+    }
+
+    b.set_phase("br_rec_step9_cswap");
+    for j in 0..n {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+
+    b.set_phase(_kal_saved_phase);
+}
+
+fn apply_coeff_channel_from_hist(
+    b: &mut B,
+    p: U256,
+    cr: &[QubitId],
+    cs: &[QubitId],
+    a_hist: &[QubitId],
+    add_hist: &[QubitId],
+) {
+    assert_eq!(a_hist.len(), add_hist.len());
+    for i in 0..a_hist.len() {
+        b.set_phase("br_stream_coeff_cswap1");
+        coeff_channel_cswap(b, a_hist[i], cr, cs);
+        b.set_phase("br_stream_coeff_add");
+        coeff_channel_cadd(b, p, cr, cs, add_hist[i]);
+        b.set_phase("br_stream_coeff_double");
+        coeff_channel_double(b, p, cr);
+        b.set_phase("br_stream_coeff_cswap2");
+        coeff_channel_cswap(b, a_hist[i], cr, cs);
+    }
+}
+
+fn kaliski_branch_iteration_backward_recorded(
+    b: &mut B,
+    u: &[QubitId],
+    v_w: &[QubitId],
+    m_i: QubitId,
+    a_i: QubitId,
+    add_i: QubitId,
+    f: QubitId,
+) {
+    let n = u.len();
+    let b_f = b.alloc_qubit();
+    let add_f = b.alloc_qubit();
+    let _kal_saved_phase = b.phase;
+
+    b.cx(a_i, b_f);
+    b.cx(m_i, b_f);
+    mcx2_polar(b, f, true, b_f, false, add_f);
+
+    b.set_phase("br_rec_bk_step9_cswap");
+    for j in (0..n).rev() {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+
+    b.set_phase("br_rec_bk_step6");
+    for i in (0..(n - 1)).rev() {
+        b.swap(v_w[i], v_w[i + 1]);
+    }
+
+    b.set_phase("br_rec_bk_step4");
+    cucc_add_ctrl(b, u, v_w, add_f);
+    b.cx(add_f, add_i);
+
+    b.set_phase("br_rec_bk_step5_unadd");
+    b.x(b_f);
+    {
+        let sm = b.alloc_bit();
+        b.hmr(add_f, sm);
+        b.cz_if(f, b_f, sm);
+    }
+    b.x(b_f);
+
+    b.set_phase("br_rec_bk_step3_cswap");
+    for j in (0..n).rev() {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+
+    b.set_phase("br_rec_bk_step2");
+    let l_gt = b.alloc_qubit();
+    with_gt(b, u, v_w, l_gt, |b| {
+        b.x(b_f);
+        b.ccx(f, l_gt, add_f);
+        let t = b.alloc_qubit();
+        b.ccx(add_f, b_f, t);
+        b.cx(t, m_i);
+        b.cx(t, a_i);
+        {
+            let tm = b.alloc_bit();
+            b.hmr(t, tm);
+            b.cz_if(add_f, b_f, tm);
+        }
+        b.free(t);
+        {
+            let am = b.alloc_bit();
+            b.hmr(add_f, am);
+            b.cz_if(f, l_gt, am);
+        }
+        b.x(b_f);
+    });
+    b.free(l_gt);
+
+    b.set_phase("br_rec_bk_step1");
+    b.cx(m_i, b_f);
+    b.cx(a_i, b_f);
+    b.ccx(f, u[0], b_f);
+    b.x(v_w[0]);
+    b.ccx(b_f, v_w[0], m_i);
+    b.x(v_w[0]);
+    b.cx(b_f, a_i);
+    b.cx(f, a_i);
+    {
+        let zm = b.alloc_bit();
+        b.hmr(b_f, zm);
+        b.cz_if(f, u[0], zm);
+    }
+
+    b.set_phase("br_rec_bk_step0_eqzero");
+    b.cx(m_i, f);
+    with_eq_zero_fast(b, v_w, add_f, |b| {
+        b.ccx(f, add_f, m_i);
+    });
+
+    b.free(add_f);
+    b.free(b_f);
+    b.set_phase(_kal_saved_phase);
+}
+
+fn kaliski_branch_iteration_backward(
+    b: &mut B,
+    u: &[QubitId],
+    v_w: &[QubitId],
+    m_i: QubitId,
+    a_i: QubitId,
+    f: QubitId,
+) {
+    let n = u.len();
+    let b_f = b.alloc_qubit();
+    let add_f = b.alloc_qubit();
+    let _kal_saved_phase = b.phase;
+
+    b.cx(a_i, b_f);
+    b.cx(m_i, b_f);
+    mcx2_polar(b, f, true, b_f, false, add_f);
+
+    b.set_phase("br_bk_step9_cswap");
+    for j in (0..n).rev() {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+
+    b.set_phase("br_bk_step6");
+    for i in (0..(n - 1)).rev() {
+        b.swap(v_w[i], v_w[i + 1]);
+    }
+
+    b.set_phase("br_bk_step4");
+    cucc_add_ctrl(b, u, v_w, add_f);
+
+    b.set_phase("br_bk_step5_unadd");
+    b.x(b_f);
+    {
+        let sm = b.alloc_bit();
+        b.hmr(add_f, sm);
+        b.cz_if(f, b_f, sm);
+    }
+    b.x(b_f);
+
+    b.set_phase("br_bk_step3_cswap");
+    for j in (0..n).rev() {
+        cswap(b, a_i, u[j], v_w[j]);
+    }
+
+    b.set_phase("br_bk_step2");
+    let l_gt = b.alloc_qubit();
+    with_gt(b, u, v_w, l_gt, |b| {
+        b.x(b_f);
+        b.ccx(f, l_gt, add_f);
+        let t = b.alloc_qubit();
+        b.ccx(add_f, b_f, t);
+        b.cx(t, m_i);
+        b.cx(t, a_i);
+        {
+            let tm = b.alloc_bit();
+            b.hmr(t, tm);
+            b.cz_if(add_f, b_f, tm);
+        }
+        b.free(t);
+        {
+            let am = b.alloc_bit();
+            b.hmr(add_f, am);
+            b.cz_if(f, l_gt, am);
+        }
+        b.x(b_f);
+    });
+    b.free(l_gt);
+
+    b.set_phase("br_bk_step1");
+    b.cx(m_i, b_f);
+    b.cx(a_i, b_f);
+    b.ccx(f, u[0], b_f);
+    b.x(v_w[0]);
+    b.ccx(b_f, v_w[0], m_i);
+    b.x(v_w[0]);
+    b.cx(b_f, a_i);
+    b.cx(f, a_i);
+    {
+        let zm = b.alloc_bit();
+        b.hmr(b_f, zm);
+        b.cz_if(f, u[0], zm);
+    }
+
+    b.set_phase("br_bk_step0_eqzero");
+    b.cx(m_i, f);
+    with_eq_zero_fast(b, v_w, add_f, |b| {
+        b.ccx(f, add_f, m_i);
+    });
+
+    b.free(add_f);
+    b.free(b_f);
+    b.set_phase(_kal_saved_phase);
+}
+
+fn kaliski_branch_forward_with_coeff(
+    b: &mut B,
+    v_in: &[QubitId],
+    st: &KaliskiBranchState,
+    p: U256,
+    iters: usize,
+    coeff: (&[QubitId], &[QubitId]),
+) {
+    let n = v_in.len();
+    for i in 0..n {
+        if bit(p, i) {
+            b.x(st.u[i]);
+        }
+        b.cx(v_in[i], st.v_w[i]);
+    }
+    b.x(st.f_flag);
+    for i in 0..iters {
+        kaliski_branch_iteration_with_coeff(
+            b,
+            p,
+            &st.u,
+            &st.v_w,
+            st.m_hist[i],
+            st.a_hist[i],
+            st.f_flag,
+            coeff,
+        );
+    }
+}
+
+fn kaliski_branch_backward(
+    b: &mut B,
+    v_in: &[QubitId],
+    st: &KaliskiBranchState,
+    p: U256,
+    iters: usize,
+) {
+    let n = v_in.len();
+    for i in (0..iters).rev() {
+        kaliski_branch_iteration_backward(b, &st.u, &st.v_w, st.m_hist[i], st.a_hist[i], st.f_flag);
+    }
+    b.x(st.f_flag);
+    for i in 0..n {
+        b.cx(v_in[i], st.v_w[i]);
+        if bit(p, i) {
+            b.x(st.u[i]);
+        }
+    }
+}
+
+fn kaliski_branch_record_forward(
+    b: &mut B,
+    v_in: &[QubitId],
+    st: &KaliskiBranchState,
+    p: U256,
+    iters: usize,
+) {
+    let n = v_in.len();
+    for i in 0..n {
+        if bit(p, i) {
+            b.x(st.u[i]);
+        }
+        b.cx(v_in[i], st.v_w[i]);
+    }
+    b.x(st.f_flag);
+    for i in 0..iters {
+        kaliski_branch_iteration_record(
+            b,
+            &st.u,
+            &st.v_w,
+            st.m_hist[i],
+            st.a_hist[i],
+            st.add_hist[i],
+            st.f_flag,
+        );
+    }
+}
+
+fn kaliski_branch_record_backward(
+    b: &mut B,
+    v_in: &[QubitId],
+    st: &KaliskiBranchState,
+    p: U256,
+    iters: usize,
+) {
+    let n = v_in.len();
+    for i in (0..iters).rev() {
+        kaliski_branch_iteration_backward_recorded(
+            b,
+            &st.u,
+            &st.v_w,
+            st.m_hist[i],
+            st.a_hist[i],
+            st.add_hist[i],
+            st.f_flag,
+        );
+    }
+    b.x(st.f_flag);
+    for i in 0..n {
+        b.cx(v_in[i], st.v_w[i]);
+        if bit(p, i) {
+            b.x(st.u[i]);
+        }
+    }
+}
+
+fn with_kal_branch_stream_tagged_div<F: FnOnce(&mut B)>(
+    b: &mut B,
+    v_in: &[QubitId],
+    p: U256,
+    iters: usize,
+    coeff: (&[QubitId], &[QubitId]),
+    body: F,
+) {
+    let n = v_in.len();
+    let mut st = alloc_kaliski_branch_state(b, n, iters);
+    kaliski_branch_record_forward(b, v_in, &st, p, iters);
+
+    // At sufficient iteration count the denominator state is known `(u,v,f)=(1,0,0)`.
+    // Free it before the coefficient replay so the replay peak is history + coeff,
+    // not history + denominator + coeff.
+    b.x(st.u[0]);
+    b.free_vec(&st.u);
+    b.free_vec(&st.v_w);
+    b.free(st.f_flag);
+
+    apply_coeff_channel_from_hist(b, p, coeff.0, coeff.1, &st.a_hist, &st.add_hist);
+    body(b);
+
+    st.u = b.alloc_qubits(n);
+    st.v_w = b.alloc_qubits(n);
+    st.f_flag = b.alloc_qubit();
+    b.x(st.u[0]);
+    kaliski_branch_record_backward(b, v_in, &st, p, iters);
+    free_kaliski_branch_state(b, st);
+}
+
+fn with_kal_branch_tagged_div_coeff<F: FnOnce(&mut B)>(
+    b: &mut B,
+    v_in: &[QubitId],
+    p: U256,
+    iters: usize,
+    coeff: (&[QubitId], &[QubitId]),
+    body: F,
+) {
+    let st = alloc_kaliski_branch_state(b, v_in.len(), iters);
+    kaliski_branch_forward_with_coeff(b, v_in, &st, p, iters, coeff);
+    body(b);
+    kaliski_branch_backward(b, v_in, &st, p, iters);
+    free_kaliski_branch_state(b, st);
+}
+
 /// Run `body` with `inv` holding `v_in^{-1} mod p`, leaving `v_in`
 /// unchanged. Allocates the kaliski state and `inv` register itself, then
 /// frees them at the end. The body must NOT touch `st` or `v_in`.
@@ -5651,7 +6242,11 @@ fn build_standard_point_add(
     p: U256,
 ) {
     let coeff_channel_div = std::env::var("KAL_TAGGED_DIV_COEFF_CHANNEL").ok().as_deref() == Some("1");
+    let branch_hist_div = std::env::var("KAL_TAGGED_DIV_BRANCH_HIST").ok().as_deref() == Some("1");
+    let branch_stream_div = std::env::var("KAL_TAGGED_DIV_BRANCH_STREAM").ok().as_deref() == Some("1");
     let tagged_div_validate = coeff_channel_div
+        || branch_hist_div
+        || branch_stream_div
         || std::env::var("KAL_TAGGED_DIV_VALIDATE").ok().as_deref() == Some("1");
     let pair1_iters = 407;
     // The tagged validation paths change the op stream / Fiat-Shamir seed;
@@ -5668,7 +6263,57 @@ fn build_standard_point_add(
     }
 
     let lam_cell: std::cell::RefCell<Option<Vec<QubitId>>> = std::cell::RefCell::new(None);
-    if coeff_channel_div {
+    if branch_stream_div {
+        // Branch-generation stream: record just branch histories, free the
+        // denominator state, then replay those histories into the tagged
+        // coefficient channel. This tests the qubit shape that a future
+        // self-cleaning DIV would need.
+        let lam_inner = b.alloc_qubits(N);
+        let lam_coeff = lam_inner.clone();
+        let ty_coeff: Vec<QubitId> = ty.to_vec();
+        b.set_phase("pair1_kaliski_branch_stream");
+        with_kal_branch_stream_tagged_div(
+            b,
+            &tx,
+            p,
+            pair1_iters,
+            (&lam_coeff, &ty_coeff),
+            |b| {
+                b.set_phase("pair1_branch_stream_halve");
+                for _ in 0..pair1_iters {
+                    mod_halve_inplace_fast(b, &lam_inner, p);
+                }
+                b.set_phase("pair1_branch_stream_untag_lam");
+                mod_add_qc(b, &lam_inner, U256::from(1u64), p);
+                *lam_cell.borrow_mut() = Some(lam_inner);
+            },
+        );
+    } else if branch_hist_div {
+        // More aggressive structural probe: do not run the ordinary inverse
+        // coefficient `(r,s)` at all. Store `a_hist` next to `m_hist`; together
+        // they recover the branch pair while the external `(lam,ty)` channel
+        // receives the tagged quotient.
+        let lam_inner = b.alloc_qubits(N);
+        let lam_coeff = lam_inner.clone();
+        let ty_coeff: Vec<QubitId> = ty.to_vec();
+        b.set_phase("pair1_kaliski_branch_hist_coeff");
+        with_kal_branch_tagged_div_coeff(
+            b,
+            &tx,
+            p,
+            pair1_iters,
+            (&lam_coeff, &ty_coeff),
+            |b| {
+                b.set_phase("pair1_branch_hist_halve");
+                for _ in 0..pair1_iters {
+                    mod_halve_inplace_fast(b, &lam_inner, p);
+                }
+                b.set_phase("pair1_branch_hist_untag_lam");
+                mod_add_qc(b, &lam_inner, U256::from(1u64), p);
+                *lam_cell.borrow_mut() = Some(lam_inner);
+            },
+        );
+    } else if coeff_channel_div {
         // Experimental structural path: compute the tagged quotient by carrying
         // an external coefficient pair `(lam_inner, ty)` through the Kaliski
         // forward pass. This removes pair1's two schoolbook multiplications;
