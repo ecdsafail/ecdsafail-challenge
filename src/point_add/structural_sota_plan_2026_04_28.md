@@ -961,7 +961,16 @@ max sampled lowword quotient correction |q| = 32,757
 
 So the consumed low word does not need a separate 32-bit payload; the 16 branch
 bits are exactly the determinant-history payload if the quotient state is kept
-with enough precision. A tempting fixed-precision shortcut is dead, though:
+with enough precision. `lowword_pattern_and_q_oracle_is_still_cheap_and_clean`
+turns this into a local reversible circuit by sign-extending the low words,
+running 16 signed divsteps, copying out pattern and `(q0,q1)`, then reversing:
+
+```text
+pattern+q oracle: 9,408 CCX, peak 262q, qbits=34
+```
+
+This is cheap enough to sit next to a selected quotient update. A tempting
+fixed-precision shortcut is dead, though:
 `fixed_precision_2adic_denominator_branch_curve` shows that 64/96/128/.../256-bit
 truncated denominator states predict roughly that many initial steps and then
 mismatch essentially every 560-step trajectory:

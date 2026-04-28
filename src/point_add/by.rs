@@ -3657,6 +3657,23 @@ mod tests {
         }
     }
 
+    fn emit_arithmetic_shift_right_even_for_test(b: &mut super::super::B, v: &[super::super::QubitId]) {
+        // Reversible arithmetic `/2` on sign-extended even signed values. The
+        // logical rotate puts the promised zero low bit in the top position;
+        // duplicate the old sign bit (now at n-2) into that known-zero slot.
+        emit_logical_shift_right_even_for_test(b, v);
+        if v.len() >= 2 {
+            b.cx(v[v.len() - 2], v[v.len() - 1]);
+        }
+    }
+
+    fn emit_arithmetic_shift_left_even_inverse_for_test(b: &mut super::super::B, v: &[super::super::QubitId]) {
+        if v.len() >= 2 {
+            b.cx(v[v.len() - 2], v[v.len() - 1]);
+        }
+        emit_logical_shift_left_even_inverse_for_test(b, v);
+    }
+
     fn emit_delta_positive_into_for_test(
         b: &mut super::super::B,
         delta: &[super::super::QubitId],
@@ -3744,6 +3761,57 @@ mod tests {
 
         emit_twos_complement_cneg_for_test(b, delta, a_out);
         super::super::add_nbit_const_fast(b, delta, U256::from(1u64));
+    }
+
+    fn emit_signed_by_branch_step_for_test(
+        b: &mut super::super::B,
+        f: &[super::super::QubitId],
+        g: &[super::super::QubitId],
+        delta: &[super::super::QubitId],
+        odd_out: super::super::QubitId,
+        a_out: super::super::QubitId,
+    ) {
+        b.cx(g[0], odd_out);
+        let positive = b.alloc_qubit();
+        emit_delta_positive_into_for_test(b, delta, positive);
+        b.ccx(odd_out, positive, a_out);
+        emit_delta_positive_into_for_test(b, delta, positive);
+        b.free(positive);
+
+        for i in 0..f.len() {
+            super::super::cswap(b, a_out, f[i], g[i]);
+        }
+        emit_twos_complement_cneg_for_test(b, g, a_out);
+        super::super::cucc_add_ctrl(b, f, g, odd_out);
+        emit_arithmetic_shift_right_even_for_test(b, g);
+
+        emit_twos_complement_cneg_for_test(b, delta, a_out);
+        super::super::add_nbit_const_fast(b, delta, U256::from(1u64));
+    }
+
+    fn emit_signed_by_branch_step_reverse_for_test(
+        b: &mut super::super::B,
+        f: &[super::super::QubitId],
+        g: &[super::super::QubitId],
+        delta: &[super::super::QubitId],
+        odd_hist: super::super::QubitId,
+        a_hist: super::super::QubitId,
+    ) {
+        super::super::sub_nbit_const_fast(b, delta, U256::from(1u64));
+        emit_twos_complement_cneg_for_test(b, delta, a_hist);
+        emit_arithmetic_shift_left_even_inverse_for_test(b, g);
+        super::super::cucc_sub_ctrl(b, f, g, odd_hist);
+        emit_twos_complement_cneg_for_test(b, g, a_hist);
+        for i in 0..f.len() {
+            super::super::cswap(b, a_hist, f[i], g[i]);
+        }
+
+        let positive = b.alloc_qubit();
+        emit_delta_positive_into_for_test(b, delta, positive);
+        b.ccx(odd_hist, positive, a_hist);
+        emit_delta_positive_into_for_test(b, delta, positive);
+        b.free(positive);
+        b.cx(g[0], odd_hist);
     }
 
     fn emit_cmod_neg_exact_for_test(
@@ -4422,6 +4490,86 @@ mod tests {
         );
         assert!(ccx < 25_000, "lowword pattern oracle too expensive for windowed DIV");
         assert!(peak < 150, "lowword pattern oracle unexpectedly wide");
+    }
+
+    #[test]
+    fn lowword_pattern_and_q_oracle_is_still_cheap_and_clean() {
+        // Strengthen the lowword oracle into the consumed-window primitive:
+        // sign-extend the W-bit low words into a slightly wider local simulator,
+        // run W divsteps, copy out both the branch pattern and the small
+        // quotient correction q=(P·low)/2^W, then reverse the simulator.  This
+        // is the local side information needed by the selected quotient update.
+        const W: usize = 16;
+        const QBITS: usize = 34;
+        const DBITS: usize = 10;
+        let mut b = super::super::B::new();
+        let f = b.alloc_qubits(QBITS);
+        let g = b.alloc_qubits(QBITS);
+        let delta = b.alloc_qubits(DBITS);
+        let pattern_tmp = b.alloc_qubits(W);
+        let a_tmp = b.alloc_qubits(W);
+        let pattern_hist = b.alloc_qubits(W);
+        let q0_hist = b.alloc_qubits(QBITS);
+        let q1_hist = b.alloc_qubits(QBITS);
+        for i in 0..W {
+            emit_signed_by_branch_step_for_test(&mut b, &f, &g, &delta, pattern_tmp[i], a_tmp[i]);
+        }
+        for i in 0..W {
+            b.cx(pattern_tmp[i], pattern_hist[i]);
+        }
+        for i in 0..QBITS {
+            b.cx(f[i], q0_hist[i]);
+            b.cx(g[i], q1_hist[i]);
+        }
+        for i in (0..W).rev() {
+            emit_signed_by_branch_step_reverse_for_test(&mut b, &f, &g, &delta, pattern_tmp[i], a_tmp[i]);
+        }
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let cases = [
+            (1i128, 3i128, 1i64),
+            (-1i128, 0x1234i128, -5i64),
+            (-25323i128, -0x4111i128, 17i64),
+            (0x7fffi128, -0x1234i128, 0i64),
+        ];
+        for &(f0, g0, d0) in &cases {
+            let low_f = truncate_i128(f0, W);
+            let low_g = truncate_i128(g0, W);
+            let bits = branch_bits_for_lowword_window(W, d0, low_f, low_g);
+            let m = matrix_from_branch_bits(d0, &bits);
+            let scale = 1i128 << W;
+            let q0 = (m.m00 * low_f + m.m01 * low_g) / scale;
+            let q1 = (m.m10 * low_f + m.m11 * low_g) / scale;
+            let mut exp_pat = 0u16;
+            for (i, bit) in bits.iter().enumerate() {
+                if *bit { exp_pat |= 1u16 << i; }
+            }
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"by-lowword-pattern-q-oracle-v1");
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+            set_slice_u512_by(&mut sim, &f, twos_u512_for_delta(low_f as i64, QBITS));
+            set_slice_u512_by(&mut sim, &g, twos_u512_for_delta(low_g as i64, QBITS));
+            set_slice_u512_by(&mut sim, &delta, twos_u512_for_delta(d0, DBITS));
+            sim.apply(&ops);
+            assert_eq!(get_slice_u512_by(&sim, &f), twos_u512_for_delta(low_f as i64, QBITS), "f not restored");
+            assert_eq!(get_slice_u512_by(&sim, &g), twos_u512_for_delta(low_g as i64, QBITS), "g not restored");
+            assert_eq!(get_slice_u512_by(&sim, &delta), twos_u512_for_delta(d0, DBITS), "delta not restored");
+            assert_eq!(get_slice_u512_by(&sim, &pattern_tmp), U512::ZERO, "pattern tmp dirty");
+            assert_eq!(get_slice_u512_by(&sim, &a_tmp), U512::ZERO, "A tmp dirty");
+            assert_eq!(get_slice_u512_by(&sim, &pattern_hist), U512::from(exp_pat), "pattern mismatch");
+            assert_eq!(get_slice_u512_by(&sim, &q0_hist), twos_u512_for_delta(q0 as i64, QBITS), "q0 mismatch");
+            assert_eq!(get_slice_u512_by(&sim, &q1_hist), twos_u512_for_delta(q1 as i64, QBITS), "q1 mismatch");
+            assert_eq!(sim.global_phase() & 1, 0, "phase garbage");
+        }
+        eprintln!(
+            "BY lowword pattern+q oracle: ccx={ccx}, peak={peak}q, qbits={QBITS}"
+        );
+        assert!(ccx < 18_000, "pattern+q oracle too expensive for denominator window");
+        assert!(peak < 300, "pattern+q oracle unexpectedly wide");
     }
 
     #[test]
