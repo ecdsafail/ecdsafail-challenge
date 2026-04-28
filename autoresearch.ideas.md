@@ -1,12 +1,19 @@
 # Autoresearch Ideas Backlog
 
-## Current State (2026-04-26 / 2026-04-27)
-- Best: **4,136,878 Toffoli @ 2716 qubits**, 24-seed phase-robust (commit c1aeeb4).
-- SOTA target: **2.1M Toffoli @ 1175 qubits** (Babbush-Zalcman-Gidney et al., arXiv:2603.28846).
-- Gap: ~2M Toffoli, ~1500 qubits.
-- Already beats published HRSL 2020 (~12M) and Kim 2026 (~17M) by 3-4×.
+## Current State (2026-04-28)
+- Best: **4,136,878 Toffoli @ 2716 qubits**, 24-seed phase-robust (commit b16e5d4 / later docs at 8b88c4c).
+- SOTA target: **2.7M Toffoli @ 1175 qubits** low-qubit and **2.1M @ 1425q** low-gate (Babbush-Zalcman-Gidney et al., arXiv:2603.28846 / Google ZKP).
+- Gap: **1.44M Toffoli**, **~1540 qubits** to low-qubit target.
+- Already beats published HRSL 2020 (~12M) and Kim 2026 (~17M) by 3-4×; Google circuit remains withheld.
 
-## 2026-04-27 PIVOTAL UNLOCK: m_hist is not irreducible state
+## 2026-04-28 structural status update (do not lose)
+- **One-Kaliski is the Toffoli key**: one `with_kal_inv_raw` invocation costs ~1.60M, so deleting one invocation would put the current primitive stack at roughly **2.5M**, enough to match Google's Toffoli target.
+- **But one-Kaliski in-place cleanup remains blocked**: B2 leaks `lam_copy = -λ`; Strategy C (`w=dx³`) is classically correct but needs fresh output/state cleanup equivalent to reconstructing `(Px,Py)` from `(Rx,Ry)`, i.e. another point-subtraction/inversion. This is not just implementation pain.
+- **Strategy C re-estimate at current 407/404 iters is not a win**: extra q×q/q×const muls and Bennett cleanup cost ~2.5M around the single Kaliski; total estimated **~4.2M**, roughly current baseline. It was only attractive against old 511-iter baselines.
+- **m_hist formula correction**: iter-START fingerprint gives `m_i`, but iter-END+available flags does not; direct persistent `m_hist` removal is blocked without a new self-cleaning Kaliski body or pebble recomputation.
+- **Remaining SOTA route**: either (a) novel Kaliski/cswap/windowed inversion reducing per-invocation cost by ~45%, or (b) a genuinely new one-inversion cleanup representation. Local arithmetic swaps are now <10% levers.
+
+## 2026-04-27 UNLOCK (partial): classical formula for m_i
 
 **Classically verified on 256,000 random samples** (see
 `src/point_add/kaliski_classical_replay.rs`):
@@ -15,8 +22,39 @@
   m_i = f AND u[0] AND (NOT v_w[0] OR (u > v_w))
 ```
 
-Zero mismatches across 500 secp256k1 inputs × 512 iters each. Only 7 of 16
-F_min-fingerprint states are reachable; all are deterministic.
+Zero mismatches across 500 secp256k1 inputs × 512 iters each, FROM
+ITER-START STATE. Only 7 of 16 F_min-fingerprint states are reachable;
+all are deterministic.
+
+## 2026-04-28 CORRECTION: m_hist elimination blocked by cleanup
+
+**Additional classical test (commit HEAD, `check_iter_end_plus_af_fingerprint`)**:
+iter-END state + a_f does NOT determine m_i. 9 conflicts over 256k samples.
+The iter-start state determines m_i, but iter-start state is GONE at iter-end
+(steps 3, 4, 6, 7, 8, 9 modify u/v/r/s/f destructively).
+
+**Circuit-level implication**: the formula cannot be used as a direct MBU
+uncomputation at iter-end, because Gidney MBU needs phase-correction
+controls to reference LIVE registers whose values still equal the inputs
+that determined the ancilla. Iter-start values of (f, u[0], v[0], gt)
+aren't live at iter-end.
+
+**Workarounds that fail**:
+- Preserving iter-start values as iter-local shadow qubits: saves 1 bit
+  (m_i) but costs 4 bits (shadow). Net WORSE than m_hist itself.
+- Uncomputing m_i at backward iter-END: backward iter-END gives iter-START
+  state (so formula works), but m_i is needed DURING the body, not at end.
+- Global recomputation via fake forward pass inside backward: costs a full
+  extra Kaliski forward per backward, +1.6M Toffoli. Kills the savings.
+
+**Status**: m_hist elimination is architecturally harder than initially
+claimed. It's NOT an easy win. Keep the formula classically verified in
+`kaliski_classical_replay.rs` for future reference, but do NOT treat it as
+an actionable Toffoli-savings lever right now.
+
+**What MIGHT work**: reformulate the Kaliski body so that m_i's information
+is preserved in OTHER persistent state (e.g. fold m_j into a_f's history,
+or encode it into a phase of u/v). This is novel-research territory.
 
 **Consequences**:
 - 407 qubits of persistent m_hist can be replaced with per-iter recomputation.

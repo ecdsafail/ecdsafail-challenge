@@ -269,12 +269,6 @@ inventing a new Kaliski variant. Not in public literature.
 If cleanup obstruction can be relaxed under approximation, ~1.6M
 Toffoli saved. Needs novel scheduling. Highest risk, highest reward.
 
-### Path E: porting to windowed-Q task (match Google's harness)
-If we restructure our circuit to `Q += P[k]` windowed form, we can
-directly compare to Google's 2.7M. But the benchmark measures bare
-add; we'd want to keep the bare-add as our published metric while
-benchmarking against Google's spec separately.
-
 ## Recommendation
 
 Given the research:

@@ -5564,7 +5564,7 @@ fn build_standard_point_add(
     p: U256,
 ) {
     let pair1_iters = 407;
-    let pair2_iters = 404;
+    let pair2_iters = 403;
 
     let lam_cell: std::cell::RefCell<Option<Vec<QubitId>>> = std::cell::RefCell::new(None);
     b.set_phase("pair1_kaliski_forward");

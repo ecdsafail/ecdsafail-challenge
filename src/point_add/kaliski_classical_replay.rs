@@ -415,6 +415,105 @@ mod tests {
         assert!(ok, "F4 fingerprint failed to be deterministic at large scale");
     }
 
+    /// Helper: replay a single iter and return m_i, a_f, AND the state
+    /// just-before-step-10 (= iter-end state since step 10 only touches a_f).
+    fn kaliski_iter_with_af(
+        u: &mut U256,
+        v_w: &mut U256,
+        r: &mut U256,
+        s: &mut U256,
+        f: &mut u8,
+        p: U256,
+    ) -> (u8, u8) {
+        // Replay EXACTLY as kaliski_iter_classical but also return a_f.
+        let is_zero = if *v_w == U256::ZERO { 1u8 } else { 0 };
+        let mut m_i: u8 = 0;
+        if *f == 1 && is_zero == 1 { m_i ^= 1; }
+        *f ^= m_i;
+
+        let u0 = (u.as_limbs()[0] & 1) as u8;
+        let v0 = (v_w.as_limbs()[0] & 1) as u8;
+        let mut a_f: u8 = 0;
+        if *f == 1 && u0 == 0 { a_f ^= 1; }
+        if *f == 1 && u0 == 1 && v0 == 0 { m_i ^= 1; }
+        let b_f = a_f ^ m_i;
+
+        let l_gt = if *u > *v_w { 1u8 } else { 0 };
+        let add_f_step2 = (*f & l_gt) as u8;
+        let b_not = 1 ^ b_f;
+        let delta = add_f_step2 & b_not;
+        a_f ^= delta;
+        m_i ^= delta;
+
+        if a_f == 1 {
+            std::mem::swap(u, v_w);
+            std::mem::swap(r, s);
+        }
+
+        let add_f_step4 = *f & (1 ^ b_f);
+        if add_f_step4 == 1 {
+            *v_w = v_w.wrapping_sub(*u);
+            let sum = s.wrapping_add(*r);
+            *s = sum;
+        }
+
+        *v_w = *v_w >> 1;
+
+        let r2 = r.wrapping_add(*r);
+        *r = if r2 >= p || r2 < *r { r2.wrapping_sub(p) } else { r2 };
+
+        if a_f == 1 {
+            std::mem::swap(u, v_w);
+            std::mem::swap(r, s);
+        }
+
+        // Return (m_i, a_f before step 10 zeroes it).
+        (m_i, a_f)
+    }
+
+    #[test]
+    fn check_iter_end_plus_af_fingerprint() {
+        // Test: at step 10 start (after cswap9, before a_f uncompute),
+        // does (f, u[0], v_w[0], u>v_w, s[0], a_f) determine m_i?
+        let p = SECP256K1_P;
+        use std::collections::HashMap;
+        let mut tt: HashMap<u16, (u8, usize, usize)> = HashMap::new();
+
+        for seed in 0..500u64 {
+            let v_in = random_element(seed + 1);
+            let mut u = p;
+            let mut v_w = v_in;
+            let mut r = U256::ZERO;
+            let mut s = U256::from(1u64);
+            let mut f: u8 = 1;
+            for _i in 0..512 {
+                let (m_i, a_f) = kaliski_iter_with_af(&mut u, &mut v_w, &mut r, &mut s, &mut f, p);
+                let u0 = (u.as_limbs()[0] & 1) as u8;
+                let v0 = (v_w.as_limbs()[0] & 1) as u8;
+                let gt = if u > v_w { 1u8 } else { 0 };
+                let s0 = (s.as_limbs()[0] & 1) as u8;
+                // Fingerprint: (f, u0, v0, gt, s0, a_f) = 6 bits.
+                let k = ((f as u16) << 5) | ((u0 as u16) << 4) | ((v0 as u16) << 3)
+                       | ((gt as u16) << 2) | ((s0 as u16) << 1) | (a_f as u16);
+                let e = tt.entry(k).or_insert((m_i, 0, 0));
+                if m_i == 0 { e.1 += 1; } else { e.2 += 1; }
+            }
+        }
+
+        let mut conflicts = 0usize;
+        println!("\n=== iter-END + a_f fingerprint -> m_i ===");
+        let mut ks: Vec<_> = tt.keys().collect();
+        ks.sort();
+        for k in ks {
+            let (_, c0, c1) = tt[k];
+            let conflict = c0 > 0 && c1 > 0;
+            if conflict { conflicts += 1; }
+            println!("  key={:06b}: m=0 {:>7} m=1 {:>7}{}",
+                k, c0, c1, if conflict { "  <- CONFLICT" } else { "" });
+        }
+        println!("TOTAL CONFLICTS: {}", conflicts);
+    }
+
     #[test]
     fn check_iter_end_fingerprint() {
         // Test: at the END of iteration i (after all 10 steps, before iter i+1
