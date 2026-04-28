@@ -465,12 +465,40 @@ This is the first BY model simultaneously under 1M Toffoli for the DIV-like
 component and under the current 2800q cap. It is not a circuit: it requires a
 reversible compressed-history selector and an h-only state update/reverse.
 
+`smith_factorization_reduces_by_window_to_inplace_shifts_and_unimodular_maps`
+checked the obvious Smith-normal-form route. It proves the diagonal is always
+`diag(1,65536)` for sampled `w=16` BY windows, but the naive SNF factors can be
+huge (`~3.9e13`), so plain SNF is not a low-cost in-place implementation.
+`hermite_factorization_keeps_scaled_by_window_in_place_with_small_coefficients`
+fixes this: for 4096 sampled windows it finds small Hermite factors
+
+```text
+U P V = [[1,e],[0,65536]], |e| <= 32768,
+max coefficient in U,V,U^-1,V^-1,e <= 65536.
+```
+
+Thus a scaled window can, algebraically, be done in-place as:
+
+```text
+(x0,x1) -> V^-1(x0,x1)
+z0      -> (z0 + e*z1) / 2^16      // one batched Solinas shift
+(z0,z1) -> U^-1(z0,z1)
+```
+
+This is the concrete route from the current double-buffer row replacement to a
+600-scratch implementation: no simultaneous old+new pair, only the two live DIV
+registers plus carry/shift/control workspace. The remaining hard part is that
+`U,V,e` depend on quantum branch bits; fixed-matrix arithmetic is cheap, but
+coherent selected-factor application must avoid generic variable-coefficient
+multiplication.
+
 This reopens BY as a live SOTA-shaped route but with precise remaining
-obstacles: branch/matrix history compression and integration into a 35-window
-BY tagged-DIV scaffold. The fixed-matrix replacement itself is now no longer a
-one-off; sampled arithmetic is around 1.0M Toffoli for stored-matrix tagged DIV
-or ~0.67M for the h-only compressed-history model, plausibly cheaper than
-Kaliski but not yet a complete 600-scratch primitive.
+obstacles: branch/matrix history compression, selected Hermite-factor
+application, and integration into a 35-window BY tagged-DIV scaffold. The
+fixed-matrix replacement itself is now no longer a one-off; sampled arithmetic
+is around 1.0M Toffoli for stored-matrix tagged DIV or ~0.67M for the h-only
+compressed-history model, plausibly cheaper than Kaliski but not yet a complete
+600-scratch primitive.
 
 ### Program B — triangular one-inversion schedule (highest payoff, highest risk)
 

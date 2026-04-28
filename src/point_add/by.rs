@@ -2573,6 +2573,309 @@ mod tests {
         assert!(fail_550 < 0.01, "550-bit matrix history would exceed 1% failure tolerance");
     }
 
+    fn mat2_mul_i128(a: [[i128; 2]; 2], b: [[i128; 2]; 2]) -> [[i128; 2]; 2] {
+        [
+            [a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1]],
+            [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1]],
+        ]
+    }
+
+    fn mat2_det_i128(a: [[i128; 2]; 2]) -> i128 {
+        a[0][0] * a[1][1] - a[0][1] * a[1][0]
+    }
+
+    fn mat2_max_abs_i128(a: [[i128; 2]; 2]) -> i128 {
+        a.iter().flatten().map(|x| x.abs()).max().unwrap_or(0)
+    }
+
+    fn mat2_inv_unimodular_for_test(a: [[i128; 2]; 2]) -> [[i128; 2]; 2] {
+        let det = mat2_det_i128(a);
+        assert!(det == 1 || det == -1, "not unimodular: det={det}");
+        let s = det;
+        [[s * a[1][1], -s * a[0][1]], [-s * a[1][0], s * a[0][0]]]
+    }
+
+    fn snf2_for_test(input: [[i128; 2]; 2]) -> ([[i128; 2]; 2], [[i128; 2]; 2], [[i128; 2]; 2]) {
+        // Returns (U,D,V) with U*input*V = D. This tiny 2x2 Smith-normal-form
+        // helper is test-only; it lets us reason about in-place scaled BY
+        // windows without introducing a dependency on a CAS.
+        let mut m = input;
+        let mut u = [[1i128, 0], [0, 1]];
+        let mut v = [[1i128, 0], [0, 1]];
+        for _ in 0..10_000 {
+            if m[0][0] == 0 {
+                let mut pos = None;
+                for i in 0..2 {
+                    for j in 0..2 {
+                        if m[i][j] != 0 {
+                            pos = Some((i, j));
+                            break;
+                        }
+                    }
+                    if pos.is_some() {
+                        break;
+                    }
+                }
+                let Some((i, j)) = pos else { return (u, m, v); };
+                if i != 0 {
+                    m.swap(0, i);
+                    u.swap(0, i);
+                }
+                if j != 0 {
+                    for r in 0..2 {
+                        m[r].swap(0, j);
+                        v[r].swap(0, j);
+                    }
+                }
+            }
+
+            let mut changed = false;
+            if m[1][0] != 0 {
+                let q = m[1][0] / m[0][0];
+                for c in 0..2 {
+                    m[1][c] -= q * m[0][c];
+                    u[1][c] -= q * u[0][c];
+                }
+                changed = true;
+                if m[1][0] != 0 && m[1][0].abs() < m[0][0].abs() {
+                    m.swap(0, 1);
+                    u.swap(0, 1);
+                }
+            }
+            if m[0][1] != 0 {
+                let q = m[0][1] / m[0][0];
+                for r in 0..2 {
+                    m[r][1] -= q * m[r][0];
+                    v[r][1] -= q * v[r][0];
+                }
+                changed = true;
+                if m[0][1] != 0 && m[0][1].abs() < m[0][0].abs() {
+                    for r in 0..2 {
+                        m[r].swap(0, 1);
+                        v[r].swap(0, 1);
+                    }
+                }
+            }
+            if changed {
+                continue;
+            }
+            if m[1][0] != 0 {
+                assert_eq!(m[1][0] % m[0][0], 0);
+                let q = m[1][0] / m[0][0];
+                for c in 0..2 {
+                    m[1][c] -= q * m[0][c];
+                    u[1][c] -= q * u[0][c];
+                }
+                continue;
+            }
+            if m[0][1] != 0 {
+                assert_eq!(m[0][1] % m[0][0], 0);
+                let q = m[0][1] / m[0][0];
+                for r in 0..2 {
+                    m[r][1] -= q * m[r][0];
+                    v[r][1] -= q * v[r][0];
+                }
+                continue;
+            }
+            if m[1][1] == 0 || m[1][1] % m[0][0] == 0 {
+                for i in 0..2 {
+                    if m[i][i] < 0 {
+                        for c in 0..2 {
+                            m[i][c] = -m[i][c];
+                            u[i][c] = -u[i][c];
+                        }
+                    }
+                }
+                return (u, m, v);
+            }
+            // Mix the lower-right entry back into the pivot block and keep
+            // reducing until the diagonal divisibility condition holds.
+            for r in 0..2 {
+                m[r][0] += m[r][1];
+                v[r][0] += v[r][1];
+            }
+        }
+        panic!("2x2 SNF did not converge for {input:?}");
+    }
+
+    #[test]
+    fn smith_factorization_reduces_by_window_to_inplace_shifts_and_unimodular_maps() {
+        const W: usize = 16;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-smith-factorization-v1");
+        let mut reader = hasher.finalize_xof();
+        let mut buf = [0u8; 24];
+        let mut max_uv = 0i128;
+        let mut max_uvi = 0i128;
+        let mut diag_hist = std::collections::BTreeMap::<(i128, i128), usize>::new();
+        for _ in 0..4096 {
+            reader.read(&mut buf);
+            let f_low = (u64::from_le_bytes(buf[0..8].try_into().unwrap()) as i128) | 1;
+            let g_low = u64::from_le_bytes(buf[8..16].try_into().unwrap()) as i128;
+            let delta = (u64::from_le_bytes(buf[16..24].try_into().unwrap()) % 41) as i64 - 20;
+            let (_, _, _, pmat) = jump_matrix_direct_lowword(W, W, delta, f_low, g_low);
+            let p = [[pmat.m00, pmat.m01], [pmat.m10, pmat.m11]];
+            let (u, d, v) = snf2_for_test(p);
+            assert_eq!(mat2_mul_i128(mat2_mul_i128(u, p), v), d);
+            assert_eq!(d[0][1], 0);
+            assert_eq!(d[1][0], 0);
+            assert_eq!(d[0][0] * d[1][1], 1i128 << W);
+            assert!((d[0][0] as u128).is_power_of_two());
+            assert!((d[1][1] as u128).is_power_of_two());
+            *diag_hist.entry((d[0][0], d[1][1])).or_default() += 1;
+            let ui = mat2_inv_unimodular_for_test(u);
+            let vi = mat2_inv_unimodular_for_test(v);
+            max_uv = max_uv.max(mat2_max_abs_i128(u)).max(mat2_max_abs_i128(v));
+            max_uvi = max_uvi.max(mat2_max_abs_i128(ui)).max(mat2_max_abs_i128(vi));
+        }
+        eprintln!(
+            "BY Smith factorization: diag_hist={diag_hist:?}, max_UV_entry={max_uv}, max_inverse_entry={max_uvi}"
+        );
+        assert!(max_uvi > (1i128 << W), "naive SNF unexpectedly gave uniformly small factors");
+    }
+
+    fn gcd_i128_for_test(mut a: i128, mut b: i128) -> i128 {
+        a = a.abs();
+        b = b.abs();
+        while b != 0 {
+            let r = a % b;
+            a = b;
+            b = r;
+        }
+        a
+    }
+
+    fn egcd_i128_for_test(a: i128, b: i128) -> (i128, i128, i128) {
+        if b == 0 {
+            let g = a.abs();
+            let x = if a < 0 { -1 } else { 1 };
+            return (x, 0, g);
+        }
+        let (x1, y1, g) = egcd_i128_for_test(b, a % b);
+        (y1, x1 - (a / b) * y1, g)
+    }
+
+    fn centered_mod_i128(x: i128, modulus: i128) -> i128 {
+        let m = modulus.abs();
+        ((x + m / 2).rem_euclid(m)) - m / 2
+    }
+
+    fn hermite_scaled_window_factor_for_test(
+        p: [[i128; 2]; 2],
+    ) -> Option<([[i128; 2]; 2], [[i128; 2]; 2], [[i128; 2]; 2])> {
+        // Find small U,V,H with U*P*V = H = [[1,e],[0,65536]], |e|<=32768.
+        // Then P/65536 = U^-1 * [[2^-16, e*2^-16],[0,1]] * V^-1,
+        // i.e. an in-place scaled window can be implemented as two unimodular
+        // maps plus a single batched divide-by-2^16 row.
+        let mut best = None;
+        for radius in [2i128, 8] {
+            for r in -radius..=radius {
+                for s in -radius..=radius {
+                    if r == 0 && s == 0 {
+                        continue;
+                    }
+                    if gcd_i128_for_test(r, s) != 1 {
+                        continue;
+                    }
+                    let y0 = p[0][0] * r + p[0][1] * s;
+                    let y1 = p[1][0] * r + p[1][1] * s;
+                    if gcd_i128_for_test(y0, y1) != 1 {
+                        continue;
+                    }
+                    let (alpha, beta, gy) = egcd_i128_for_test(y0, y1);
+                    if gy != 1 {
+                        continue;
+                    }
+                    let mut u = [[alpha, beta], [-y1, y0]];
+                    let (aa, bb, grs) = egcd_i128_for_test(r, s);
+                    if grs != 1 {
+                        continue;
+                    }
+                    let mut v = [[r, -bb], [s, aa]];
+                    let mut h = mat2_mul_i128(mat2_mul_i128(u, p), v);
+                    if h[0][0] == -1 && h[1][0] == 0 {
+                        for c in 0..2 {
+                            u[0][c] = -u[0][c];
+                        }
+                        h = mat2_mul_i128(mat2_mul_i128(u, p), v);
+                    }
+                    if h[0][0] != 1 || h[1][0] != 0 || h[0][1].abs() > (1i128 << 80) {
+                        continue;
+                    }
+                    if h[1][1] < 0 {
+                        for c in 0..2 {
+                            u[1][c] = -u[1][c];
+                        }
+                        h = mat2_mul_i128(mat2_mul_i128(u, p), v);
+                    }
+                    if h[1][1] != (1i128 << 16) {
+                        continue;
+                    }
+                    let e_reduced = centered_mod_i128(h[0][1], h[1][1]);
+                    let k = e_reduced - h[0][1];
+                    for row in 0..2 {
+                        v[row][1] += k * v[row][0];
+                    }
+                    h = mat2_mul_i128(mat2_mul_i128(u, p), v);
+                    if h[0][0] != 1 || h[1][0] != 0 || h[1][1] != (1i128 << 16) {
+                        continue;
+                    }
+                    if h[0][1].abs() > (1i128 << 15) {
+                        continue;
+                    }
+                    let score = mat2_max_abs_i128(u).max(mat2_max_abs_i128(v)).max(h[0][1].abs());
+                    if best.as_ref().map_or(true, |(best_score, _, _, _): &(i128, _, _, _)| score < *best_score) {
+                        best = Some((score, u, h, v));
+                    }
+                }
+            }
+            if best.is_some() {
+                break;
+            }
+        }
+        best.map(|(_, u, h, v)| (u, h, v))
+    }
+
+    #[test]
+    fn hermite_factorization_keeps_scaled_by_window_in_place_with_small_coefficients() {
+        const W: usize = 16;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-hermite-factorization-v1");
+        let mut reader = hasher.finalize_xof();
+        let mut buf = [0u8; 24];
+        let mut max_coeff = 0i128;
+        let mut p99_scores = Vec::new();
+        for _ in 0..4096 {
+            reader.read(&mut buf);
+            let f_low = (u64::from_le_bytes(buf[0..8].try_into().unwrap()) as i128) | 1;
+            let g_low = u64::from_le_bytes(buf[8..16].try_into().unwrap()) as i128;
+            let delta = (u64::from_le_bytes(buf[16..24].try_into().unwrap()) % 41) as i64 - 20;
+            let (_, _, _, pmat) = jump_matrix_direct_lowword(W, W, delta, f_low, g_low);
+            let p = [[pmat.m00, pmat.m01], [pmat.m10, pmat.m11]];
+            let (u, h, v) = hermite_scaled_window_factor_for_test(p).expect("small Hermite factor");
+            assert_eq!(mat2_mul_i128(mat2_mul_i128(u, p), v), h);
+            assert_eq!(h[0][0], 1);
+            assert_eq!(h[1][0], 0);
+            assert_eq!(h[1][1], 1i128 << W);
+            assert!(h[0][1].abs() <= (1i128 << 15));
+            let ui = mat2_inv_unimodular_for_test(u);
+            let vi = mat2_inv_unimodular_for_test(v);
+            let score = mat2_max_abs_i128(u)
+                .max(mat2_max_abs_i128(v))
+                .max(mat2_max_abs_i128(ui))
+                .max(mat2_max_abs_i128(vi))
+                .max(h[0][1].abs());
+            max_coeff = max_coeff.max(score);
+            p99_scores.push(score);
+        }
+        p99_scores.sort_unstable();
+        let p99 = p99_scores[p99_scores.len() * 99 / 100];
+        eprintln!(
+            "BY Hermite in-place factorization: p99_coeff={p99}, max_coeff={max_coeff}"
+        );
+        assert!(max_coeff <= (1i128 << W), "Hermite factors exceeded w-bit coefficient scale");
+    }
+
     fn branch_bits_for_lowword_window(w: usize, mut delta: i64, mut f: i128, mut g: i128) -> Vec<bool> {
         let mut bits = Vec::with_capacity(w);
         f = truncate_i128(f, w);
