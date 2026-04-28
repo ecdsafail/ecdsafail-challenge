@@ -745,7 +745,47 @@ low-scratch vented BY projected ≈  2,650,796
 Thus even the higher-Toffoli low-scratch/vented variant can beat the 2.7M
 Google low-qubit target, while the fast variant is below 2.1M on paper. The
 remaining work is implementation risk, not arithmetic economics: complete
- tagged-DIV integration and solve the scratch overlap/decoder.
+tagged-DIV integration and solve the scratch overlap/decoder.
+
+`inverse_scaled_by_560_cleans_lam_and_writes_product` resolves the earlier
+pair2-cleanup conceptual gap. The forward scaled BY map sends
+`(0, q*x) -> (sign*q, 0)`, so the inverse map sends `(sign*q,0) -> (logical 0,
+q*x)`. This is exactly the pair2 operation needed after `tx=Rx-Qx` and
+`lam=q=-lambda`: it cleans `lam` and writes `Ry+Qy=q*tx` into `ty`, after which
+one classical subtract by `Qy` gives the output. Circuit evidence:
+
+```text
+inverse 560-step scaled BY product-clean scaffold: 1,287,440 CCX, peak 2,403q
+input  (r,s)=(sign*q,0)
+output (r,s)=(logical zero, q*x)
+```
+
+A better sign-frame removes the inverse replay's extra subtract cost.
+`inverse_scaled_by_560_negr_frame_recovers_fast_cost` stores `u=-r` during the
+inverse product-clean pass. The inverse cases become
+
+```text
+C: (u,s) -> (u, 2s)
+B: (u,s) -> (u, 2s+u)
+A: (u,s) -> (u+2s, -u)
+```
+
+so the implementation uses `cmod_add` instead of `cmod_sub` and matches the
+forward replay cost:
+
+```text
+neg-r inverse product-clean: 1,145,760 CCX, peak 2,405q
+```
+
+The zero is sometimes the noncanonical representative `p` because of the fast
+controlled negation; for the non-exceptional affine path it can be unloaded as a
+known logical-zero representative or fixed with a canonical negation variant.
+This means the full replacement is two BY replays: forward tagged DIV for pair1
+and neg-r inverse product-clean BY for pair2, deleting both Kaliski objects and
+the ordinary multiplication cleanup around them. With measured decoder margins,
+`low_scratch_scaled_by_budget_still_beats_27m_after_pair1_mul_deletion` now
+estimates the two-fast-replay schedule at `≈2,637,286` Toffoli, below the 2.7M
+low-qubit target.
 
 This reopens BY as a live SOTA-shaped route but with precise remaining
 obstacles: branch/matrix history compression, selected Hermite-factor

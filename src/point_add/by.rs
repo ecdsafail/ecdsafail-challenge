@@ -2641,11 +2641,20 @@ mod tests {
         let branch_decode_margin = 150_000.0;
         let fast_projected = scaffold_after_div + fast_by_div + branch_decode_margin;
         let low_scratch_projected = scaffold_after_div + low_scratch_vented_by_div + branch_decode_margin;
+        let two_replay_scaffold = current_total
+            - current_two_kaliski
+            - deleted_pair1_muls
+            - 407.0 * 255.0 // pair1 scale loop
+            - 404.0 * 255.0 // pair2 double/scale loop
+            - 150_145.0; // pair2 schoolbook product add
+        let two_replay_decode_margin = 60_000.0; // two pattern decoders are ~46k by pattern_decoder_budget.
+        let two_fast_replays = two_replay_scaffold + 2.0 * fast_by_div + two_replay_decode_margin;
         eprintln!(
-            "BY DIV with pair1 mul deletion: scaffold_after_div≈{scaffold_after_div:.0}, fast_projected≈{fast_projected:.0}, low_scratch_vented_projected≈{low_scratch_projected:.0}"
+            "BY DIV with pair1 mul deletion: scaffold_after_div≈{scaffold_after_div:.0}, fast_projected≈{fast_projected:.0}, low_scratch_vented_projected≈{low_scratch_projected:.0}, two_fast_replays≈{two_fast_replays:.0}"
         );
         assert!(fast_projected < 2_100_000.0, "fast BY DIV no longer reaches low-gate target band");
         assert!(low_scratch_projected < 2_700_000.0, "low-scratch vented BY DIV no longer beats 2.7M");
+        assert!(two_fast_replays < 2_700_000.0, "two fast BY replays no longer beat 2.7M");
     }
 
     #[test]
@@ -3455,6 +3464,46 @@ mod tests {
         super::super::cadd_nbit_const_fast(b, v, p.wrapping_add(U256::from(1u64)), ctrl);
     }
 
+    fn emit_scaled_by_controlled_microstep_inverse_negr_for_test(
+        b: &mut super::super::B,
+        u_neg_r: &[super::super::QubitId],
+        s: &[super::super::QubitId],
+        odd_ctrl: super::super::QubitId,
+        a_ctrl: super::super::QubitId,
+        p: U256,
+    ) {
+        // Inverse scaled step in the sign-flipped representation u=-r:
+        //   C: (u,s) -> (u, 2s)
+        //   B: (u,s) -> (u, 2s+u)
+        //   A: (u,s) -> (u+2s, -u)
+        // This replaces cmod_sub by cmod_add and has the same cost shape as
+        // the forward scaled microstep.
+        super::super::mod_double_inplace_fast(b, s, p);
+        super::super::cmod_add_qq(b, s, u_neg_r, odd_ctrl, p);
+        for i in 0..u_neg_r.len() {
+            super::super::cswap(b, a_ctrl, u_neg_r[i], s[i]);
+        }
+        emit_cmod_neg_for_test(b, s, a_ctrl, p);
+    }
+
+    fn emit_scaled_by_controlled_microstep_inverse_for_test(
+        b: &mut super::super::B,
+        r: &[super::super::QubitId],
+        s: &[super::super::QubitId],
+        odd_ctrl: super::super::QubitId,
+        a_ctrl: super::super::QubitId,
+        p: U256,
+    ) {
+        // Inverse of the scaled step below:
+        //   undo halve(s), undo s += r under odd, undo controlled neg(s), undo A swap.
+        super::super::mod_double_inplace_fast(b, s, p);
+        super::super::cmod_sub_qq(b, s, r, odd_ctrl, p);
+        emit_cmod_neg_for_test(b, s, a_ctrl, p);
+        for i in 0..r.len() {
+            super::super::cswap(b, a_ctrl, r[i], s[i]);
+        }
+    }
+
     fn emit_scaled_by_controlled_microstep_for_test(
         b: &mut super::super::B,
         r: &[super::super::QubitId],
@@ -3574,6 +3623,134 @@ mod tests {
             g = truncate_i128(g, t - 1);
         }
         out
+    }
+
+    #[test]
+    fn inverse_scaled_by_560_negr_frame_recovers_fast_cost() {
+        let p = SECP256K1_P;
+        let mut sx = Sampler::new(b"by-inverse-negr-560-x-v1", p);
+        let mut sq = Sampler::new(b"by-inverse-negr-560-q-v1", p);
+        let (x, q, controls, f_final) = loop {
+            let x = sx.next();
+            let q = sq.next();
+            let mut delta = 1i64;
+            let mut f = SInt::from_u(p);
+            let mut g = SInt::from_u(x);
+            let mut controls = Vec::with_capacity(560);
+            for _ in 0..560 {
+                let odd = g.bit0();
+                let a = delta > 0 && odd;
+                controls.push((odd, a));
+                divstep_sint_state(&mut delta, &mut f, &mut g);
+            }
+            if g.is_zero() && (f.is_one_pos() || f.is_one_neg()) {
+                break (x, q, controls, f);
+            }
+        };
+        let mut b = super::super::B::new();
+        let odd = b.alloc_qubits(560);
+        let a_ctrl = b.alloc_qubits(560);
+        let u = b.alloc_qubits(256);
+        let s = b.alloc_qubits(256);
+        for i in (0..560).rev() {
+            emit_scaled_by_controlled_microstep_inverse_negr_for_test(&mut b, &u, &s, odd[i], a_ctrl[i], p);
+        }
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let u0 = if f_final.is_one_pos() { negm(q, p) } else { q };
+        let expected_s = mulm(q, x, p);
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-inverse-negr-560-sim-v1");
+        let mut xof = hasher.finalize_xof();
+        let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+        for (i, &(odd_v, a_v)) in controls.iter().enumerate() {
+            if odd_v {
+                *sim.qubit_mut(odd[i]) |= 1;
+            }
+            if a_v {
+                *sim.qubit_mut(a_ctrl[i]) |= 1;
+            }
+        }
+        set_slice_u512_by(&mut sim, &u, u256_to_u512_for_by_tests(u0));
+        set_slice_u512_by(&mut sim, &s, U512::ZERO);
+        sim.apply(&ops);
+        let got_u = get_slice_u512_by(&sim, &u);
+        let p512 = u256_to_u512_for_by_tests(p);
+        assert!(got_u == U512::ZERO || got_u == p512, "u=-r was not logical zero: {got_u}");
+        assert_eq!(get_slice_u512_by(&sim, &s), u256_to_u512_for_by_tests(expected_s), "product output mismatch");
+        eprintln!(
+            "BY inverse scaled 560-step neg-r product-clean scaffold: ccx={ccx}, peak={peak}q"
+        );
+        assert!(ccx <= 1_145_760, "neg-r inverse should match forward cost");
+    }
+
+    #[test]
+    fn inverse_scaled_by_560_cleans_lam_and_writes_product() {
+        // This is the missing pair2 cleanup schedule. If forward scaled BY maps
+        // (0, q*x) -> (sign*q, 0), then the inverse map sends (sign*q, 0) ->
+        // (0, q*x). Thus pair2 can clean lam and write Ry+Qy without a
+        // Kaliski-style inversion or a separate q*x multiplication.
+        let p = SECP256K1_P;
+        let mut sx = Sampler::new(b"by-inverse-560-x-v1", p);
+        let mut sq = Sampler::new(b"by-inverse-560-q-v1", p);
+        let (x, q, controls, f_final) = loop {
+            let x = sx.next();
+            let q = sq.next();
+            let mut delta = 1i64;
+            let mut f = SInt::from_u(p);
+            let mut g = SInt::from_u(x);
+            let mut controls = Vec::with_capacity(560);
+            for _ in 0..560 {
+                let odd = g.bit0();
+                let a = delta > 0 && odd;
+                controls.push((odd, a));
+                divstep_sint_state(&mut delta, &mut f, &mut g);
+            }
+            if g.is_zero() && (f.is_one_pos() || f.is_one_neg()) {
+                break (x, q, controls, f);
+            }
+        };
+        let mut b = super::super::B::new();
+        let odd = b.alloc_qubits(560);
+        let a_ctrl = b.alloc_qubits(560);
+        let r = b.alloc_qubits(256);
+        let s = b.alloc_qubits(256);
+        for i in (0..560).rev() {
+            emit_scaled_by_controlled_microstep_inverse_for_test(&mut b, &r, &s, odd[i], a_ctrl[i], p);
+        }
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let r0 = if f_final.is_one_pos() { q } else { negm(q, p) };
+        let expected_s = mulm(q, x, p);
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-inverse-560-sim-v1");
+        let mut xof = hasher.finalize_xof();
+        let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+        for (i, &(odd_v, a_v)) in controls.iter().enumerate() {
+            if odd_v {
+                *sim.qubit_mut(odd[i]) |= 1;
+            }
+            if a_v {
+                *sim.qubit_mut(a_ctrl[i]) |= 1;
+            }
+        }
+        set_slice_u512_by(&mut sim, &r, u256_to_u512_for_by_tests(r0));
+        set_slice_u512_by(&mut sim, &s, U512::ZERO);
+        sim.apply(&ops);
+        let got_r = get_slice_u512_by(&sim, &r);
+        let p512 = u256_to_u512_for_by_tests(p);
+        assert!(got_r == U512::ZERO || got_r == p512, "lam/r was not logical zero: {got_r}");
+        assert_eq!(get_slice_u512_by(&sim, &s), u256_to_u512_for_by_tests(expected_s), "product output mismatch");
+        eprintln!(
+            "BY inverse scaled 560-step product-clean scaffold: ccx={ccx}, peak={peak}q"
+        );
+        assert!(ccx < 1_400_000, "inverse scaled BY cleanup too costly");
     }
 
     #[test]
