@@ -2624,6 +2624,31 @@ mod tests {
     }
 
     #[test]
+    fn low_scratch_scaled_by_budget_still_beats_27m_after_pair1_mul_deletion() {
+        // Important refinement: a true tagged DIV does not merely replace the
+        // two Kaliski bodies. It also deletes pair1's two schoolbook
+        // multiplications because the DIV itself maps (0,dy+dx)->(lambda+1,0).
+        // That ~300k saving gives enough margin for the low-scratch vented
+        // modular-add variant, whose measured step cost is higher but peak is
+        // much closer to the 600-scratch target.
+        let current_total = 4_132_750.0;
+        let current_two_kaliski = 3_190_000.0;
+        let non_inv_scaffold = current_total - current_two_kaliski;
+        let deleted_pair1_muls = 149_889.0 + 150_145.0;
+        let scaffold_after_div = non_inv_scaffold - deleted_pair1_muls;
+        let fast_by_div = 2_046.0 * 560.0;
+        let low_scratch_vented_by_div = 3_318.0 * 560.0; // measured with KAL_VENT_MODADD=1.
+        let branch_decode_margin = 150_000.0;
+        let fast_projected = scaffold_after_div + fast_by_div + branch_decode_margin;
+        let low_scratch_projected = scaffold_after_div + low_scratch_vented_by_div + branch_decode_margin;
+        eprintln!(
+            "BY DIV with pair1 mul deletion: scaffold_after_div≈{scaffold_after_div:.0}, fast_projected≈{fast_projected:.0}, low_scratch_vented_projected≈{low_scratch_projected:.0}"
+        );
+        assert!(fast_projected < 2_100_000.0, "fast BY DIV no longer reaches low-gate target band");
+        assert!(low_scratch_projected < 2_700_000.0, "low-scratch vented BY DIV no longer beats 2.7M");
+    }
+
+    #[test]
     fn scaled_by_div_point_add_budget_has_sota_margin_if_history_workspace_solved() {
         // The structural point of the scaled controlled microstep is that it
         // replaces both Kaliski invocations by one in-place tagged DIV. This is

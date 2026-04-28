@@ -731,9 +731,21 @@ branch/decode margin            ≈    150,000
 projected point-add             ≈  2,238,510
 ```
 
-That is below the 2.7M Google low-qubit target and close to the 2.1M low-gate
-target. The remaining work is implementation risk, not arithmetic economics:
-complete tagged-DIV integration and solve the scratch overlap/decoder.
+`low_scratch_scaled_by_budget_still_beats_27m_after_pair1_mul_deletion` adds an
+important correction: true tagged DIV also deletes pair1's two schoolbook
+multiplications (`149,889 + 150,145 CCX`) because it directly maps
+`(0,dy+dx)->(lambda+1,0)`. With that saving:
+
+```text
+scaffold after DIV              ≈    642,716
+fast BY projected               ≈  1,938,476
+low-scratch vented BY projected ≈  2,650,796
+```
+
+Thus even the higher-Toffoli low-scratch/vented variant can beat the 2.7M
+Google low-qubit target, while the fast variant is below 2.1M on paper. The
+remaining work is implementation risk, not arithmetic economics: complete
+ tagged-DIV integration and solve the scratch overlap/decoder.
 
 This reopens BY as a live SOTA-shaped route but with precise remaining
 obstacles: branch/matrix history compression, selected Hermite-factor
