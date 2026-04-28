@@ -3630,6 +3630,39 @@ mod tests {
         b.free(nz);
     }
 
+    fn emit_logical_shift_left_even_inverse_for_test(b: &mut super::super::B, v: &[super::super::QubitId]) {
+        for i in (0..v.len() - 1).rev() {
+            b.swap(v[i], v[i + 1]);
+        }
+    }
+
+    fn emit_2adic_by_branch_step_reverse_for_test(
+        b: &mut super::super::B,
+        f: &[super::super::QubitId],
+        g: &[super::super::QubitId],
+        delta: &[super::super::QubitId],
+        odd_hist: super::super::QubitId,
+        a_hist: super::super::QubitId,
+    ) {
+        // Reverse of emit_2adic_by_branch_step_for_test, then clear the two
+        // branch-history bits from the restored pre-step denominator state.
+        super::super::sub_nbit_const_fast(b, delta, U256::from(1u64));
+        emit_twos_complement_cneg_for_test(b, delta, a_hist);
+        emit_logical_shift_left_even_inverse_for_test(b, g);
+        super::super::cucc_sub_ctrl(b, f, g, odd_hist);
+        emit_twos_complement_cneg_for_test(b, g, a_hist);
+        for i in 0..f.len() {
+            super::super::cswap(b, a_hist, f[i], g[i]);
+        }
+
+        let positive = b.alloc_qubit();
+        emit_delta_positive_into_for_test(b, delta, positive);
+        b.ccx(odd_hist, positive, a_hist);
+        emit_delta_positive_into_for_test(b, delta, positive);
+        b.free(positive);
+        b.cx(g[0], odd_hist);
+    }
+
     fn emit_2adic_by_branch_step_for_test(
         b: &mut super::super::B,
         f: &[super::super::QubitId],
@@ -3829,6 +3862,56 @@ mod tests {
         eprintln!(
             "2-adic BY branch generator small prefix: steps={STEPS}, width={W}, ccx={ccx}, peak={}q",
             b.peak_qubits
+        );
+    }
+
+    #[test]
+    fn by_denominator_branch_history_self_cleans_on_reverse() {
+        // This is the constructive counterpart to the dead compute/copy/uncompute
+        // branch generators: if the denominator state itself is part of the DIV
+        // primitive, its branch history can be cleared while running the
+        // denominator backward. That is the self-cleaning shape needed for a
+        // real integrated DIV. This small 2-adic circuit proves the mechanism.
+        const W: usize = 96;
+        const STEPS: usize = 64;
+        const DBITS: usize = 12;
+        let p = U256::from((1u128 << 61) - 1);
+        let x = U256::from(0x0fed_cba9_8765_4321u64) % p;
+        let mut b = super::super::B::new();
+        let f = b.alloc_qubits(W);
+        let g = b.alloc_qubits(W);
+        let delta = b.alloc_qubits(DBITS);
+        let odd = b.alloc_qubits(STEPS);
+        let a = b.alloc_qubits(STEPS);
+        for i in 0..STEPS {
+            emit_2adic_by_branch_step_for_test(&mut b, &f, &g, &delta, odd[i], a[i]);
+        }
+        for i in (0..STEPS).rev() {
+            emit_2adic_by_branch_step_reverse_for_test(&mut b, &f, &g, &delta, odd[i], a[i]);
+        }
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-den-branch-self-clean-v1");
+        let mut xof = hasher.finalize_xof();
+        let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+        set_slice_u512_by(&mut sim, &f, U512::from(p));
+        set_slice_u512_by(&mut sim, &g, U512::from(x));
+        set_slice_u512_by(&mut sim, &delta, U512::from(1u64));
+        sim.apply(&ops);
+        assert_eq!(get_slice_u512_by(&sim, &f), U512::from(p));
+        assert_eq!(get_slice_u512_by(&sim, &g), U512::from(x));
+        assert_eq!(get_slice_u512_by(&sim, &delta), U512::from(1u64));
+        for i in 0..STEPS {
+            assert_eq!(sim.qubit(odd[i]) & 1, 0, "odd history not clean at {i}");
+            assert_eq!(sim.qubit(a[i]) & 1, 0, "A history not clean at {i}");
+        }
+        assert_eq!(sim.global_phase() & 1, 0, "phase garbage in self-cleaning branch history");
+        eprintln!(
+            "BY denominator branch history self-clean: steps={STEPS}, width={W}, ccx={ccx}, peak={peak}q"
         );
     }
 
