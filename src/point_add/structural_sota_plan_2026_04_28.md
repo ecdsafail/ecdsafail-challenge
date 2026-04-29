@@ -981,6 +981,40 @@ altseed/classical/phase/ancilla failures = 0
 Trying to also make the signed-to-modular copy's sign-controlled ±c correction
 MBU-fast failed with one phase-garbage batch, so that copy remains exact for now.
 
+`BY_CENTERED_WINDOW_DENOM_REPLACE=1` is the first production-harness wiring of
+the lowword/window denominator-control source. For each 16-step window it copies
+low signed `(f,g)` plus `delta` into a 34-bit local 2-adic simulator, generates
+odd/A controls, applies those selected controls to the full-width signed
+denominator state so `sign(f)` is still available, and later reruns the same
+window oracle after reversing the full state to clear the histories. This still
+uses 576 full-width selected microsteps, so it is deliberately worse than the
+direct generator, but it proves the selected/window interface works in the real
+quotient-producing replacements:
+
+```text
+BY_CENTERED_PAIR1_REPLACE=1 BY_CENTERED_WINDOW_DENOM_REPLACE=1
+avg_toffoli = 8,790,041
+qubits      = 5,589
+emitted_ops = 55,077,495
+altseed/classical/phase/ancilla failures = 0
+
+BY_CENTERED_PAIR2_REPLACE=1 BY_CENTERED_WINDOW_DENOM_REPLACE=1
+avg_toffoli = 8,806,225
+qubits      = 5,589
+emitted_ops = 55,195,212
+altseed/classical/phase/ancilla failures = 0
+
+BY_CENTERED_PAIR1_REPLACE=1 BY_CENTERED_PAIR2_REPLACE=1 BY_CENTERED_WINDOW_DENOM_REPLACE=1
+avg_toffoli = 13,483,808
+qubits      = 5,589
+emitted_ops = 79,499,589
+altseed/classical/phase/ancilla failures = 0
+```
+
+Next deletion: replace the 16 full-width selected-control microsteps with the
+`pattern+q` fixed-matrix/window update. The new window hook proves control
+selection composes; it does not yet consume the q corrections.
+
 Again, this is not a performance result. It proves both Kaliski inverse-sized
 objects in the real affine point-add can be replaced by centered BY tagged-DIV
 objects and still satisfy the full exact checker.
