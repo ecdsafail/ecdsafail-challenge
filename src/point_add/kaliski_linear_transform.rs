@@ -670,6 +670,51 @@ fn toy_step_unreduced_coeff(st: &mut ToyUnreducedCoeffState) -> Branch {
     br
 }
 
+fn toy_unreduced_coeff_final_r(n: usize, p: u64, x: u64, y: u64) -> Option<u128> {
+    if x == 0 || x >= p || y >= p {
+        return None;
+    }
+    let tag = (x + y) % p;
+    if tag == 0 {
+        return None;
+    }
+    let mut st = ToyUnreducedCoeffState { u: p, v: x, r: 0, s: tag as u128, f: 1 };
+    for _ in 0..(2 * n - 1) {
+        toy_step_unreduced_coeff(&mut st);
+    }
+    Some(st.r)
+}
+
+fn toy_unreduced_coeff_highbit_phase_anf_stats(n: usize, p: u64, bit_shift: usize) -> (usize, usize) {
+    assert!(n <= 10, "truth table kept small");
+    let vars = 2 * n;
+    let size = 1usize << vars;
+    let limb_mask = (1u64 << n) - 1;
+    let mut anf = vec![0u8; size];
+    for idx in 0..size {
+        let x = (idx as u64) & limb_mask;
+        let y = ((idx >> n) as u64) & limb_mask;
+        anf[idx] = toy_unreduced_coeff_final_r(n, p, x, y)
+            .map(|r| ((r >> bit_shift) & 1) as u8)
+            .unwrap_or(0);
+    }
+    for bit in 0..vars {
+        for idx in 0..size {
+            if (idx & (1usize << bit)) != 0 {
+                anf[idx] ^= anf[idx ^ (1usize << bit)];
+            }
+        }
+    }
+    let density = anf.iter().filter(|&&c| c != 0).count();
+    let degree = anf
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| if c != 0 { Some(i.count_ones() as usize) } else { None })
+        .max()
+        .unwrap_or(0);
+    (degree, density)
+}
+
 fn toy_unreduced_coeff_branch_stats(n: usize, p: u64) -> (usize, usize, usize, usize) {
     use std::collections::BTreeMap;
     type Key = (usize, u64, u64, u128, u128, u8);
@@ -773,6 +818,34 @@ fn toy_step_linear_canonical(st: &mut ToyLinState, p: u64) -> Branch {
         core::mem::swap(&mut st.r, &mut st.s);
     }
     br
+}
+
+#[test]
+fn measuring_unreduced_coefficient_high_bits_has_dense_phase() {
+    // Natural follow-up: keep unreduced coefficients just long enough to make
+    // the Kaliski step locally reversible, then X-measure the high quotient bits
+    // to get back under 600 scratch.  The phase correction would need those high
+    // bits as boolean functions of the surviving data.  Even in the generous
+    // input frame (x,y) the high bits are dense/full-degree on toys, so this is
+    // not a cheap MBUC/kickmix escape from the quotient-bit width.
+    let cases = [
+        (6usize, 61u64, 10usize),
+        (8usize, 251u64, 14usize),
+        (10usize, 1021u64, 18usize),
+    ];
+    for &(n, p, bit_shift) in &cases {
+        let (degree, density) = toy_unreduced_coeff_highbit_phase_anf_stats(n, p, bit_shift);
+        let table = 1usize << (2 * n);
+        eprintln!(
+            "unreduced coefficient high-bit phase: n={n}, p={p}, bit={bit_shift}, degree={degree}, density={density}/{table}"
+        );
+        if n == 10 {
+            println!("METRIC unreduced_coeff_highbit_degree_n10={degree}");
+            println!("METRIC unreduced_coeff_highbit_density_n10={density}");
+        }
+        assert!(degree + 1 >= 2 * n);
+        assert!(density > table / 4);
+    }
 }
 
 #[test]

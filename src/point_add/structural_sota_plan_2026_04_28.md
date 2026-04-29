@@ -112,8 +112,12 @@ other side of the tradeoff: if coefficient registers are not reduced modulo `p`,
 poststate branch recovery is exact on exhaustive toys, but coefficient width
 grows as `3n-1` (toy `n=8 -> 23`; secp ≈663-bit coefficients), implying about
 1326 scratch in the folded layout.  Thus a 600-scratch design cannot be
-"current Kaliski + small tag" or "unreduced Kaliski"; it needs a transform whose
-inverse branch is local without field-sized quotient side information.
+"current Kaliski + small tag" or "unreduced Kaliski".  Measuring away the high
+quotient bits is not a cheap kickmix fix either:
+`measuring_unreduced_coefficient_high_bits_has_dense_phase` gets toy n=10 degree
+`20/20` and density `516314/1048576` for a representative high bit in the input
+frame.  The viable transform must make the inverse branch local without
+field-sized quotient side information in the first place.
 
 ### Strategy C re-estimate at the current baseline
 

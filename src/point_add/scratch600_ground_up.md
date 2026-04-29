@@ -769,6 +769,11 @@ extension bits for input s=ty      407
 So unreduced coefficients are a conceptual self-cleaning Kaliski, but not a
 600-scratch circuit.  Any successful 600-scratch DIV must somehow get the local
 reversibility of unreduced coefficients without paying their quotient-bit width.
+The obvious MBUC version is also blocked: `measuring_unreduced_coefficient_high_bits_has_dense_phase`
+tries X-measuring representative high bits and correcting the phase from the
+input frame `(x,y)`.  At toy `n=10`, one high quotient bit has ANF degree
+`20/20` and density `516314/1048576`.  So the quotient bits are not cheap
+kickmix garbage; they are dense functions carrying the Euclidean history.
 
 ## 11. Fast invalidation tasks still open
 
