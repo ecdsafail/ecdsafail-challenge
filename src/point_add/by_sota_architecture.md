@@ -62,9 +62,19 @@ Result:
 state = 4*A entries + 2*c entries = 6 * 12 * 16 = 1152 bits
 ```
 
+A first structural compression folds the constant `p` column into the carry,
+leaving only the two coefficients of the quantum `x` tail plus two carry rows:
+
+```text
+16 limbs per folded entry: fails on all 64 sampled denominators
+17 limbs per folded entry: exact on 64 sampled denominators
+state = 2*b_x entries + 2*c entries = 4 * 17 * 16 = 1088 bits
+```
+
 This is constructive but not yet SOTA-shaped.  It replaces a full 560-bit
-2-adic denominator pair with a selector state, but the naive affine state is
-still too large for the ~600 extra-qubit target.
+2-adic denominator pair with a selector state, and the constant-column fold
+shows the state can move in the right direction, but 1088 selector bits is still
+too large for the ~600 extra-qubit target.
 
 ## Next architecture work
 

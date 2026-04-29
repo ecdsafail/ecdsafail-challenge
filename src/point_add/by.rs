@@ -1817,6 +1817,65 @@ mod tests {
         true
     }
 
+    fn streaming_selector_constant_folded_matches_for_test(x: U256, state_limbs: usize) -> bool {
+        const W: usize = 16;
+        const WINDOWS: usize = 35;
+        let bits = state_limbs * W;
+        let prod_bits = bits + W;
+        let mut bx = [U512::ZERO; 2];
+        bx[1] = U512::from(1u64);
+        let p = SECP256K1_P;
+        let mut c = [U512::from(p) & mask_u512_bits_for_streaming_test(bits), U512::ZERO];
+        let mut delta = 1i64;
+        let mut actual_delta = 1i64;
+        let mut f = SInt::from_u(p);
+        let mut g = SInt::from_u(x);
+        for win in 0..WINDOWS {
+            let limb_x = U512::from(u256_limb16_for_streaming_test(x, win));
+            let v0_bits = (bx[0] * limb_x + c[0]) & mask_u512_bits_for_streaming_test(bits);
+            let v1_bits = (bx[1] * limb_x + c[1]) & mask_u512_bits_for_streaming_test(bits);
+            let low0 = low_i16_from_residue_for_streaming_test(v0_bits);
+            let low1 = low_i16_from_residue_for_streaming_test(v1_bits);
+            if low0 != low_signed_sint16_for_streaming_test(f)
+                || low1 != low_signed_sint16_for_streaming_test(g)
+            {
+                return false;
+            }
+            let bits_vec = branch_bits_for_lowword_window(W, delta, low0, low1);
+            let m = matrix_from_branch_bits(delta, &bits_vec);
+            let v0_ext = sign_extend_u512_for_streaming_test(v0_bits, bits, prod_bits);
+            let v1_ext = sign_extend_u512_for_streaming_test(v1_bits, bits, prod_bits);
+            let mut n0 = U512::ZERO;
+            n0 = add_i128_term_mod_width_for_streaming_test(n0, v0_ext, m.m00, prod_bits);
+            n0 = add_i128_term_mod_width_for_streaming_test(n0, v1_ext, m.m01, prod_bits);
+            let mut n1 = U512::ZERO;
+            n1 = add_i128_term_mod_width_for_streaming_test(n1, v0_ext, m.m10, prod_bits);
+            n1 = add_i128_term_mod_width_for_streaming_test(n1, v1_ext, m.m11, prod_bits);
+            if (n0.as_limbs()[0] & 0xffff) != 0 || (n1.as_limbs()[0] & 0xffff) != 0 {
+                return false;
+            }
+            c[0] = sign_extend_u512_for_streaming_test(n0 >> W, bits, bits);
+            c[1] = sign_extend_u512_for_streaming_test(n1 >> W, bits, bits);
+
+            let old_bx = bx;
+            bx[0] = U512::ZERO;
+            bx[0] = add_i128_term_mod_width_for_streaming_test(bx[0], old_bx[0], m.m00, bits);
+            bx[0] = add_i128_term_mod_width_for_streaming_test(bx[0], old_bx[1], m.m01, bits);
+            bx[1] = U512::ZERO;
+            bx[1] = add_i128_term_mod_width_for_streaming_test(bx[1], old_bx[0], m.m10, bits);
+            bx[1] = add_i128_term_mod_width_for_streaming_test(bx[1], old_bx[1], m.m11, bits);
+            delta = m.delta_final;
+
+            for _ in 0..W {
+                divstep_sint_state(&mut actual_delta, &mut f, &mut g);
+            }
+            if actual_delta != delta {
+                return false;
+            }
+        }
+        true
+    }
+
     #[test]
     fn streaming_limb_selector_is_exact_but_state_heavy() {
         // Architectural pivot test for a real BY-DIV selector generator.  The
@@ -1850,6 +1909,36 @@ mod tests {
         );
         assert!(k8_failures > 0, "8-limb streaming state unexpectedly exact on all samples");
         assert!(state_bits > 600, "streaming selector would already fit the low-scratch target");
+    }
+
+    #[test]
+    fn streaming_limb_selector_folds_constant_p_column_but_still_too_large() {
+        // First compression of the streaming selector: the first denominator
+        // column multiplies the constant p, so it can be folded into the carry
+        // vector.  The state drops from six entries (full A plus c) to four
+        // entries (two x-column coefficients plus two carries).  Exactness now
+        // needs 17 16-bit limbs because p itself is a 256-bit positive constant;
+        // 16 limbs aliases it as a negative two's-complement value.
+        let samples = 64usize;
+        let mut sampler = Sampler::new(b"by-streaming-limb-selector-fold-p-v1", SECP256K1_P);
+        let mut k16_failures = 0usize;
+        for _ in 0..samples {
+            let x = sampler.next();
+            if !streaming_selector_constant_folded_matches_for_test(x, 16) {
+                k16_failures += 1;
+            }
+            assert!(
+                streaming_selector_constant_folded_matches_for_test(x, 17),
+                "17-limb constant-folded streaming selector lost exactness"
+            );
+        }
+        let state_bits = 4 * 17 * 16;
+        eprintln!(
+            "BY streaming selector with constant-p fold: samples={samples}, k16_failures={k16_failures}, k17_state_bits={state_bits}"
+        );
+        assert!(k16_failures > 0, "16-limb folded selector unexpectedly exact on all samples");
+        assert!(state_bits < 1152, "constant-p fold did not improve the naive A/c state");
+        assert!(state_bits > 600, "folded selector would already fit the low-scratch target");
     }
 
     #[test]
