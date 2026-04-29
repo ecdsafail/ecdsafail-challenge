@@ -817,6 +817,27 @@ phase on every altseed batch (`320` phase batches), so the hook was reverted.
 This mirrors the earlier A-clear lesson: MBU signed add/sub phase dependencies
 must be respected by the parity cleanup schedule.
 
+The phase blocker has now been isolated in `by.rs` with controlled variants:
+
+```text
+96-step centered forward+inverse+parity-clear variants
+fast MBU controls:          299,616 CCX, phase=1
+exact signed add/sub only:  399,264 CCX, phase=1
+exact parity ±p controls:   448,800 CCX, phase=0
+all exact controls:         548,448 CCX, phase=0
+
+560-step all-exact clean roundtrip: 3,199,280 CCX, peak=2,464q, phase=0
+560-step exact-parity/fast-signed: data-dependent phase (saw phase 0 and 1)
+```
+
+So a fully clean centered replay roundtrip exists under the current qubit cap,
+but only by making the MBU-controlled arithmetic exact, which is far too
+expensive. The important structural lesson is sharper than before: the dirty
+parity bits are not the only issue; any replay control that will later be
+cleaned must either avoid MBU phase dependencies or carry an explicit phase
+witness/live-flag that is cleaned with it. A global `Neg` cannot fix this,
+because exact-parity/fast-signed cleanup has data-dependent phase.
+
 Naively synthesizing the range test is too expensive:
 `naive_centered_parity_recovery_cost_would_erase_redundant_replay_win` measures
 about `1,296 CCX/flag`, or `≈725,760` CCX just to clean 560 parity bits. A cheap

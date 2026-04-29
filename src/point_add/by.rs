@@ -4008,6 +4008,40 @@ mod tests {
         b.free_vec(&f);
     }
 
+    fn emit_signed_controlled_add_exact_for_test(
+        b: &mut super::super::B,
+        acc: &[super::super::QubitId],
+        a: &[super::super::QubitId],
+        ctrl: super::super::QubitId,
+    ) {
+        let f = b.alloc_qubits(acc.len());
+        for i in 0..acc.len() {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+        super::super::add_nbit_qq(b, &f, acc);
+        for i in 0..acc.len() {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+        b.free_vec(&f);
+    }
+
+    fn emit_signed_controlled_sub_exact_for_test(
+        b: &mut super::super::B,
+        acc: &[super::super::QubitId],
+        a: &[super::super::QubitId],
+        ctrl: super::super::QubitId,
+    ) {
+        let f = b.alloc_qubits(acc.len());
+        for i in 0..acc.len() {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+        super::super::sub_nbit_qq(b, &f, acc);
+        for i in 0..acc.len() {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+        b.free_vec(&f);
+    }
+
     fn emit_signed_redundant_halve_live_parity_for_test(
         b: &mut super::super::B,
         v: &[super::super::QubitId],
@@ -4040,6 +4074,35 @@ mod tests {
         b.x(sign_hist);
         super::super::cadd_nbit_const_fast(b, v, p, add_ctrl);
         super::super::csub_nbit_const_fast(b, v, p, sub_ctrl);
+        b.x(sign_hist);
+        b.ccx(parity_hist, sign_hist, sub_ctrl);
+        b.x(sign_hist);
+        b.ccx(parity_hist, sign_hist, add_ctrl);
+        b.free(sub_ctrl);
+        b.free(add_ctrl);
+        emit_arithmetic_shift_right_even_for_test(b, v);
+        b.cx(v[v.len() - 1], sign_hist);
+        b.cx(parity_hist, sign_hist);
+        b.free(sign_hist);
+    }
+
+    fn emit_signed_redundant_halve_centered_live_parity_exact_const_for_test(
+        b: &mut super::super::B,
+        v: &[super::super::QubitId],
+        parity_hist: super::super::QubitId,
+        p: U256,
+    ) {
+        let sign_hist = b.alloc_qubit();
+        let add_ctrl = b.alloc_qubit();
+        let sub_ctrl = b.alloc_qubit();
+        b.cx(v[0], parity_hist);
+        b.cx(v[v.len() - 1], sign_hist);
+        b.ccx(parity_hist, sign_hist, add_ctrl);
+        b.x(sign_hist);
+        b.ccx(parity_hist, sign_hist, sub_ctrl);
+        b.x(sign_hist);
+        super::super::cadd_nbit_const(b, v, p, add_ctrl);
+        super::super::csub_nbit_const(b, v, p, sub_ctrl);
         b.x(sign_hist);
         b.ccx(parity_hist, sign_hist, sub_ctrl);
         b.x(sign_hist);
@@ -4112,6 +4175,30 @@ mod tests {
         b.free(add_ctrl);
     }
 
+    fn emit_signed_redundant_unhalve_centered_with_parity_exact_const_for_test(
+        b: &mut super::super::B,
+        v: &[super::super::QubitId],
+        parity_hist: super::super::QubitId,
+        p: U256,
+    ) {
+        emit_arithmetic_shift_left_even_inverse_for_test(b, v);
+        let add_ctrl = b.alloc_qubit();
+        let sub_ctrl = b.alloc_qubit();
+        let sign = v[v.len() - 1];
+        b.ccx(parity_hist, sign, add_ctrl);
+        b.x(sign);
+        b.ccx(parity_hist, sign, sub_ctrl);
+        b.x(sign);
+        super::super::cadd_nbit_const(b, v, p, add_ctrl);
+        super::super::csub_nbit_const(b, v, p, sub_ctrl);
+        b.x(sign);
+        b.ccx(parity_hist, sign, sub_ctrl);
+        b.x(sign);
+        b.ccx(parity_hist, sign, add_ctrl);
+        b.free(sub_ctrl);
+        b.free(add_ctrl);
+    }
+
     fn emit_scaled_by_centered_signed_microstep_inverse_live_parity_for_test(
         b: &mut super::super::B,
         r: &[super::super::QubitId],
@@ -4127,6 +4214,79 @@ mod tests {
         for i in 0..r.len() {
             super::super::cswap(b, a_ctrl, r[i], s[i]);
         }
+    }
+
+    fn emit_scaled_by_centered_signed_microstep_live_parity_variant_for_test(
+        b: &mut super::super::B,
+        r: &[super::super::QubitId],
+        s: &[super::super::QubitId],
+        odd_ctrl: super::super::QubitId,
+        a_ctrl: super::super::QubitId,
+        parity_hist: super::super::QubitId,
+        p: U256,
+        exact_signed_add: bool,
+        exact_parity_const: bool,
+    ) {
+        for i in 0..r.len() {
+            super::super::cswap(b, a_ctrl, r[i], s[i]);
+        }
+        if exact_parity_const {
+            emit_twos_complement_cneg_exact_for_test(b, s, a_ctrl);
+        } else {
+            emit_twos_complement_cneg_for_test(b, s, a_ctrl);
+        }
+        if exact_signed_add {
+            emit_signed_controlled_add_exact_for_test(b, s, r, odd_ctrl);
+        } else {
+            emit_signed_controlled_add_for_test(b, s, r, odd_ctrl);
+        }
+        if exact_parity_const {
+            emit_signed_redundant_halve_centered_live_parity_exact_const_for_test(b, s, parity_hist, p);
+        } else {
+            emit_signed_redundant_halve_centered_live_parity_for_test(b, s, parity_hist, p);
+        }
+    }
+
+    fn emit_scaled_by_centered_signed_microstep_inverse_live_parity_variant_for_test(
+        b: &mut super::super::B,
+        r: &[super::super::QubitId],
+        s: &[super::super::QubitId],
+        odd_ctrl: super::super::QubitId,
+        a_ctrl: super::super::QubitId,
+        parity_hist: super::super::QubitId,
+        p: U256,
+        exact_signed_add: bool,
+        exact_parity_const: bool,
+    ) {
+        if exact_parity_const {
+            emit_signed_redundant_unhalve_centered_with_parity_exact_const_for_test(b, s, parity_hist, p);
+        } else {
+            emit_signed_redundant_unhalve_centered_with_parity_for_test(b, s, parity_hist, p);
+        }
+        if exact_signed_add {
+            emit_signed_controlled_sub_exact_for_test(b, s, r, odd_ctrl);
+        } else {
+            emit_signed_controlled_sub_for_test(b, s, r, odd_ctrl);
+        }
+        if exact_parity_const {
+            emit_twos_complement_cneg_exact_for_test(b, s, a_ctrl);
+        } else {
+            emit_twos_complement_cneg_for_test(b, s, a_ctrl);
+        }
+        for i in 0..r.len() {
+            super::super::cswap(b, a_ctrl, r[i], s[i]);
+        }
+    }
+
+    fn emit_centered_signed_clear_parity_after_inverse_for_test(
+        b: &mut super::super::B,
+        r: &[super::super::QubitId],
+        s: &[super::super::QubitId],
+        odd_ctrl: super::super::QubitId,
+        parity_hist: super::super::QubitId,
+    ) {
+        b.cx(s[0], parity_hist);
+        b.ccx(odd_ctrl, r[0], parity_hist);
     }
 
     fn emit_scaled_by_controlled_microstep_for_test(
@@ -6541,6 +6701,265 @@ mod tests {
         assert!(ccx < 900_000, "centered inverse scaffold lost sub-million target");
         assert!(peak < 2_800, "centered inverse scaffold exceeds current cap");
         assert_eq!(sim.global_phase() & 1, 0, "centered inverse scaffold phase garbage");
+    }
+
+    #[test]
+    fn centered_signed_roundtrip_parity_clear_is_phase_clean_with_exact_controls() {
+        const WIDE: usize = 260;
+        const STEPS: usize = 96;
+        let p = SECP256K1_P;
+        let p512 = u256_to_u512_for_by_tests(p);
+        let mut sx = Sampler::new(b"by-centered-roundtrip-exact-x-v1", p);
+        let mut sy = Sampler::new(b"by-centered-roundtrip-exact-y-v1", p);
+        let x = sx.next();
+        let y = sy.next();
+        let start_s = sw_centered_from_u256_for_test(addm(y, x, p), p);
+        let mut delta = 1i64;
+        let mut f = SInt::from_u(p);
+        let mut g = SInt::from_u(x);
+        let mut controls = Vec::with_capacity(STEPS);
+        let mut class_r = sw_zero_for_test();
+        let mut class_s = start_s;
+        for _ in 0..STEPS {
+            let odd = g.bit0();
+            let a = delta > 0 && odd;
+            controls.push((odd, a));
+            if a {
+                let nr = class_s;
+                class_s = sw_half_modp_centered_for_test(sw_sub_for_test(class_s, class_r), p512);
+                class_r = nr;
+            } else if odd {
+                class_s = sw_half_modp_centered_for_test(sw_add_for_test(class_s, class_r), p512);
+            } else {
+                class_s = sw_half_modp_centered_for_test(class_s, p512);
+            }
+            divstep_sint_state(&mut delta, &mut f, &mut g);
+        }
+
+        let variants = [
+            ("fast_mbu", false, false),
+            ("exact_signed_only", true, false),
+            ("exact_parity_controls", false, true),
+            ("all_exact", true, true),
+        ];
+        let mut phases = Vec::new();
+        for &(name, exact_signed_add, exact_parity_const) in &variants {
+            let mut b = super::super::B::new();
+            let odd = b.alloc_qubits(STEPS);
+            let a_ctrl = b.alloc_qubits(STEPS);
+            let parity = b.alloc_qubits(STEPS);
+            let r = b.alloc_qubits(WIDE);
+            let s = b.alloc_qubits(WIDE);
+            for i in 0..STEPS {
+                emit_scaled_by_centered_signed_microstep_live_parity_variant_for_test(
+                    &mut b,
+                    &r,
+                    &s,
+                    odd[i],
+                    a_ctrl[i],
+                    parity[i],
+                    p,
+                    exact_signed_add,
+                    exact_parity_const,
+                );
+            }
+            for i in (0..STEPS).rev() {
+                emit_scaled_by_centered_signed_microstep_inverse_live_parity_variant_for_test(
+                    &mut b,
+                    &r,
+                    &s,
+                    odd[i],
+                    a_ctrl[i],
+                    parity[i],
+                    p,
+                    exact_signed_add,
+                    exact_parity_const,
+                );
+                emit_centered_signed_clear_parity_after_inverse_for_test(&mut b, &r, &s, odd[i], parity[i]);
+            }
+            let ccx = count_ccx(&b.ops);
+            let peak = b.peak_qubits;
+            let num_qubits = b.next_qubit as usize;
+            let num_bits = b.next_bit as usize;
+            let ops = b.ops;
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"by-centered-roundtrip-exact-sim-v1");
+            hasher.update(name.as_bytes());
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+            for (i, &(odd_v, a_v)) in controls.iter().enumerate() {
+                if odd_v { *sim.qubit_mut(odd[i]) |= 1; }
+                if a_v { *sim.qubit_mut(a_ctrl[i]) |= 1; }
+            }
+            set_slice_u512_by(&mut sim, &r, U512::ZERO);
+            set_slice_u512_by(&mut sim, &s, sw_twos_for_width_for_test(start_s, WIDE));
+            sim.apply(&ops);
+            assert_eq!(get_slice_u512_by(&sim, &r), U512::ZERO, "{name}: r not restored");
+            assert_eq!(get_slice_u512_by(&sim, &s), sw_twos_for_width_for_test(start_s, WIDE), "{name}: s not restored");
+            for (j, &q) in parity.iter().enumerate() {
+                assert_eq!(sim.qubit(q) & 1, 0, "{name}: parity[{j}] not cleared");
+            }
+            let phase = sim.global_phase() & 1;
+            phases.push((name, phase, ccx, peak));
+        }
+        for (name, phase, ccx, peak) in &phases {
+            eprintln!("BY centered parity-clear roundtrip variant {name}: phase={phase}, ccx={ccx}, peak={peak}q");
+        }
+        let fast_phase = phases.iter().find(|(name, _, _, _)| *name == "fast_mbu").unwrap().1;
+        let exact_signed_phase = phases.iter().find(|(name, _, _, _)| *name == "exact_signed_only").unwrap().1;
+        let exact_parity_phase = phases.iter().find(|(name, _, _, _)| *name == "exact_parity_controls").unwrap().1;
+        let all_exact_phase = phases.iter().find(|(name, _, _, _)| *name == "all_exact").unwrap().1;
+        assert_eq!(fast_phase, 1, "fast centered parity clear should reproduce the MBU phase blocker");
+        assert_eq!(exact_signed_phase, 1, "making signed add/sub exact should not hide the parity-control blocker");
+        assert_eq!(exact_parity_phase, 0, "exact parity-controlled ±p corrections should remove the phase blocker");
+        assert_eq!(all_exact_phase, 0, "all-exact centered parity-clear roundtrip should be phase clean");
+    }
+
+    #[test]
+    fn centered_signed_560_parity_can_be_cleaned_phase_safely_only_with_all_exact_controls() {
+        const WIDE: usize = 260;
+        const STEPS: usize = 560;
+        let p = SECP256K1_P;
+        let mut sx = Sampler::new(b"by-centered-clean560-x-v1", p);
+        let mut sy = Sampler::new(b"by-centered-clean560-y-v1", p);
+        let x = sx.next();
+        let y = sy.next();
+        let start_s = sw_centered_from_u256_for_test(addm(y, x, p), p);
+        let mut delta = 1i64;
+        let mut f = SInt::from_u(p);
+        let mut g = SInt::from_u(x);
+        let mut controls = Vec::with_capacity(STEPS);
+        for _ in 0..STEPS {
+            let odd = g.bit0();
+            let a = delta > 0 && odd;
+            controls.push((odd, a));
+            divstep_sint_state(&mut delta, &mut f, &mut g);
+        }
+
+        let mut b = super::super::B::new();
+        let odd = b.alloc_qubits(STEPS);
+        let a_ctrl = b.alloc_qubits(STEPS);
+        let parity = b.alloc_qubits(STEPS);
+        let r = b.alloc_qubits(WIDE);
+        let s = b.alloc_qubits(WIDE);
+        for i in 0..STEPS {
+            emit_scaled_by_centered_signed_microstep_live_parity_variant_for_test(
+                &mut b,
+                &r,
+                &s,
+                odd[i],
+                a_ctrl[i],
+                parity[i],
+                p,
+                true,
+                true,
+            );
+        }
+        for i in (0..STEPS).rev() {
+            emit_scaled_by_centered_signed_microstep_inverse_live_parity_variant_for_test(
+                &mut b,
+                &r,
+                &s,
+                odd[i],
+                a_ctrl[i],
+                parity[i],
+                p,
+                true,
+                true,
+            );
+            emit_centered_signed_clear_parity_after_inverse_for_test(&mut b, &r, &s, odd[i], parity[i]);
+        }
+        let ccx = count_ccx(&b.ops);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let mut hasher = sha3::Shake128::default();
+        hasher.update(b"by-centered-clean560-sim-v1");
+        let mut xof = hasher.finalize_xof();
+        let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+        for (i, &(odd_v, a_v)) in controls.iter().enumerate() {
+            if odd_v { *sim.qubit_mut(odd[i]) |= 1; }
+            if a_v { *sim.qubit_mut(a_ctrl[i]) |= 1; }
+        }
+        set_slice_u512_by(&mut sim, &r, U512::ZERO);
+        set_slice_u512_by(&mut sim, &s, sw_twos_for_width_for_test(start_s, WIDE));
+        sim.apply(&ops);
+        assert_eq!(get_slice_u512_by(&sim, &r), U512::ZERO, "clean560 r not restored");
+        assert_eq!(get_slice_u512_by(&sim, &s), sw_twos_for_width_for_test(start_s, WIDE), "clean560 s not restored");
+        for (j, &q) in parity.iter().enumerate() {
+            assert_eq!(sim.qubit(q) & 1, 0, "clean560 parity[{j}] not cleared");
+        }
+        eprintln!(
+            "BY centered signed clean 560 roundtrip with all exact controls: ccx={ccx}, peak={peak}q, phase={}",
+            sim.global_phase() & 1
+        );
+        assert_eq!(sim.global_phase() & 1, 0, "clean560 all-exact-control roundtrip phase garbage");
+        assert!(ccx > 3_000_000, "all-exact-control fallback unexpectedly SOTA-shaped");
+        assert!(peak < 2_800, "all-exact-control clean roundtrip exceeds current cap");
+    }
+
+    #[test]
+    fn centered_signed_fast_signed_phase_after_exact_parity_controls_is_data_dependent() {
+        const WIDE: usize = 260;
+        const STEPS: usize = 560;
+        let p = SECP256K1_P;
+        let mut b = super::super::B::new();
+        let odd = b.alloc_qubits(STEPS);
+        let a_ctrl = b.alloc_qubits(STEPS);
+        let parity = b.alloc_qubits(STEPS);
+        let r = b.alloc_qubits(WIDE);
+        let s = b.alloc_qubits(WIDE);
+        for i in 0..STEPS {
+            emit_scaled_by_centered_signed_microstep_live_parity_variant_for_test(
+                &mut b, &r, &s, odd[i], a_ctrl[i], parity[i], p, false, true,
+            );
+        }
+        for i in (0..STEPS).rev() {
+            emit_scaled_by_centered_signed_microstep_inverse_live_parity_variant_for_test(
+                &mut b, &r, &s, odd[i], a_ctrl[i], parity[i], p, false, true,
+            );
+            emit_centered_signed_clear_parity_after_inverse_for_test(&mut b, &r, &s, odd[i], parity[i]);
+        }
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let mut sx = Sampler::new(b"by-centered-exactparity-phase-x-v1", p);
+        let mut sy = Sampler::new(b"by-centered-exactparity-phase-y-v1", p);
+        let mut saw = [false; 2];
+        for sample in 0..12 {
+            let x = sx.next();
+            let y = sy.next();
+            let start_s = sw_centered_from_u256_for_test(addm(y, x, p), p);
+            let mut delta = 1i64;
+            let mut f = SInt::from_u(p);
+            let mut g = SInt::from_u(x);
+            let mut controls = Vec::with_capacity(STEPS);
+            for _ in 0..STEPS {
+                let odd_v = g.bit0();
+                let a_v = delta > 0 && odd_v;
+                controls.push((odd_v, a_v));
+                divstep_sint_state(&mut delta, &mut f, &mut g);
+            }
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"by-centered-exactparity-phase-sim-v1");
+            hasher.update(&(sample as u64).to_le_bytes());
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+            for (i, &(odd_v, a_v)) in controls.iter().enumerate() {
+                if odd_v { *sim.qubit_mut(odd[i]) |= 1; }
+                if a_v { *sim.qubit_mut(a_ctrl[i]) |= 1; }
+            }
+            set_slice_u512_by(&mut sim, &r, U512::ZERO);
+            set_slice_u512_by(&mut sim, &s, sw_twos_for_width_for_test(start_s, WIDE));
+            sim.apply(&ops);
+            assert_eq!(get_slice_u512_by(&sim, &r), U512::ZERO, "sample {sample}: r not restored");
+            assert_eq!(get_slice_u512_by(&sim, &s), sw_twos_for_width_for_test(start_s, WIDE), "sample {sample}: s not restored");
+            for &q in &parity { assert_eq!(sim.qubit(q) & 1, 0, "sample {sample}: parity not clean"); }
+            saw[(sim.global_phase() & 1) as usize] = true;
+        }
+        eprintln!("BY centered exact-parity/fast-signed full clean phases: saw0={}, saw1={}", saw[0], saw[1]);
+        assert!(saw[0] && saw[1], "fast signed-control phase was only a global constant; a neg correction might be enough");
     }
 
     #[test]
