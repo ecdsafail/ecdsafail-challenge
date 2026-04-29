@@ -163,6 +163,15 @@ history.  The next blocker is circuit cost for:
 2. implementing the A-step ratio update `(h - 1)/(2h)` reversibly without a
    per-step variable inverse blow-up.
 
+`ratio_a_step_is_inverse_dense_and_common` records why item 2 is serious:
+for a toy 16-bit odd `h`, one high output bit of the A map has ANF degree 14 and
+7268 nonzero monomials out of 32768; real 560-step traces average about 132 A
+steps (max 149 over 64 samples).  Therefore the full-ratio selector is
+state-optimal but not yet gate-optimal; a naive per-A modular inverse is dead.
+The next architectural question is whether to implement the ratio stream with a
+windowed/Möbius method, a cheap inverse-maintenance invariant, or fall back to a
+larger linear carry state.
+
 The 304-bit tail-ratio result remains useful as a fallback/diagnostic: after 16
 windows, `h=g/f mod 2^304` streams the remaining 304 branch bits exactly.
 

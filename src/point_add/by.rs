@@ -2384,6 +2384,86 @@ mod tests {
         assert!(c_core_bits < 600, "post-tail selector core misses low-scratch target");
     }
 
+    fn inv_odd_u32_pow2_for_ratio_test(a: u32, bits: usize) -> u32 {
+        if bits == 0 {
+            return 0;
+        }
+        assert_eq!(a & 1, 1);
+        let mut inv = 1u32;
+        for i in 1..bits {
+            if (((a.wrapping_mul(inv)) >> i) & 1) != 0 {
+                inv |= 1u32 << i;
+            }
+        }
+        inv & ((1u32 << bits) - 1)
+    }
+
+    fn ratio_a_step_anf_stats_for_test(n: usize, out_bit: usize) -> (usize, usize) {
+        let vars = n - 1; // h is odd: h = 1 + 2*z, z has n-1 bits.
+        let size = 1usize << vars;
+        let mask = (1u32 << (n - 1)) - 1;
+        let mut anf = vec![0u8; size];
+        for (z, slot) in anf.iter_mut().enumerate() {
+            let h = 1u32 + ((z as u32) << 1);
+            let half_num = (h - 1) >> 1;
+            let inv_h = inv_odd_u32_pow2_for_ratio_test(h, n - 1);
+            let h_prime = half_num.wrapping_mul(inv_h) & mask;
+            *slot = ((h_prime >> out_bit) & 1) as u8;
+        }
+        for bit in 0..vars {
+            for idx in 0..size {
+                if (idx & (1usize << bit)) != 0 {
+                    anf[idx] ^= anf[idx ^ (1usize << bit)];
+                }
+            }
+        }
+        let density = anf.iter().filter(|&&c| c != 0).count();
+        let degree = anf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &c)| if c != 0 { Some(i.count_ones() as usize) } else { None })
+            .max()
+            .unwrap_or(0);
+        (degree, density)
+    }
+
+    #[test]
+    fn ratio_a_step_is_inverse_dense_and_common() {
+        // The 560-bit full-ratio selector solves state size, but not
+        // automatically gate cost.  Its A update contains a modular inverse of
+        // the current odd h.  On a toy 16-bit odd input, even one output bit has
+        // almost maximal ANF degree and a dense monomial set.  A steps are also
+        // common in real 560-step secp256k1 traces, so a naive per-A inverse is
+        // not a SOTA route.
+        let (degree, density) = ratio_a_step_anf_stats_for_test(16, 14);
+        let samples = 64usize;
+        let mut sampler = Sampler::new(b"by-ratio-a-count-v1", SECP256K1_P);
+        let mut total_a = 0usize;
+        let mut max_a = 0usize;
+        for _ in 0..samples {
+            let x = sampler.next();
+            let mut delta = 1i64;
+            let mut f = SInt::from_u(SECP256K1_P);
+            let mut g = SInt::from_u(x);
+            let mut a_count = 0usize;
+            for _ in 0..(35 * 16) {
+                if delta > 0 && g.bit0() {
+                    a_count += 1;
+                }
+                divstep_sint_state(&mut delta, &mut f, &mut g);
+            }
+            total_a += a_count;
+            max_a = max_a.max(a_count);
+        }
+        let mean_a = total_a as f64 / samples as f64;
+        eprintln!(
+            "BY ratio A-step obstruction: anf_degree={degree}, density={density}/32768, mean_a_steps={mean_a:.1}, max_a_steps={max_a}"
+        );
+        assert!(degree >= 14);
+        assert!(density > 7_000);
+        assert!(mean_a > 100.0);
+    }
+
     #[test]
     fn full_ratio_state_streams_all_branches_in_560_bits() {
         // Stronger selector compression: since BY branch decisions depend only
