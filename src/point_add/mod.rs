@@ -8877,3 +8877,91 @@ pub fn build() -> Vec<Op> {
 
     b.ops.clone()
 }
+
+#[cfg(test)]
+mod direct_const_tests {
+    use super::*;
+    use sha3::{digest::{ExtendableOutput, Update, XofReader}, Shake128};
+
+    fn set_reg<R: XofReader>(sim: &mut Simulator<'_, R>, qs: &[QubitId], val: u64, shot: usize) {
+        for (i, &q) in qs.iter().enumerate() {
+            if ((val >> i) & 1) != 0 {
+                *sim.qubit_mut(q) |= 1u64 << shot;
+            } else {
+                *sim.qubit_mut(q) &= !(1u64 << shot);
+            }
+        }
+    }
+
+    fn get_reg<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
+        let mut out = 0u64;
+        for (i, &q) in qs.iter().enumerate() {
+            out |= ((sim.qubit(q) >> shot) & 1) << i;
+        }
+        out
+    }
+
+    #[test]
+    fn direct_controlled_const_sub_small_basis_is_phase_clean() {
+        const N: usize = 8;
+        let c = U256::from(0b1011_0111u64);
+        let mut b = B::new();
+        let acc = b.alloc_qubits(N);
+        let ctrl = b.alloc_qubit();
+        csub_nbit_const_direct_fast(&mut b, &acc, c, ctrl);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+
+        let mut seed = Shake128::default();
+        seed.update(b"direct-csub-small");
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        for shot in 0..64usize {
+            let x = ((shot * 37 + 11) & 0xff) as u64;
+            let ctrl_v = (shot & 1) as u64;
+            set_reg(&mut sim, &acc, x, shot);
+            if ctrl_v != 0 { *sim.qubit_mut(ctrl) |= 1u64 << shot; }
+        }
+        sim.apply(&b.ops);
+        assert_eq!(sim.global_phase(), 0, "direct csub left phase garbage");
+        for shot in 0..64usize {
+            let x = ((shot * 37 + 11) & 0xff) as u64;
+            let ctrl_v = (shot & 1) as u64;
+            let expect = x.wrapping_sub(ctrl_v * 0b1011_0111) & 0xff;
+            assert_eq!(get_reg(&sim, &acc, shot), expect, "shot {shot}");
+            assert_eq!((sim.qubit(ctrl) >> shot) & 1, ctrl_v, "ctrl shot {shot}");
+        }
+    }
+
+    #[test]
+    fn direct_controlled_const_add_small_basis_is_phase_clean() {
+        const N: usize = 8;
+        let c = U256::from(0b1011_0111u64);
+        let mut b = B::new();
+        let acc = b.alloc_qubits(N);
+        let ctrl = b.alloc_qubit();
+        cadd_nbit_const_direct_fast(&mut b, &acc, c, ctrl);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+
+        let mut seed = Shake128::default();
+        seed.update(b"direct-cadd-small");
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        for shot in 0..64usize {
+            let x = ((shot * 37 + 11) & 0xff) as u64;
+            let ctrl_v = (shot & 1) as u64;
+            set_reg(&mut sim, &acc, x, shot);
+            if ctrl_v != 0 { *sim.qubit_mut(ctrl) |= 1u64 << shot; }
+        }
+        sim.apply(&b.ops);
+        assert_eq!(sim.global_phase(), 0, "direct cadd left phase garbage");
+        for shot in 0..64usize {
+            let x = ((shot * 37 + 11) & 0xff) as u64;
+            let ctrl_v = (shot & 1) as u64;
+            let expect = x.wrapping_add(ctrl_v * 0b1011_0111) & 0xff;
+            assert_eq!(get_reg(&sim, &acc, shot), expect, "shot {shot}");
+            assert_eq!((sim.qubit(ctrl) >> shot) & 1, ctrl_v, "ctrl shot {shot}");
+        }
+    }
+}
