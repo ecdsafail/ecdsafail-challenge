@@ -988,6 +988,147 @@ mod tests {
         assert!(density > 10_000);
     }
 
+    fn monomial_masks_for_curve_phase_test(vars: usize, max_degree: usize) -> Vec<u32> {
+        fn rec(out: &mut Vec<u32>, vars: usize, start: usize, left: usize, acc: u32) {
+            if left == 0 {
+                out.push(acc);
+                return;
+            }
+            for bit in start..=vars - left {
+                rec(out, vars, bit + 1, left - 1, acc | (1u32 << bit));
+            }
+        }
+        let mut masks = vec![0u32];
+        for degree in 1..=max_degree {
+            rec(&mut masks, vars, 0, degree, 0);
+        }
+        masks
+    }
+
+    fn gf2_rank_bitrows_for_curve_phase_test(rows: &mut [Vec<u64>], bits: usize) -> usize {
+        let mut rank = 0usize;
+        for col in 0..bits {
+            let word = col / 64;
+            let mask = 1u64 << (col % 64);
+            let pivot = (rank..rows.len()).find(|&r| (rows[r][word] & mask) != 0);
+            if let Some(p) = pivot {
+                rows.swap(rank, p);
+                let pivot_row = rows[rank].clone();
+                for r in 0..rows.len() {
+                    if r != rank && (rows[r][word] & mask) != 0 {
+                        for w in word..rows[r].len() {
+                            rows[r][w] ^= pivot_row[w];
+                        }
+                    }
+                }
+                rank += 1;
+                if rank == rows.len() {
+                    break;
+                }
+            }
+        }
+        rank
+    }
+
+    fn curve_support_old_point_phase_has_degree_at_most(
+        n: usize,
+        p: u16,
+        qx: u16,
+        qy: u16,
+        phase_mask: u16,
+        degree: usize,
+    ) -> bool {
+        let vars = 2 * n;
+        let masks = monomial_masks_for_curve_phase_test(vars, degree);
+        let cols = masks.len();
+        let chunks = (cols + 1 + 63) / 64;
+        let mut rows = Vec::new();
+        for rx in 0..p {
+            for ry in 0..p {
+                if !is_curve_point_u16_for_phase_test(rx, ry, p) {
+                    continue;
+                }
+                let Some((px, py)) = point_sub_const_u16_for_phase_test(rx, ry, qx, qy, p) else {
+                    continue;
+                };
+                let idx = (rx as u32) | ((ry as u32) << n);
+                let phase_word = px ^ (py << n);
+                let mut row = vec![0u64; chunks];
+                for (col, &m) in masks.iter().enumerate() {
+                    if (idx & m) == m {
+                        row[col / 64] |= 1u64 << (col % 64);
+                    }
+                }
+                if ((phase_word & phase_mask).count_ones() & 1) != 0 {
+                    row[cols / 64] |= 1u64 << (cols % 64);
+                }
+                rows.push(row);
+            }
+        }
+        let mut rows_a = rows.clone();
+        for row in &mut rows_a {
+            row[cols / 64] &= !(1u64 << (cols % 64));
+        }
+        let rank_a = gf2_rank_bitrows_for_curve_phase_test(&mut rows_a, cols);
+        let rank_aug = gf2_rank_bitrows_for_curve_phase_test(&mut rows, cols + 1);
+        rank_a == rank_aug
+    }
+
+    fn curve_support_old_point_phase_min_degree(
+        n: usize,
+        p: u16,
+        qx: u16,
+        qy: u16,
+        phase_mask: u16,
+        max_degree: usize,
+    ) -> Option<usize> {
+        (0..=max_degree).find(|&d| {
+            curve_support_old_point_phase_has_degree_at_most(n, p, qx, qy, phase_mask, d)
+        })
+    }
+
+    fn first_curve_point_u16_for_phase_test(p: u16) -> (u16, u16) {
+        for x in 1..p {
+            for y in 1..p {
+                if is_curve_point_u16_for_phase_test(x, y, p) {
+                    return (x, y);
+                }
+            }
+        }
+        panic!("toy curve had no point")
+    }
+
+    #[test]
+    fn curve_support_mbuc_phase_still_scales_not_constant_degree() {
+        // The full-domain ANF above is intentionally pessimistic: after a
+        // correct point-add, the surviving output is on the elliptic curve.
+        // This support-restricted interpolation asks whether that caveat saves
+        // generic MBUC.  It does not look like a constant-degree/sparse phase:
+        // the minimum degree follows the coding-theory dimension threshold as n
+        // grows, already requiring degree 4 at n=12.  Extrapolating
+        // sum_i<=d C(2n,i) >= ~2^n puts the generic real-curve extension near
+        // d≈0.22n (≈56 for n=256), before any sparsity cost.
+        let cases = [
+            (4usize, 13u16, 0b1010u16, 2usize),
+            (6usize, 61u16, 0b10_1010u16, 3usize),
+            (8usize, 251u16, 0b1010_0101u16, 3usize),
+            (10usize, 1021u16, 0b10_1001_0101u16, 4usize),
+            (12usize, 4093u16, 0b1010_0101_0101u16, 4usize),
+        ];
+        let mut last_min = 0usize;
+        for &(n, p, mask, expected_upper) in &cases {
+            let (qx, qy) = first_curve_point_u16_for_phase_test(p);
+            let min_degree = curve_support_old_point_phase_min_degree(n, p, qx, qy, mask, expected_upper)
+                .expect("phase should interpolate by expected upper degree");
+            eprintln!(
+                "Support-restricted old-point phase: n={n}, p={p}, q=({qx},{qy}), min_degree={min_degree}"
+            );
+            assert!(min_degree >= last_min);
+            last_min = min_degree;
+        }
+        assert!(last_min >= 4);
+    }
+
     #[test]
     fn montgomery_q_history_phase_in_output_frame_is_dense_dead() {
         // The promising sparse q-history phase above is in the (x, old-y)

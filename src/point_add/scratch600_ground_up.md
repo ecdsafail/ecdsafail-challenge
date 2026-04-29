@@ -723,6 +723,25 @@ density = 19540 / 65536 monomials
 So generic top-level MBUC just turns the affine reversibility wall into a dense
 phase version of point subtraction.  It is not a free single-inversion cleanup.
 
+Caveat checked: the full-domain ANF is pessimistic because a correct point-add
+only supports curve points.  `curve_support_mbuc_phase_still_scales_not_constant_degree`
+solves the support-restricted interpolation problem on toy curves.  The minimum
+degree for the same old-point phase grows with `n`:
+
+```text
+n=4  p=13    min_degree=1
+n=6  p=61    min_degree=3
+n=8  p=251   min_degree=3
+n=10 p=1021  min_degree=4
+n=12 p=4093  min_degree=4
+```
+
+This follows the coding-theory dimension threshold, not a constant-degree
+identity.  Extrapolating `sum_i<=d C(2n,i) >= ~2^n` puts a generic real-curve
+extension near `d≈0.22n` (`≈56` for secp256k1), before sparsity/synthesis cost.
+So support restriction does not resurrect generic top-level MBUC; only a highly
+specialized sparse kickmix phase would be worth revisiting.
+
 ## 12. Attempt F: absorb Kaliski's scale by pre-scaling the denominator
 
 Kaliski exposes a raw coefficient of the form

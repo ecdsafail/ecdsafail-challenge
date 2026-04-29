@@ -1601,9 +1601,14 @@ Fourth primitive/global attempt: compute the affine output out-of-place, X-measu
 the old point, and correct phase using `P = R - Q`.  The toy test
 `top_level_mbuc_of_old_point_requires_dense_point_subtraction_phase` shows the
 phase oracle for a mask of old point bits as a function of `(R_x,R_y)` has degree
-15/16 and density 19540/65536 on `y^2=x^3+7 mod 251`.  Thus generic top-level
-MBUC is just dense point-subtraction phase correction, not a cheap
-single-inversion cleanup.
+15/16 and density 19540/65536 on `y^2=x^3+7 mod 251`.  The obvious caveat is
+that the output is curve-supported, not full-domain.  The follow-up
+`curve_support_mbuc_phase_still_scales_not_constant_degree` solves the
+support-restricted interpolation problem and still sees growing minimum degree:
+`n=4,6,8,10,12 -> 1,3,3,4,4`.  This matches the dimension-threshold story
+(`sum_i<=d C(2n,i) >= ~2^n`, giving `d≈0.22n≈56` at secp256k1), not a
+constant-degree identity.  Thus generic top-level MBUC is just dense/high-degree
+point-subtraction phase correction, not a cheap single-inversion cleanup.
 
 ## 7. Post-E attempt: Kaliski scale absorption by denominator pre-scaling
 
