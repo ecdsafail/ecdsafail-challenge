@@ -11,6 +11,13 @@ fi
 
 cargo build --release >/dev/null 2>&1
 
+if [[ -f autoresearch.extra_test ]]; then
+  extra_test=$(tr '\n' ' ' < autoresearch.extra_test | xargs)
+  if [[ -n "$extra_test" ]]; then
+    cargo test --release "$extra_test" -- --nocapture
+  fi
+fi
+
 tmp=$(mktemp)
 cleanup() {
   rm -f "$tmp"

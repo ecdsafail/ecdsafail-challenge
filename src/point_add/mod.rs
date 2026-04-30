@@ -85,6 +85,8 @@ pub mod luo_proto;
 pub mod coset_proto;
 #[cfg(test)]
 pub mod single_inv_numeric;
+#[cfg(test)]
+pub mod scratch600_frontier;
 pub mod kaliski_classical_replay;
 #[cfg(test)]
 pub mod kaliski_linear_transform;
