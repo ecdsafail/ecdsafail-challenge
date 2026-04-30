@@ -2063,6 +2063,136 @@ mod tests {
         }
     }
 
+    fn u256_bit_len(mut x: U256) -> usize {
+        let mut n = 0usize;
+        while !x.is_zero() {
+            x >>= 1;
+            n += 1;
+        }
+        n
+    }
+
+    fn euclid_quotients_for_divisor(x: U256, p: U256) -> Vec<U256> {
+        assert!(!x.is_zero());
+        let mut u = p;
+        let mut v = x;
+        let mut out = Vec::new();
+        while !v.is_zero() {
+            let q = u / v;
+            let rem = u - q * v;
+            out.push(q);
+            u = v;
+            v = rem;
+        }
+        assert_eq!(u, U256::from(1u64));
+        out
+    }
+
+    fn replay_euclid_quotient_division(x: U256, y: U256, p: U256) -> (U256, U256, Vec<U256>) {
+        let qs = euclid_quotients_for_divisor(x, p);
+        // Apply the same unimodular quotient matrices to a data row.  If
+        // (u,v)=(p,x) maps to (1,0), then (r,s)=(0,y) maps to
+        // (y/x,0) modulo p.
+        let mut r = U256::ZERO;
+        let mut s = y;
+        for &q in &qs {
+            let old_r = r;
+            r = s;
+            s = sub_mod(old_r, (q % p).mul_mod(s, p), p);
+        }
+        (r, s, qs)
+    }
+
+    #[test]
+    fn quotient_stream_division_is_algebraically_good_but_packing_blocks_scratch600() {
+        // Ground-up DIV attempt, independent of Kaliski/BY microsteps:
+        // compute the ordinary Euclidean quotient stream of (p,x), uncompute
+        // the denominator pass, then replay the quotient matrices on
+        // (r,s)=(0,y).  Algebraically this is beautiful: the data row ends as
+        // (y/x,0), so after a swap it is exactly an in-place division.  The
+        // scratch accounting is also tantalizing: denominator generation needs
+        // one 256-bit u-register plus the quotient stream, and coefficient
+        // replay needs one 256-bit r-register plus the same stream.
+        //
+        // The catch is that the quotient stream is variable-length.  The raw
+        // payload is already right at the 600-scratch edge, and any reversible
+        // self-delimiting/pointer scheme pushes it over.  Without a cheap
+        // stack/packing primitive this becomes another hidden history channel,
+        // not a local DIV circuit.
+        let p = SECP256K1_P;
+        let mut rng = 0x1234_5678_9abc_def0u64;
+        for _ in 0..200 {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let y = rand_u256(&mut rng);
+            let (q, z, _qs) = replay_euclid_quotient_division(x, y, p);
+            assert!(z.is_zero());
+            assert_eq!(q, y.mul_mod(x.inv_mod(p).unwrap(), p));
+        }
+
+        let samples = 4096usize;
+        let mut payload_bits = Vec::with_capacity(samples);
+        let mut one_boundary_bit_bits = Vec::with_capacity(samples);
+        let mut counts = Vec::with_capacity(samples);
+        let mut longdiv_weight = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = p;
+            let mut v = x;
+            let mut payload = 0usize;
+            let mut count = 0usize;
+            let mut weighted_trials = 0usize;
+            while !v.is_zero() {
+                let q = u / v;
+                let q_bits = u256_bit_len(q);
+                payload += q_bits;
+                count += 1;
+                weighted_trials += q_bits * u256_bit_len(u);
+                let rem = u - q * v;
+                u = v;
+                v = rem;
+            }
+            payload_bits.push(payload);
+            counts.push(count);
+            // Unrealistically optimistic packing model: raw quotient payload
+            // plus only one boundary bit per quotient.  A real prefix/rank
+            // code costs more, so if even this misses scratch the dynamic
+            // stream is not locally solved.
+            one_boundary_bit_bits.push(payload + count);
+            longdiv_weight.push(weighted_trials);
+        }
+        payload_bits.sort_unstable();
+        one_boundary_bit_bits.sort_unstable();
+        counts.sort_unstable();
+        longdiv_weight.sort_unstable();
+        let p99 = samples * 99 / 100;
+        let payload_mean = payload_bits.iter().sum::<usize>() as f64 / samples as f64;
+        let longdiv_mean = longdiv_weight.iter().sum::<usize>() as f64 / samples as f64;
+        let payload_p99 = payload_bits[p99];
+        let payload_max = *payload_bits.last().unwrap();
+        let count_p99 = counts[p99];
+        let one_boundary_p99 = one_boundary_bit_bits[p99];
+        let longdiv_p99 = longdiv_weight[p99];
+        let raw_scratch_max = 256 + payload_max;
+        let one_boundary_scratch_p99 = 256 + one_boundary_p99;
+        eprintln!(
+            "Euclid quotient DIV stream: payload_mean={payload_mean:.1}, payload_p99={payload_p99}, payload_max={payload_max}, count_p99={count_p99}, one_boundary_p99={one_boundary_p99}, longdiv_mean={longdiv_mean:.1}, longdiv_p99={longdiv_p99}, raw_scratch_max={raw_scratch_max}, one_boundary_scratch_p99={one_boundary_scratch_p99}"
+        );
+        println!("METRIC euclid_div_replay_samples=200");
+        println!("METRIC euclid_quotient_payload_mean_bits={payload_mean:.3}");
+        println!("METRIC euclid_quotient_payload_p99_bits={payload_p99}");
+        println!("METRIC euclid_quotient_payload_max_bits={payload_max}");
+        println!("METRIC euclid_quotient_count_p99={count_p99}");
+        println!("METRIC euclid_quotient_raw_scratch_max={raw_scratch_max}");
+        println!("METRIC euclid_quotient_one_boundary_scratch_p99={one_boundary_scratch_p99}");
+        println!("METRIC euclid_longdiv_weight_mean={longdiv_mean:.3}");
+        println!("METRIC euclid_longdiv_weight_p99={longdiv_p99}");
+        assert!(payload_p99 < 360, "payload should stay close to the 344-bit sidecar target");
+        assert!(raw_scratch_max > 600, "raw quotient payload unexpectedly fits worst sampled scratch");
+        assert!(one_boundary_scratch_p99 > 760, "even one-boundary-bit quotient packing unexpectedly fits scratch");
+    }
+
     #[test]
     fn mbuc_product_cleanup_phase_oracle_is_not_low_degree_on_toy_field() {
         // Another possible rescue for Strategy E: compute product into a clean
