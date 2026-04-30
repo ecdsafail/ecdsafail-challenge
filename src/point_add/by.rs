@@ -1104,11 +1104,23 @@ mod tests {
             totals.push(total);
             states = next;
         }
+        let total4 = totals[3];
+        let total8 = totals[7];
         let total16 = *totals.last().unwrap();
+        let bits4 = usize::BITS as usize - (total4 - 1).leading_zeros() as usize;
+        let bits8 = usize::BITS as usize - (total8 - 1).leading_zeros() as usize;
+        let bits16 = usize::BITS as usize - (total16 - 1).leading_zeros() as usize;
         eprintln!(
-            "BY consumed-denominator branchless poststate ambiguity: totals_by_depth={totals:?}, depth16_states={}, depth16_patterns={total16}",
+            "BY consumed-denominator branchless poststate ambiguity: totals_by_depth={totals:?}, depth4_patterns={total4}, depth8_patterns={total8}, depth16_states={}, depth16_patterns={total16}",
             states.len()
         );
+        println!("METRIC scratch600_consumed_w4_poststate_patterns={total4}");
+        println!("METRIC scratch600_consumed_w4_poststate_bits={bits4}");
+        println!("METRIC scratch600_consumed_w8_poststate_patterns={total8}");
+        println!("METRIC scratch600_consumed_w8_poststate_bits={bits8}");
+        println!("METRIC scratch600_consumed_w16_poststate_states={}", states.len());
+        println!("METRIC scratch600_consumed_w16_poststate_patterns={total16}");
+        println!("METRIC scratch600_consumed_w16_poststate_bits={bits16}");
         assert!(states.len() > 500_000, "poststate unexpectedly identifies most predecessor states");
         assert!(total16 > 500_000, "poststate unexpectedly identifies most branch patterns");
     }
