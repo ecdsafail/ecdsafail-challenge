@@ -3071,6 +3071,38 @@ mod tests {
     }
 
     #[test]
+    fn plusminus_conservative_bound_budget_model() {
+        // If a later proof gives coarse bounds like total scale S<=2n and
+        // steps<=n, does the plus-minus/Solinas model still fit?  This guards
+        // against over-trusting sampled p99/max tails.
+        let max_scale = 512usize;
+        let (scale_dp, _chunks) = solinas_history_carry_scale_dp_for_plusminus(max_scale);
+        let cmp_ccx = compare_cost_for_plusminus(256);
+        let cswap_ccx = cswap_lanes_cost_for_plusminus(&[256, 257]);
+        let gen_ccx = trailing_zero_unary_generator_cost_for_plusminus(256);
+        let cint_add_ccx = controlled_integer_add_cost_for_plusminus(257);
+        let cshift_ccx = controlled_left_shift_cost_for_plusminus(257);
+        let step_tax = gen_ccx + cmp_ccx + cswap_ccx;
+        let one_div = |steps: usize, scale: usize| -> usize {
+            2 * (steps * cint_add_ccx + scale * cshift_ccx) + steps * step_tax + scale_dp[scale]
+        };
+        let conservative_one = one_div(256, 512);
+        let conservative_projected = 642_716usize + 2 * conservative_one;
+        let conservative_gap = conservative_projected as isize - 2_700_000isize;
+        let sampled_steps_bound_one = one_div(202, 512);
+        let sampled_steps_bound_projected = 642_716usize + 2 * sampled_steps_bound_one;
+        let sampled_steps_bound_gap = sampled_steps_bound_projected as isize - 2_700_000isize;
+        eprintln!(
+            "plus-minus conservative budget: steps256_scale512_projected={conservative_projected}, gap={conservative_gap}; steps202_scale512_projected={sampled_steps_bound_projected}, gap={sampled_steps_bound_gap}"
+        );
+        println!("METRIC plusminus_conservative_steps256_scale512_projected={conservative_projected}");
+        println!("METRIC plusminus_conservative_steps256_scale512_gap={conservative_gap}");
+        println!("METRIC plusminus_conservative_steps202_scale512_projected={sampled_steps_bound_projected}");
+        println!("METRIC plusminus_conservative_steps202_scale512_gap={sampled_steps_bound_gap}");
+        assert!(sampled_steps_bound_gap < 0, "S<=512 alone with sampled step bound would not fit");
+    }
+
+    #[test]
     fn plusminus_toy_worstcase_scale_steps_grow_linearly() {
         // Exact exhaustive toy maxima for the ordered plus-minus k stream.  This
         // is not a secp proof, but it is the first check on whether sampled
