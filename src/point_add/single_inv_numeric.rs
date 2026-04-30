@@ -2664,6 +2664,47 @@ mod tests {
     }
 
     #[test]
+    fn centered_euclid_live_x_parser_recompute_still_gate_dead() {
+        // The only possible rescue for the raw centered stream is a parser that
+        // uses the live denominator x to infer quotient boundaries.  The naive
+        // reversible version recomputes the centered Euclid prefix from x around
+        // every quotient use.  Even with the much smaller centered quotients,
+        // the optimistic bitlength*width proxy is still millions of controlled
+        // trials for one DIV, so the parser cannot be a simple live-x replay.
+        let p = SECP256K1_P;
+        let samples = 1024usize;
+        let mut rng = 0xc0de_17e0_c1d5_eedu64;
+        let mut weights = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(p));
+            let mut v = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(x));
+            let mut prefix = 0usize;
+            let mut total = 0usize;
+            while !v.mag.is_zero() {
+                let q = ((u.mag << 1usize) + v.mag) / (v.mag << 1usize);
+                let q_bits = u512_bit_len_for_halfgcd_test(q);
+                prefix += q_bits * u512_bit_len_for_halfgcd_test(u.mag).max(1);
+                total += 2 * prefix;
+                let q_neg = u.neg ^ v.neg;
+                let qv = signed_mul_mag_for_halfgcd_test(v, q_neg, q);
+                let r = signed_add_for_halfgcd_test(u, signed_neg_for_halfgcd_test(qv));
+                u = v;
+                v = r;
+            }
+            weights.push(total);
+        }
+        weights.sort_unstable();
+        let mean = weights.iter().sum::<usize>() as f64 / samples as f64;
+        let p99 = weights[samples * 99 / 100];
+        eprintln!("centered Euclid live-x parser recompute weight: mean={mean:.1}, p99={p99}");
+        println!("METRIC centered_euclid_live_recompute_weight_mean={mean:.3}");
+        println!("METRIC centered_euclid_live_recompute_weight_p99={p99}");
+        assert!(mean > 5_000_000.0);
+    }
+
+    #[test]
     fn half_gcd_checkpoint_matrix_mbu_phase_is_dense_too() {
         // If the first half-GCD matrix is too large to carry with the tail, a
         // natural kickmix thought is to X-measure the matrix checkpoint and
