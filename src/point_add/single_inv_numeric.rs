@@ -3277,6 +3277,72 @@ mod tests {
         assert!(scratch_p99 > 770.0);
     }
 
+    fn centered_euclid_qseq_for_toy(x: u16, p: u16) -> Vec<usize> {
+        let mut u = p as i128;
+        let mut v = x as i128;
+        let mut out = Vec::new();
+        while v != 0 {
+            let q_mag = ((2 * u.unsigned_abs()) + v.unsigned_abs()) / (2 * v.unsigned_abs());
+            let q_signed = if (u < 0) ^ (v < 0) { -(q_mag as i128) } else { q_mag as i128 };
+            out.push(q_mag as usize);
+            let rem = u - q_signed * v;
+            u = v;
+            v = rem;
+        }
+        out
+    }
+
+    fn raw_binary_bits_from_usizes_for_test(xs: &[usize]) -> String {
+        let mut out = String::new();
+        for &x in xs {
+            if x == 0 {
+                out.push('0');
+            } else {
+                out.push_str(&format!("{x:b}"));
+            }
+        }
+        out
+    }
+
+    fn centered_euclid_raw_q_rank_anf_stats(n: usize, p: u16) -> (usize, usize, usize) {
+        use std::collections::{BTreeMap, BTreeSet};
+        let size = 1usize << n;
+        let mut by_raw: BTreeMap<String, BTreeSet<Vec<usize>>> = BTreeMap::new();
+        let mut data = Vec::new();
+        for x in 1..p {
+            let qs = centered_euclid_qseq_for_toy(x, p);
+            let raw = raw_binary_bits_from_usizes_for_test(&qs);
+            by_raw.entry(raw.clone()).or_default().insert(qs.clone());
+            data.push((x as usize, raw, qs));
+        }
+        let max_multiplicity = by_raw.values().map(|v| v.len()).max().unwrap_or(1);
+        let ranked: BTreeMap<String, Vec<Vec<usize>>> = by_raw
+            .into_iter()
+            .map(|(raw, set)| (raw, set.into_iter().collect()))
+            .collect();
+        let mut anf = vec![0u8; size];
+        for (x, raw, qs) in data {
+            let entries = ranked.get(&raw).unwrap();
+            let rank = entries.iter().position(|entry| *entry == qs).unwrap();
+            anf[x] = (rank & 1) as u8;
+        }
+        for bit in 0..n {
+            for idx in 0..size {
+                if (idx & (1usize << bit)) != 0 {
+                    anf[idx] ^= anf[idx ^ (1usize << bit)];
+                }
+            }
+        }
+        let density = anf.iter().filter(|&&c| c != 0).count();
+        let degree = anf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &c)| if c != 0 { Some(i.count_ones() as usize) } else { None })
+            .max()
+            .unwrap_or(0);
+        (degree, density, max_multiplicity)
+    }
+
     fn centered_euclid_quotient_payload_parity_anf_stats(n: usize, p: u16) -> (usize, usize) {
         let size = 1usize << n;
         let mut anf = vec![0u8; size];
@@ -3458,6 +3524,31 @@ mod tests {
         println!("METRIC euclid_live_x_recompute_weight_mean={mean:.3}");
         println!("METRIC euclid_live_x_recompute_weight_p99={p99}");
         assert!(mean > 8_000_000.0);
+    }
+
+    #[test]
+    fn centered_euclid_raw_quotient_rank_decoder_is_dense() {
+        // Same objection as the plus-minus k stream: perhaps raw concatenated
+        // quotient bits plus a tiny rank among valid continued-fraction parses
+        // avoids explicit boundaries.  The sidecar is indeed information-small
+        // on toys, but the rank decoder is a global function of x and is already
+        // high-degree/half-dense.  This closes the smart-boundary version of the
+        // centered Euclid raw stream.
+        let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
+        for &(n, p) in &cases {
+            let (degree, density, max_mult) = centered_euclid_raw_q_rank_anf_stats(n, p);
+            let table = 1usize << n;
+            eprintln!(
+                "centered Euclid raw-q rank ANF: n={n}, degree={degree}, density={density}/{table}, max_multiplicity={max_mult}"
+            );
+            if n == 14 {
+                println!("METRIC centered_euclid_rawq_rank_degree_n14={degree}");
+                println!("METRIC centered_euclid_rawq_rank_density_n14={density}");
+                println!("METRIC centered_euclid_rawq_rank_max_multiplicity_n14={max_mult}");
+            }
+            assert!(degree + 1 >= n);
+            assert!(density > table / 3);
+        }
     }
 
     #[test]
