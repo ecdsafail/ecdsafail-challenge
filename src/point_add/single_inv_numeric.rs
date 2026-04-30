@@ -483,6 +483,68 @@ mod tests {
         assert_eq!(n, 200, "needed 200 random valid trials");
     }
 
+    fn kaliski_terminal_iters_for_numeric_test(x: U256, max_iters: usize) -> usize {
+        let (_hist, snaps) = crate::point_add::kaliski_classical_replay::kaliski_run(x, SECP256K1_P, max_iters);
+        snaps.iter()
+            .position(|&(_, _, _, _, f)| f == 0)
+            .unwrap_or(max_iters)
+    }
+
+    #[test]
+    fn approximate_iteration_trimming_is_not_sota_scale() {
+        // Google's ZK statement allows approximate point-add correctness, so
+        // check whether simply reducing Kaliski iterations could explain the
+        // 2.7M/2.1M gap.  It cannot: 99%-ish thresholds are only a handful of
+        // iterations below the exact 404/401 settings, giving tens of thousands
+        // of Toffolis, not the needed >1M structural reduction.
+        let c = curve();
+        let mut rng = 0x99ac_c01d_17ee_5eedu64;
+        let samples = 4096usize;
+        let mut pair1_terms = Vec::with_capacity(samples);
+        let mut pair2_terms = Vec::with_capacity(samples);
+        while pair1_terms.len() < samples {
+            let k1 = rand_u256(&mut rng);
+            let k2 = rand_u256(&mut rng);
+            let (px, py) = c.mul(c.gx, c.gy, k1);
+            let (qx, qy) = c.mul(c.gx, c.gy, k2);
+            if (px.is_zero() && py.is_zero()) || (qx.is_zero() && qy.is_zero()) || px == qx {
+                continue;
+            }
+            let (rx, _ry) = c.add(px, py, qx, qy);
+            let dx1 = sub_mod(px, qx, SECP256K1_P);
+            let dx2 = sub_mod(qx, rx, SECP256K1_P);
+            pair1_terms.push(kaliski_terminal_iters_for_numeric_test(dx1, 512));
+            pair2_terms.push(kaliski_terminal_iters_for_numeric_test(dx2, 512));
+        }
+        pair1_terms.sort_unstable();
+        pair2_terms.sort_unstable();
+        let q = |v: &[usize], num: usize, den: usize| -> usize { v[(v.len() * num) / den] };
+        let p99_1 = q(&pair1_terms, 99, 100);
+        let p999_1 = q(&pair1_terms, 999, 1000);
+        let max_1 = *pair1_terms.last().unwrap();
+        let p99_2 = q(&pair2_terms, 99, 100);
+        let p999_2 = q(&pair2_terms, 999, 1000);
+        let max_2 = *pair2_terms.last().unwrap();
+        let fail_at_392_1 = pair1_terms.iter().filter(|&&t| t > 392).count();
+        let fail_at_392_2 = pair2_terms.iter().filter(|&&t| t > 392).count();
+        let fail_at_384_1 = pair1_terms.iter().filter(|&&t| t > 384).count();
+        let fail_at_384_2 = pair2_terms.iter().filter(|&&t| t > 384).count();
+        let fail392 = (fail_at_392_1 + fail_at_392_2) as f64 / (2 * samples) as f64;
+        let fail384 = (fail_at_384_1 + fail_at_384_2) as f64 / (2 * samples) as f64;
+        eprintln!(
+            "Kaliski terminal iters: pair1 p99={p99_1}, p999={p999_1}, max={max_1}; pair2 p99={p99_2}, p999={p999_2}, max={max_2}; fail392={fail392:.4}, fail384={fail384:.4}"
+        );
+        println!("METRIC kaliski_pair1_terminal_p99_iters={p99_1}");
+        println!("METRIC kaliski_pair1_terminal_p999_iters={p999_1}");
+        println!("METRIC kaliski_pair1_terminal_max_iters={max_1}");
+        println!("METRIC kaliski_pair2_terminal_p99_iters={p99_2}");
+        println!("METRIC kaliski_pair2_terminal_p999_iters={p999_2}");
+        println!("METRIC kaliski_pair2_terminal_max_iters={max_2}");
+        println!("METRIC kaliski_iter_trim_fail_frac_392={fail392:.6}");
+        println!("METRIC kaliski_iter_trim_fail_frac_384={fail384:.6}");
+        assert!(p99_1 > 380 && p99_2 > 380);
+    }
+
     #[test]
     fn reference_formula_sanity() {
         each_trial(|px, py, qx, qy, rx_ref, ry_ref| {
