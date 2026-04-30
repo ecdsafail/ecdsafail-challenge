@@ -3071,6 +3071,24 @@ mod tests {
     }
 
     #[test]
+    fn plusminus_barrel_step_budget_kills_naive_physical_integration() {
+        // The barrel repair fixes the W^2 bug but still charges two variable
+        // shifts plus unary->binary conversion per step.  Before wiring 257-bit
+        // lanes, check whether that physical step budget alone already exceeds
+        // the Google low-qubit target.
+        let step_forward_257 = 14_355usize; // from plusminus_barrel_step_extrap257_forward_ccx.
+        let steps_public = 202usize; // sampled public envelope / active-chain stress scale.
+        let two_div_step_only = 2usize * step_forward_257 * steps_public;
+        let gap = two_div_step_only as isize - 2_700_000isize;
+        eprintln!("plus-minus barrel physical step-only budget: step257={step_forward_257}, steps={steps_public}, two_div_step_only={two_div_step_only}, gap={gap}");
+        println!("METRIC plusminus_barrel_budget_step257_ccx={step_forward_257}");
+        println!("METRIC plusminus_barrel_budget_steps={steps_public}");
+        println!("METRIC plusminus_barrel_budget_two_div_step_only={two_div_step_only}");
+        println!("METRIC plusminus_barrel_budget_step_only_gap_to_2700k={gap}");
+        assert!(gap > 0, "naive physical barrel shifts would not kill the budget; revisit");
+    }
+
+    #[test]
     fn plusminus_active_chain_generator_makes_conservative_bound_fit() {
         // The active prefix chain already equals the unary history bits, so the
         // separate unary-output ANDs in the first generator model were double
