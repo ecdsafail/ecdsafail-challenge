@@ -3863,6 +3863,210 @@ mod tests {
         b.x(one);
     }
 
+    fn emit_plusminus_low_unary_any_one_into_for_test(
+        b: &mut super::super::B,
+        x: &[super::super::QubitId],
+        hist: &[super::super::QubitId],
+        flag: super::super::QubitId,
+    ) {
+        assert_eq!(x.len(), hist.len());
+        let hits = b.alloc_qubits(x.len());
+        for i in 0..x.len() {
+            b.ccx(hist[i], x[i], hits[i]);
+        }
+        super::super::cmp_neq_zero_into(b, &hits, flag);
+        for i in (0..x.len()).rev() {
+            b.ccx(hist[i], x[i], hits[i]);
+        }
+        b.free_vec(&hits);
+    }
+
+    fn emit_plusminus_recover_direction_from_coeff_divisibility_for_test(
+        b: &mut super::super::B,
+        cu: &[super::super::QubitId],
+        hist: &[super::super::QubitId],
+        flag: super::super::QubitId,
+    ) {
+        // Toggle by the direction recovered from the ordered coefficient lanes.
+        // On the odd-GCD scaled-coefficient trace, k>=1 and exactly the lane
+        // descended from old cv is divisible by 2^k.  Therefore the first
+        // ordered coefficient lane is divisible iff the order-swap happened.
+        let bad = b.alloc_qubit();
+        emit_plusminus_low_unary_any_one_into_for_test(b, cu, hist, bad);
+        b.x(flag);
+        b.cx(bad, flag);
+        emit_plusminus_low_unary_any_one_into_for_test(b, cu, hist, bad);
+        b.free(bad);
+    }
+
+    fn emit_plusminus_inplace_step_forward_konly_for_test(
+        b: &mut super::super::B,
+        u: &[super::super::QubitId],
+        v: &[super::super::QubitId],
+        cu: &[super::super::QubitId],
+        cv: &[super::super::QubitId],
+        active: &[super::super::QubitId],
+        hist: &[super::super::QubitId],
+        spill: super::super::QubitId,
+        flag: super::super::QubitId,
+        one: super::super::QubitId,
+    ) {
+        emit_plusminus_inplace_step_forward_for_test(b, u, v, cu, cv, active, hist, spill, flag, one);
+        emit_plusminus_recover_direction_from_coeff_divisibility_for_test(b, cu, hist, flag);
+    }
+
+    fn emit_plusminus_inplace_step_inverse_konly_for_test(
+        b: &mut super::super::B,
+        u: &[super::super::QubitId],
+        v: &[super::super::QubitId],
+        cu: &[super::super::QubitId],
+        cv: &[super::super::QubitId],
+        active: &[super::super::QubitId],
+        hist: &[super::super::QubitId],
+        spill: super::super::QubitId,
+        flag: super::super::QubitId,
+        one: super::super::QubitId,
+    ) {
+        emit_plusminus_recover_direction_from_coeff_divisibility_for_test(b, cu, hist, flag);
+        emit_plusminus_inplace_step_inverse_for_test(b, u, v, cu, cv, active, hist, spill, flag, one);
+    }
+
+    fn plusminus_classical_step_mod_width_for_test(
+        u: &mut u64,
+        v: &mut u64,
+        cu: &mut u64,
+        cv: &mut u64,
+        width: usize,
+    ) {
+        let mask = (1u64 << width) - 1;
+        let diff = *u - *v;
+        let k = diff.trailing_zeros() as usize;
+        assert!(k > 0, "odd-GCD test domain requires k>0");
+        let d = diff >> k;
+        let cd = cu.wrapping_sub(*cv) & mask;
+        let cvs = (*cv << k) & mask;
+        if d < *v {
+            *u = *v;
+            *v = d;
+            *cu = cvs;
+            *cv = cd;
+        } else {
+            *u = d;
+            *cu = cd;
+            *cv = cvs;
+        }
+    }
+
+    #[test]
+    fn plusminus_inplace_three_step_konly_roundtrip_is_clean() {
+        // Multi-step smoke test with no persistent direction flags.  The flag
+        // is cleared after every forward step by coefficient divisibility and
+        // recomputed during inverse from the same live state plus k-history.
+        use sha3::digest::{ExtendableOutput, Update};
+        const W: usize = 16;
+        const STEPS: usize = 3;
+        let cases = [(91u64, 27u64), (201, 77), (255, 127), (987, 31)];
+        let mask = (1u64 << W) - 1;
+
+        let mut bf = super::super::B::new();
+        let fu = bf.alloc_qubits(W);
+        let fv = bf.alloc_qubits(W);
+        let fcu = bf.alloc_qubits(W);
+        let fcv = bf.alloc_qubits(W);
+        let factive = bf.alloc_qubits(W + 1);
+        let fhists: Vec<Vec<super::super::QubitId>> = (0..STEPS).map(|_| bf.alloc_qubits(W)).collect();
+        let fspill = bf.alloc_qubit();
+        let fflag = bf.alloc_qubit();
+        let fone = bf.alloc_qubit();
+        let fstart = bf.ops.len();
+        for step in 0..STEPS {
+            emit_plusminus_inplace_step_forward_konly_for_test(&mut bf, &fu, &fv, &fcu, &fcv, &factive, &fhists[step], fspill, fflag, fone);
+        }
+        let f_ccx = local_count_ccx_for_plusminus_cost(&bf.ops[fstart..]);
+        let f_peak = bf.peak_qubits;
+        let f_num_qubits = bf.next_qubit as usize;
+        let f_num_bits = bf.next_bit as usize;
+        let f_ops = bf.ops;
+        for &(uval, vval) in &cases {
+            let (mut eu, mut ev, mut ecu, mut ecv) = (uval, vval, 0u64, 1u64);
+            for _ in 0..STEPS {
+                plusminus_classical_step_mod_width_for_test(&mut eu, &mut ev, &mut ecu, &mut ecv, W);
+            }
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"plusminus-inplace-three-step-konly-forward-v2");
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(f_num_qubits, f_num_bits, &mut xof);
+            set_slice_u512_pm(&mut sim, &fu, U512::from(uval));
+            set_slice_u512_pm(&mut sim, &fv, U512::from(vval));
+            set_slice_u512_pm(&mut sim, &fcu, U512::ZERO);
+            set_slice_u512_pm(&mut sim, &fcv, U512::from(1u64));
+            sim.apply(&f_ops);
+            assert_eq!(get_slice_u512_pm(&sim, &fu).as_limbs()[0] & mask, eu & mask, "forward u mismatch case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &fv).as_limbs()[0] & mask, ev & mask, "forward v mismatch case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &fcu).as_limbs()[0] & mask, ecu & mask, "forward cu mismatch case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &fcv).as_limbs()[0] & mask, ecv & mask, "forward cv mismatch case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &factive), U512::ZERO, "forward active dirty case=({uval},{vval})");
+            assert_eq!(sim.qubit(fspill) & 1, 0, "forward spill dirty case=({uval},{vval})");
+            assert_eq!(sim.qubit(fflag) & 1, 0, "forward recovered flag dirty case=({uval},{vval})");
+            assert_eq!(sim.qubit(fone) & 1, 0, "forward one dirty case=({uval},{vval})");
+            assert_eq!(sim.global_phase() & 1, 0, "forward unexpected phase case=({uval},{vval})");
+        }
+
+        let mut b = super::super::B::new();
+        let u = b.alloc_qubits(W);
+        let v = b.alloc_qubits(W);
+        let cu = b.alloc_qubits(W);
+        let cv = b.alloc_qubits(W);
+        let active = b.alloc_qubits(W + 1);
+        let hists: Vec<Vec<super::super::QubitId>> = (0..STEPS).map(|_| b.alloc_qubits(W)).collect();
+        let spill = b.alloc_qubit();
+        let flag = b.alloc_qubit();
+        let one = b.alloc_qubit();
+        let start = b.ops.len();
+        for step in 0..STEPS {
+            emit_plusminus_inplace_step_forward_konly_for_test(&mut b, &u, &v, &cu, &cv, &active, &hists[step], spill, flag, one);
+        }
+        for step in (0..STEPS).rev() {
+            emit_plusminus_inplace_step_inverse_konly_for_test(&mut b, &u, &v, &cu, &cv, &active, &hists[step], spill, flag, one);
+        }
+        let ccx = local_count_ccx_for_plusminus_cost(&b.ops[start..]);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        for &(uval, vval) in &cases {
+            let mut hasher = sha3::Shake128::default();
+            hasher.update(b"plusminus-inplace-three-step-konly-roundtrip-v2");
+            let mut xof = hasher.finalize_xof();
+            let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+            set_slice_u512_pm(&mut sim, &u, U512::from(uval));
+            set_slice_u512_pm(&mut sim, &v, U512::from(vval));
+            set_slice_u512_pm(&mut sim, &cu, U512::ZERO);
+            set_slice_u512_pm(&mut sim, &cv, U512::from(1u64));
+            sim.apply(&ops);
+            assert_eq!(get_slice_u512_pm(&sim, &u).as_limbs()[0] & mask, uval & mask, "u changed case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &v).as_limbs()[0] & mask, vval & mask, "v changed case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &cu).as_limbs()[0] & mask, 0, "cu changed case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &cv).as_limbs()[0] & mask, 1, "cv changed case=({uval},{vval})");
+            assert_eq!(get_slice_u512_pm(&sim, &active), U512::ZERO, "active not clean case=({uval},{vval})");
+            for (i, hist) in hists.iter().enumerate() {
+                assert_eq!(get_slice_u512_pm(&sim, hist), U512::ZERO, "hist {i} not clean case=({uval},{vval})");
+            }
+            assert_eq!(sim.qubit(spill) & 1, 0, "spill not clean case=({uval},{vval})");
+            assert_eq!(sim.qubit(flag) & 1, 0, "recovered direction flag not clean case=({uval},{vval})");
+            assert_eq!(sim.qubit(one) & 1, 0, "one not clean case=({uval},{vval})");
+            assert_eq!(sim.global_phase() & 1, 0, "unexpected phase case=({uval},{vval})");
+        }
+        eprintln!("plus-minus in-place three-step k-only roundtrip: width={W}, steps={STEPS}, forward_ccx={f_ccx}, forward_peak={f_peak}, ccx={ccx}, peak={peak}");
+        println!("METRIC plusminus_konly_three_step_width={W}");
+        println!("METRIC plusminus_konly_three_step_steps={STEPS}");
+        println!("METRIC plusminus_konly_three_step_forward_ccx={f_ccx}");
+        println!("METRIC plusminus_konly_three_step_forward_peak_q={f_peak}");
+        println!("METRIC plusminus_konly_three_step_ccx={ccx}");
+        println!("METRIC plusminus_konly_three_step_peak_q={peak}");
+        assert!(ccx > 0 && peak > 0);
+    }
+
     #[test]
     fn plusminus_inplace_one_step_roundtrip_is_clean() {
         // Actual in-place forward followed by explicit inverse. This is the
