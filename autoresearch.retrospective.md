@@ -110,7 +110,9 @@ a selected/window-local denominator primitive below roughly 10k CCX/window,
 with explicit reversible cleanup and no hidden field-sized selector/parser state.
 ```
 
-Do not continue BY integration/plumbing experiments unless that primitive exists first.
+2026-04-29 update: a partial-prefix qoffset-mask replay primitive is the first post-retrospective result that reopens a narrow low-scratch BY budget in a hardest-piece-first way rather than by integration optimism. With 36 lowword windows and 564 harness-scale steps, prefix32/48/64/80 scratch is `542/558/574/590` and projected gaps are `-2,476/-47,596/-92,716/-137,836` after charging lowword selector and decoder. This is still a model/local-primitive checkpoint, not a solved route: no full point-add hook-up until compressed history layout, exact selector/decode production scheduling, denominator failure bound, and cleanup are all charged.
+
+Do not continue BY integration/plumbing experiments unless that primitive (or a successor) survives those charged hard-piece gates first.
 
 ## What plus-minus taught us
 

@@ -4930,7 +4930,7 @@ mod tests {
         }
 
         let mut costs = Vec::new();
-        for &prefix_len in &[0usize, 16, 32, 48, 64] {
+        for &prefix_len in &[0usize, 16, 32, 48, 64, 80] {
             let mut b = super::super::B::new();
             let ctrl = b.alloc_qubit();
             let target = b.alloc_qubits(256);
@@ -4947,30 +4947,46 @@ mod tests {
         let cost0 = costs.iter().find(|&&(m, _, _)| m == 0).unwrap().1;
         let cost32 = costs.iter().find(|&&(m, _, _)| m == 32).unwrap().1;
         let cost48 = costs.iter().find(|&&(m, _, _)| m == 48).unwrap().1;
+        let cost64 = costs.iter().find(|&&(m, _, _)| m == 64).unwrap().1;
+        let cost80 = costs.iter().find(|&&(m, _, _)| m == 80).unwrap().1;
         let peak32 = costs.iter().find(|&&(m, _, _)| m == 32).unwrap().2;
         let scratch_base = 510usize;
         let scratch32 = scratch_base + 32;
         let scratch48 = scratch_base + 48;
+        let scratch64 = scratch_base + 64;
+        let scratch80 = scratch_base + 80;
         let harness_cutoff_steps = 564usize;
+        let harness_windows = harness_cutoff_steps.div_ceil(16);
         let scaffold_after_div = 642_716usize;
-        let lowword_selector = 208_320usize;
-        let decoder = 62_160usize;
-        let scaled_step32 = cost32 + 256 + 255 + 255;
-        let projected32 = scaffold_after_div + lowword_selector + decoder + scaled_step32 * harness_cutoff_steps;
-        let gap32 = projected32 as isize - 2_700_000;
-        let scaled_step48 = cost48 + 256 + 255 + 255;
-        let projected48 = scaffold_after_div + lowword_selector + decoder + scaled_step48 * harness_cutoff_steps;
-        let gap48 = projected48 as isize - 2_700_000;
+        let lowword_selector = 5_952usize * harness_windows;
+        let decoder = 1_776usize * harness_windows;
+        let projected_gap = |cost: usize| -> isize {
+            let scaled_step = cost + 256 + 255 + 255;
+            (scaffold_after_div + lowword_selector + decoder + scaled_step * harness_cutoff_steps) as isize - 2_700_000
+        };
+        let gap32 = projected_gap(cost32);
+        let gap48 = projected_gap(cost48);
+        let gap64 = projected_gap(cost64);
+        let gap80 = projected_gap(cost80);
         println!("METRIC by_partial_prefix_qoffset_cost0_ccx={cost0}");
         println!("METRIC by_partial_prefix_qoffset_cost32_ccx={cost32}");
         println!("METRIC by_partial_prefix_qoffset_cost48_ccx={cost48}");
+        println!("METRIC by_partial_prefix_qoffset_cost64_ccx={cost64}");
+        println!("METRIC by_partial_prefix_qoffset_cost80_ccx={cost80}");
         println!("METRIC by_partial_prefix_qoffset_peak32={peak32}");
+        println!("METRIC by_partial_prefix_qoffset_windows={harness_windows}");
+        println!("METRIC by_partial_prefix_qoffset_selector_ccx={lowword_selector}");
+        println!("METRIC by_partial_prefix_qoffset_decoder_ccx={decoder}");
         println!("METRIC by_partial_prefix_qoffset_scratch32={scratch32}");
         println!("METRIC by_partial_prefix_qoffset_scratch48={scratch48}");
+        println!("METRIC by_partial_prefix_qoffset_scratch64={scratch64}");
+        println!("METRIC by_partial_prefix_qoffset_scratch80={scratch80}");
         println!("METRIC by_partial_prefix_qoffset_projected32_gap_ccx={gap32}");
         println!("METRIC by_partial_prefix_qoffset_projected48_gap_ccx={gap48}");
+        println!("METRIC by_partial_prefix_qoffset_projected64_gap_ccx={gap64}");
+        println!("METRIC by_partial_prefix_qoffset_projected80_gap_ccx={gap80}");
         eprintln!(
-            "BY partial-prefix qoffset costs: {costs:?}, scratch32={scratch32}, projected32={projected32} gap32={gap32}, scratch48={scratch48}, projected48={projected48} gap48={gap48}"
+            "BY partial-prefix qoffset costs: {costs:?}, windows={harness_windows}, selector={lowword_selector}, decoder={decoder}, scratch32={scratch32}, gap32={gap32}, scratch48={scratch48}, gap48={gap48}, scratch64={scratch64}, gap64={gap64}, scratch80={scratch80}, gap80={gap80}"
         );
         assert!(scratch32 < 600, "32 prefix masks no longer fit scratch budget");
         assert!(gap32 < 0, "32 prefix masks do not close the harness-scale BY lowword near-miss");

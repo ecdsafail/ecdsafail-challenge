@@ -28,6 +28,24 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             blocker: "lowword selector is 120480 CCX over the 87840 selector margin",
         },
         Candidate {
+            name: "partial_prefix32_qoffset_lowword_model",
+            scratch_bits: 542,
+            charged_toffoli: None,
+            blocker: "local pieces project 2697524 with 36 lowword windows, but production point-add integration and harness-scale denominator failure bound are not yet charged",
+        },
+        Candidate {
+            name: "partial_prefix48_qoffset_lowword_model",
+            scratch_bits: 558,
+            charged_toffoli: None,
+            blocker: "local pieces project 2652404 with 36 lowword windows, but production integration/cleanup remains unvalidated",
+        },
+        Candidate {
+            name: "partial_prefix80_qoffset_lowword_model",
+            scratch_bits: 590,
+            charged_toffoli: None,
+            blocker: "local pieces project 2562164 with 36 lowword windows, but only 10 scratch bits remain and no full hook-up has validated the schedule",
+        },
+        Candidate {
             name: "streamed_mask_qoffset_replay_body_only",
             scratch_bits: 510,
             charged_toffoli: None,
@@ -93,6 +111,12 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let streamed_replay_body_projection = 2_645_196usize;
     let streamed_replay_unfunded_selector_budget =
         GOOGLE_LOW_QUBIT_TOFFOLI - streamed_replay_body_projection;
+    let partial_prefix32_projection = 2_697_524usize;
+    let partial_prefix48_projection = 2_652_404usize;
+    let partial_prefix80_projection = 2_562_164usize;
+    let partial_prefix32_gap = partial_prefix32_projection as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
+    let partial_prefix48_gap = partial_prefix48_projection as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
+    let partial_prefix80_gap = partial_prefix80_projection as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
     let centered_raw_scratch = 592usize;
     let centered_boundary_scratch_p99 = 710usize;
     let centered_parser_over_strict = centered_boundary_scratch_p99 - STRICT_SCRATCH;
@@ -127,6 +151,12 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_streamed_selector_budget_ccx={streamed_selector_budget}");
     println!("METRIC scratch600_streamed_lowword_selector_ccx={streamed_lowword_selector}");
     println!("METRIC scratch600_streamed_selector_shortfall_ccx={streamed_selector_shortfall}");
+    println!("METRIC scratch600_partial_prefix32_projected_toffoli={partial_prefix32_projection}");
+    println!("METRIC scratch600_partial_prefix32_gap_to_2700k={partial_prefix32_gap}");
+    println!("METRIC scratch600_partial_prefix48_projected_toffoli={partial_prefix48_projection}");
+    println!("METRIC scratch600_partial_prefix48_gap_to_2700k={partial_prefix48_gap}");
+    println!("METRIC scratch600_partial_prefix80_projected_toffoli={partial_prefix80_projection}");
+    println!("METRIC scratch600_partial_prefix80_gap_to_2700k={partial_prefix80_gap}");
     println!("METRIC scratch600_centered_raw_scratch_bits={centered_raw_scratch}");
     println!("METRIC scratch600_centered_boundary_scratch_p99={centered_boundary_scratch_p99}");
     println!("METRIC scratch600_centered_parser_over_strict_bits={centered_parser_over_strict}");
