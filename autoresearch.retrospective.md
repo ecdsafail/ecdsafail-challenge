@@ -187,6 +187,10 @@ See `autoresearch.literature.md` for the 2026-04-29 online sweep. Public low-qub
 
 Ranked by current plausibility:
 
+### 0. Stored ordinary Euclid quotient stream for the relaxed 3M/current-qubit target
+
+This is **not** a Google-low-qubit candidate, but it is the first post-BY result that looks numerically relevant to the user's relaxed “3M while under qubit budget” question. The old quotient-stream route was killed by the ~600-scratch parser requirement; if the cap is the current project cap (`<=2800q`), explicit quotient boundaries may fit. Current lower-bound ledger: payload p99/max `349/355` bits, count p99 `173`, one-boundary scratch p99 `777`, conservative peak with 512q workspace `1801q`; with per-qbit coefficient replay `587` CCX and long-division trial unit `8` CCX, one DIV projects `932,047` and point-add projects `2,506,810` (`-493,190` to 3M). This is only a candidate: it depends on a real reversible quotient extractor/replayer staying below about `10.7` CCX per weighted long-division trial, plus exact boundary cleanup and phase-clean denominator reverse.
+
 ### 1. New denominator-shift-free DIV recurrence
 
 This is the best way to salvage the lessons from plus-minus without carrying its dead denominator cost. First explicit probe after the BY demotion is negative: bounded-quotient subtractive Euclid (`u <- u - qv`, `q <= 15`) avoids physical denominator shifts but explodes the reversible history/parser channel. Even with quotient computation free, q-history alone gives p90/p99 scratch `1608/6276` bits and max-step cap hits `20000`; `q <= 7` has p99 scratch `9514`. So “no shifts by using tiny quotients” is not the needed recurrence. A viable recurrence must avoid both physical denominator shifts and long per-step quotient history.

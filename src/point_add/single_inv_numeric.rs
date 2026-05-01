@@ -7784,6 +7784,90 @@ mod tests {
     }
 
     #[test]
+    fn euclid_quotient_stream_is_a_3m_candidate_only_with_stored_parser_budget() {
+        // Revisit the ordinary quotient stream under the user's relaxed
+        // question: <3M while staying under the project qubit cap, not the
+        // strict Google ~600-scratch regime.  The old blocker was parser
+        // scratch (one-boundary p99 ~= 776), which is fatal for 1175q but not
+        // obviously fatal for the current <=2800q cap.  This is deliberately a
+        // lower-bound ledger, not a solved circuit: q extraction, controlled
+        // q*s replay, exact boundary cleanup, and phase cleanliness remain the
+        // hard pieces.
+        let p = SECP256K1_P;
+        let samples = 4096usize;
+        let mut rng = 0x2800_3e0c_11d6_0001u64;
+        let mut payload_bits = Vec::with_capacity(samples);
+        let mut one_boundary_bits = Vec::with_capacity(samples);
+        let mut counts = Vec::with_capacity(samples);
+        let mut longdiv_weight = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = p;
+            let mut v = x;
+            let mut payload = 0usize;
+            let mut count = 0usize;
+            let mut weighted_trials = 0usize;
+            while !v.is_zero() {
+                let q = u / v;
+                let q_bits = u256_bit_len(q);
+                payload += q_bits;
+                count += 1;
+                weighted_trials += q_bits * u256_bit_len(u);
+                let rem = u - q * v;
+                u = v;
+                v = rem;
+            }
+            payload_bits.push(payload);
+            one_boundary_bits.push(payload + count);
+            counts.push(count);
+            longdiv_weight.push(weighted_trials);
+        }
+        payload_bits.sort_unstable();
+        one_boundary_bits.sort_unstable();
+        counts.sort_unstable();
+        longdiv_weight.sort_unstable();
+        let p99 = samples * 99 / 100;
+        let payload_p99 = payload_bits[p99];
+        let payload_max = *payload_bits.last().unwrap();
+        let count_p99 = counts[p99];
+        let one_boundary_p99 = one_boundary_bits[p99];
+        let longdiv_p99 = longdiv_weight[p99];
+
+        let scaffold_after_div = 642_716isize;
+        let schoolbook_mul_add = 150_145usize;
+        let per_qbit_replay_ccx = schoolbook_mul_add.div_ceil(256);
+        let coeff_replay_per_div = payload_p99 * per_qbit_replay_ccx;
+        let longdiv_unit_ccx = 8usize; // optimistic comparator/subtract bit-trial budget.
+        let longdiv_compute_uncompute_per_div = 2 * longdiv_weight[p99] * longdiv_unit_ccx;
+        let one_div_projected = coeff_replay_per_div + longdiv_compute_uncompute_per_div;
+        let two_div_projected = 2 * one_div_projected;
+        let pointadd_projected = scaffold_after_div + two_div_projected as isize;
+        let gap_to_3m = pointadd_projected - 3_000_000isize;
+        let longdiv_unit_budget_for_3m = (3_000_000isize - scaffold_after_div - 2 * coeff_replay_per_div as isize) as f64
+            / (4.0 * longdiv_p99 as f64);
+        let scratch_beyond_txty_p99 = 256 + one_boundary_p99;
+        let conservative_peak_with_512_workspace = 512 + scratch_beyond_txty_p99 + 512;
+        println!("METRIC euclid_2800_payload_p99_bits={payload_p99}");
+        println!("METRIC euclid_2800_payload_max_bits={payload_max}");
+        println!("METRIC euclid_2800_count_p99={count_p99}");
+        println!("METRIC euclid_2800_one_boundary_scratch_p99={scratch_beyond_txty_p99}");
+        println!("METRIC euclid_2800_longdiv_weight_p99={longdiv_p99}");
+        println!("METRIC euclid_2800_per_qbit_replay_ccx={per_qbit_replay_ccx}");
+        println!("METRIC euclid_2800_one_div_projected_ccx={one_div_projected}");
+        println!("METRIC euclid_2800_projected_gap_to_3m_ccx={gap_to_3m}");
+        println!("METRIC euclid_2800_longdiv_unit_budget_for_3m_ccx={longdiv_unit_budget_for_3m:.3}");
+        println!("METRIC euclid_2800_conservative_peak_qubits={conservative_peak_with_512_workspace}");
+        eprintln!(
+            "Euclid quotient 2800q/3M ledger: payload_p99={payload_p99}, count_p99={count_p99}, scratch_p99={scratch_beyond_txty_p99}, longdiv_p99={longdiv_p99}, one_div={one_div_projected}, pointadd={pointadd_projected}, gap3m={gap_to_3m}, unit_budget={longdiv_unit_budget_for_3m:.2}, peak≈{conservative_peak_with_512_workspace}"
+        );
+        assert!(scratch_beyond_txty_p99 > 663, "stored quotient stream unexpectedly fits Google scratch; promote harder");
+        assert!(conservative_peak_with_512_workspace < 2800, "stored quotient stream is too wide even for current cap");
+        assert!(gap_to_3m < 0, "even optimistic stored-parser quotient stream misses 3M; demote for relaxed target too");
+        assert!(longdiv_unit_budget_for_3m > 6.0, "long-division bit-trial budget is implausibly tight");
+    }
+
+    #[test]
     fn euclid_quotient_stream_entropy_also_exceeds_scratch600() {
         // Follow-up to the raw-payload quotient-stream DIV test.  The tempting
         // objection is that a clever prefix/arithmetic code could pack the
