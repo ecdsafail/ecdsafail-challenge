@@ -9079,6 +9079,89 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_nonrestoring_bounded_barrel_revives_inactive_tax_margin() {
+        // The inactive-tax guard above assumes a full 8-level 256-bit barrel per
+        // quotient.  In sampled centered traces, quotient magnitudes are much
+        // shorter.  A packed extractor still cannot use fixed K-bit quotient
+        // slots, but it may only need a small binary initial-alignment barrel
+        // plus an active digit loop.  Recompute the relaxed ledger with the
+        // sampled maximum quotient-width barrel and see whether a small
+        // inactive-position control tax is still fatal.
+        let p = SECP256K1_P;
+        let samples = 32_768usize;
+        let mut rng = 0x2800_d1ce_ba22_e100u64;
+        let mut digit_payloads = Vec::with_capacity(samples);
+        let mut counts = Vec::with_capacity(samples);
+        let mut final_negs = Vec::with_capacity(samples);
+        let mut max_digits_seen = 0usize;
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(p));
+            let mut v = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(x));
+            let (mut digit_payload, mut count, mut final_count) = (0usize, 0usize, 0usize);
+            while !v.mag.is_zero() {
+                let adjusted = u.mag + (v.mag >> 1usize);
+                let q_direct = adjusted / v.mag;
+                let (digits, _rem, final_negative) = nonrestoring_floor_digits_for_centered_test(adjusted, v.mag);
+                max_digits_seen = max_digits_seen.max(digits);
+                digit_payload += digits;
+                final_count += final_negative as usize;
+                count += 1;
+                let q_neg = u.neg ^ v.neg;
+                let qv = signed_mul_mag_for_halfgcd_test(v, q_neg, q_direct);
+                let r = signed_add_for_halfgcd_test(u, signed_neg_for_halfgcd_test(qv));
+                u = v;
+                v = r;
+            }
+            digit_payloads.push(digit_payload);
+            counts.push(count);
+            final_negs.push(final_count);
+        }
+        digit_payloads.sort_unstable();
+        counts.sort_unstable();
+        final_negs.sort_unstable();
+        let p99 = samples * 99 / 100;
+        let digit_payload_p99 = digit_payloads[p99];
+        let count_p99 = counts[p99];
+        let final_p99 = final_negs[p99];
+        let n = 256usize;
+        let full_barrel_bits = 8usize;
+        let bounded_barrel_bits = usize_bit_len_for_payload_test(max_digits_seen.saturating_sub(1));
+        let static_digit_positions = count_p99 * n;
+        let inactive_positions = static_digit_positions - digit_payload_p99;
+        let replay_per_div = (digit_payload_p99 + final_p99) * 587usize;
+        let final_fix_current = count_p99 * (2usize * n - 1usize);
+        let pointadd_for = |barrel_bits: usize, inactive_tax: usize| -> isize {
+            let barrel_and_scan = count_p99 * (n * barrel_bits + n);
+            let extraction_oneway = digit_payload_p99 * n
+                + barrel_and_scan
+                + final_fix_current
+                + inactive_tax;
+            642_716isize + 2 * (replay_per_div + 2 * extraction_oneway) as isize
+        };
+        let full_barrel_gap = pointadd_for(full_barrel_bits, 0) - 3_000_000isize;
+        let bounded_barrel_gap = pointadd_for(bounded_barrel_bits, 0) - 3_000_000isize;
+        let bounded_one_ccx_inactive_gap = pointadd_for(bounded_barrel_bits, inactive_positions) - 3_000_000isize;
+        let bounded_savings = full_barrel_gap - bounded_barrel_gap;
+        println!("METRIC centered_direct_bounded_barrel_samples={samples}");
+        println!("METRIC centered_direct_bounded_barrel_digit_payload_p99={digit_payload_p99}");
+        println!("METRIC centered_direct_bounded_barrel_count_p99={count_p99}");
+        println!("METRIC centered_direct_bounded_barrel_final_negative_p99={final_p99}");
+        println!("METRIC centered_direct_bounded_barrel_max_digits_seen={max_digits_seen}");
+        println!("METRIC centered_direct_bounded_barrel_bits={bounded_barrel_bits}");
+        println!("METRIC centered_direct_bounded_barrel_full_gap_to_3m={full_barrel_gap}");
+        println!("METRIC centered_direct_bounded_barrel_gap_to_3m={bounded_barrel_gap}");
+        println!("METRIC centered_direct_bounded_barrel_savings_ccx={bounded_savings}");
+        println!("METRIC centered_direct_bounded_barrel_inactive_positions_p99={inactive_positions}");
+        println!("METRIC centered_direct_bounded_barrel_one_ccx_inactive_gap={bounded_one_ccx_inactive_gap}");
+        eprintln!("Centered direct-rounding bounded barrel: payload_p99={digit_payload_p99}, count_p99={count_p99}, final_p99={final_p99}, max_digits={max_digits_seen}, barrel_bits={bounded_barrel_bits}, full_gap={full_barrel_gap}, bounded_gap={bounded_barrel_gap}, one_ccx_inactive_gap={bounded_one_ccx_inactive_gap}");
+        assert!(bounded_barrel_bits < full_barrel_bits, "sampled quotient widths no longer justify a bounded barrel");
+        assert!(bounded_barrel_gap < full_barrel_gap - 300_000, "bounded barrel does not buy meaningful relaxed margin");
+        assert!(bounded_one_ccx_inactive_gap < 0, "bounded barrel still cannot afford a one-CCX inactive-position tax");
+    }
+
+    #[test]
     fn euclid_quotient_stream_entropy_also_exceeds_scratch600() {
         // Follow-up to the raw-payload quotient-stream DIV test.  The tempting
         // objection is that a clever prefix/arithmetic code could pack the

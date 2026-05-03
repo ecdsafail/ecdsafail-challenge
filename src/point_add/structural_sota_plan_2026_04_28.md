@@ -1750,6 +1750,26 @@ So a production extractor must avoid Toffoli work on inactive quotient-digit
 positions.  A controlled full-width scan over all 256 positions per quotient is
 not acceptable even with a one-CCX inactive body.
 
+Follow-up: the full 8-level alignment barrel in that ledger was pessimistic for
+the sampled direct-centered traces.  `direct_centered_nonrestoring_bounded_barrel_revives_inactive_tax_margin`
+uses 32,768 samples and observes maximum non-restoring digit width 24, so the
+initial quotient alignment can be modeled with a 5-bit barrel rather than an
+8-bit full-width barrel:
+
+```text
+bounded barrel bits            = 5
+full-barrel relaxed gap        = -74,992 CCX
+bounded-barrel relaxed gap     = -437,488 CCX
+bounded-barrel saving          = 362,496 CCX
+one-CCX inactive tax gap       = -318,244 CCX
+```
+
+This reopens the direct-centered relaxed-2800q route as an extractor-engineering
+problem.  Fixed K-bit quotient slots are still invalid (K=5 fails 999,633 ppm,
+K=12 still fails 49,804 ppm), so the next hard piece is a real packed active
+digit loop with a bounded binary initial alignment, not a static 256-position
+scan and not fixed-width quotient slots.
+
 ## 6. Post-BY ground-up attempt: Strategy E slope-coordinate map
 
 New non-BY candidate: make the slope the live y-coordinate and avoid an
