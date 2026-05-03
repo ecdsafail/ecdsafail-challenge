@@ -8659,6 +8659,26 @@ mod tests {
         digits
     }
 
+    fn low_u256_from_u512_for_centered_test(x: U512) -> U256 {
+        let limbs = x.as_limbs();
+        U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
+    }
+
+    fn signed_u512_mod_u256_for_centered_test(
+        x: SignedMagU512ForHalfGcdTest,
+        p: U256,
+    ) -> U256 {
+        let p512 = u512_from_u256_for_halfgcd_test(p);
+        let rem = x.mag % p512;
+        if rem.is_zero() {
+            U256::ZERO
+        } else if x.neg {
+            p - low_u256_from_u512_for_centered_test(rem)
+        } else {
+            low_u256_from_u512_for_centered_test(rem)
+        }
+    }
+
     fn direct_centered_public_width_bound_for_step(n: usize, step: usize) -> usize {
         n.saturating_sub(step / 2).max(1)
     }
@@ -9685,6 +9705,14 @@ mod tests {
                 u = v;
                 v = r;
             }
+            assert_eq!(u.mag, U512::from(1u64), "direct-centered coefficient trace ended at non-unit gcd");
+            let coeff_mod = signed_u512_mod_u256_for_centered_test(coeff_u, p);
+            let gcd_mod = signed_u512_mod_u256_for_centered_test(u, p);
+            assert_eq!(
+                coeff_mod.mul_mod(x, p),
+                gcd_mod,
+                "inline signed coefficient is not the denominator inverse up to gcd sign"
+            );
             let public_width_sum = (0..count)
                 .map(|step| direct_centered_public_width_bound_for_step(n, step))
                 .sum::<usize>();
