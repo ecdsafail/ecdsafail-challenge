@@ -1780,6 +1780,14 @@ route therefore needs either a phase-clean wide-quotient fallback or a way to
 make the high alignment layers classically/rarely executed; a bare 5-bit exact
 barrel is not correct for the whole field.
 
+Follow-up: the barrel mechanics are not the blocker if the parser can expose
+alignment metadata as phase-clean classical bits.  `direct_centered_classical_alignment_metadata_would_remove_barrel_blocker`
+uses bit-controlled swaps and measures `0` barrel Toffoli in the toy shifter.
+In the exact 8-bit inactive-tax ledger this saves 966,656 point-add CCX, moving
+the gap from `+44,252` to `-922,404`.  The remaining hard question is whether
+those alignment bits can be produced classically without a dense measurement
+phase correction or a static quantum scan.
+
 ## 6. Post-BY ground-up attempt: Strategy E slope-coordinate map
 
 New non-BY candidate: make the slope the live y-coordinate and avoid an

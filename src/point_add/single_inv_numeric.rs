@@ -8823,6 +8823,23 @@ mod tests {
         }
     }
 
+    fn emit_bitctrl_barrel_left_shift_unsigned_exact_for_centered_test(
+        b: &mut super::super::B,
+        v: &[super::super::QubitId],
+        kbits: &[super::super::BitId],
+        spill: &[super::super::QubitId],
+    ) {
+        assert!(spill.len() >= v.len());
+        for (j, &ctrl) in kbits.iter().enumerate() {
+            let s = 1usize << j;
+            if s >= v.len() { break; }
+            for i in (0..v.len()).rev() {
+                let lo = if i < s { spill[i] } else { v[i - s] };
+                b.swap_if(lo, v[i], ctrl);
+            }
+        }
+    }
+
     fn emit_toy_direct_centered_nonrestoring_extractor_for_centered_test(
         b: &mut super::super::B,
         rem: &[super::super::QubitId],
@@ -9223,6 +9240,75 @@ mod tests {
         assert!(exact_required_bits > sampled_bounded_bits, "full-domain alignment no longer needs high barrel layers");
         assert!(bounded_one_ccx_gap < 0, "sampled bounded ledger no longer has inactive-tax margin");
         assert!(exact_one_ccx_gap > 0, "full-domain high barrel layers still fit with inactive tax; bounded fallback is less critical");
+    }
+
+    #[test]
+    fn direct_centered_classical_alignment_metadata_would_remove_barrel_blocker() {
+        // If the quotient parser can expose alignment metadata as phase-clean
+        // classical bits, the variable barrel layers become classically
+        // conditioned swaps and cost no Toffoli in the executed metric.  This
+        // is not a parser proof; it quantifies the upside and makes the next
+        // blocker precise: produce those classical bits without a dense phase
+        // correction.
+        use sha3::digest::{ExtendableOutput, Update};
+
+        const W: usize = 16;
+        const KBITS: usize = 4;
+        let mut b = super::super::B::new();
+        let v = b.alloc_qubits(W);
+        let kbits = b.alloc_bits(KBITS);
+        let spill = b.alloc_qubits(W);
+        let start = b.ops.len();
+        emit_bitctrl_barrel_left_shift_unsigned_exact_for_centered_test(&mut b, &v, &kbits, &spill);
+        let bitctrl_ccx16 = local_count_ccx_for_plusminus_cost(&b.ops[start..]);
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        for shift in 0usize..8usize {
+            for val in 0u64..64u64 {
+                let mut hasher = sha3::Shake128::default();
+                hasher.update(b"direct-centered-bitctrl-alignment-v1");
+                let mut xof = hasher.finalize_xof();
+                let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+                set_slice_u512_pm(&mut sim, &v, U512::from(val));
+                for j in 0..KBITS {
+                    if ((shift >> j) & 1) != 0 {
+                        *sim.bit_mut(kbits[j]) |= 1;
+                    }
+                }
+                sim.apply(&ops);
+                assert_eq!(get_slice_u512_pm(&sim, &v).as_limbs()[0], val << shift, "shifted value mismatch shift={shift} val={val}");
+                assert_eq!(get_slice_u512_pm(&sim, &spill), U512::ZERO, "spill dirty shift={shift} val={val}");
+                assert_eq!(sim.stats.toffoli_gates, 0, "bit-controlled barrel executed Toffoli");
+            }
+        }
+
+        let n = 256usize;
+        let count_p99 = 118usize;
+        let digit_payload_p99 = 397usize;
+        let final_p99 = 69usize;
+        let inactive_positions = count_p99 * n - digit_payload_p99;
+        let replay_per_div = (digit_payload_p99 + final_p99) * 587usize;
+        let final_fix_current = count_p99 * (2usize * n - 1usize);
+        let pointadd_for = |barrel_bits: usize, inactive_tax: usize| -> isize {
+            let barrel_and_scan = count_p99 * (n * barrel_bits + n);
+            let extraction_oneway = digit_payload_p99 * n
+                + barrel_and_scan
+                + final_fix_current
+                + inactive_tax;
+            642_716isize + 2 * (replay_per_div + 2 * extraction_oneway) as isize
+        };
+        let full_quantum_gap = pointadd_for(8, inactive_positions) - 3_000_000isize;
+        let classical_alignment_gap = pointadd_for(0, inactive_positions) - 3_000_000isize;
+        let saved_pointadd_ccx = full_quantum_gap - classical_alignment_gap;
+        println!("METRIC centered_direct_bitctrl_barrel_ccx16={bitctrl_ccx16}");
+        println!("METRIC centered_direct_classical_alignment_full_quantum_gap={full_quantum_gap}");
+        println!("METRIC centered_direct_classical_alignment_gap={classical_alignment_gap}");
+        println!("METRIC centered_direct_classical_alignment_saved_pointadd_ccx={saved_pointadd_ccx}");
+        eprintln!("Centered direct classical alignment metadata: bitctrl_ccx16={bitctrl_ccx16}, full_quantum_gap={full_quantum_gap}, classical_alignment_gap={classical_alignment_gap}, saved={saved_pointadd_ccx}");
+        assert_eq!(bitctrl_ccx16, 0, "classically controlled alignment barrel started emitting Toffoli");
+        assert!(full_quantum_gap > 0, "full quantum barrel no longer blocks the inactive-tax ledger");
+        assert!(classical_alignment_gap < -900_000, "classical alignment metadata would not buy enough margin");
     }
 
     #[test]
