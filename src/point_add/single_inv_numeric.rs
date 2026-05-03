@@ -17383,6 +17383,8 @@ mod tests {
         let mut stored_branch_select1 = Vec::with_capacity(samples);
         let mut fixed_scratches = Vec::with_capacity(samples);
         let mut variable_scratches = Vec::with_capacity(samples);
+        let mut delimited_scratches = Vec::with_capacity(samples);
+        let mut gamma_scratches = Vec::with_capacity(samples);
         let mut align_pop_barrels = Vec::with_capacity(samples);
         let mut branch_selects = Vec::with_capacity(samples);
         let mut branch_counts = Vec::with_capacity(samples);
@@ -17404,6 +17406,8 @@ mod tests {
             let mut decoder_digit = 0usize;
             let mut align_pop_barrel = 0usize;
             let mut align_variable_bits = 0usize;
+            let mut align_delimited_bits = 0usize;
+            let mut align_gamma_bits = 0usize;
             let mut branch_select = 0usize;
             let mut ambiguous_branches = 0usize;
 
@@ -17482,6 +17486,9 @@ mod tests {
                 decoder_digit += decoder_digits.len() * decoder_width.saturating_sub(1);
                 align_pop_barrel += decoder_width * alignment.count_ones() as usize;
                 align_variable_bits += usize_bit_len_for_payload_test(alignment);
+                align_delimited_bits += usize_bit_len_for_payload_test(alignment) + 1;
+                align_gamma_bits +=
+                    2 * usize_bit_len_for_payload_test(alignment + 1) - 1;
                 if ambiguous {
                     branch_select += (2 * decoder_width).saturating_sub(1);
                 }
@@ -17513,6 +17520,8 @@ mod tests {
             let stored_branch = select1 + 4 * (decoder_digit + align_pop_barrel + branch_select) as isize;
             let fixed_scratch = n + exact_barrel_bits * count + count;
             let variable_scratch = n + align_variable_bits + ambiguous_branches;
+            let delimited_scratch = n + align_delimited_bits + ambiguous_branches;
+            let gamma_scratch = n + align_gamma_bits + ambiguous_branches;
             if sample_idx < 64 {
                 first64_stored += stored;
                 first64_stored_branch += stored_branch;
@@ -17521,6 +17530,8 @@ mod tests {
             stored_branch_select1.push(stored_branch);
             fixed_scratches.push(fixed_scratch);
             variable_scratches.push(variable_scratch);
+            delimited_scratches.push(delimited_scratch);
+            gamma_scratches.push(gamma_scratch);
             align_pop_barrels.push(align_pop_barrel);
             branch_selects.push(branch_select);
             branch_counts.push(ambiguous_branches);
@@ -17547,6 +17558,10 @@ mod tests {
         let fixed_scratch_max = *fixed_scratches.last().unwrap();
         let variable_scratch_p99 = p99_usize(&mut variable_scratches);
         let variable_scratch_max = *variable_scratches.last().unwrap();
+        let delimited_scratch_p99 = p99_usize(&mut delimited_scratches);
+        let delimited_scratch_max = *delimited_scratches.last().unwrap();
+        let gamma_scratch_p99 = p99_usize(&mut gamma_scratches);
+        let gamma_scratch_max = *gamma_scratches.last().unwrap();
         let align_pop_barrel_p99 = p99_usize(&mut align_pop_barrels);
         let branch_select_p99 = p99_usize(&mut branch_selects);
         let branch_count_p99 = p99_usize(&mut branch_counts);
@@ -17569,12 +17584,16 @@ mod tests {
         println!("METRIC centered_direct_restoring_final_stored_align_fixed_scratch_max={fixed_scratch_max}");
         println!("METRIC centered_direct_restoring_final_stored_align_variable_scratch_p99={variable_scratch_p99}");
         println!("METRIC centered_direct_restoring_final_stored_align_variable_scratch_max={variable_scratch_max}");
+        println!("METRIC centered_direct_restoring_final_stored_align_delimited_scratch_p99={delimited_scratch_p99}");
+        println!("METRIC centered_direct_restoring_final_stored_align_delimited_scratch_max={delimited_scratch_max}");
+        println!("METRIC centered_direct_restoring_final_stored_align_gamma_scratch_p99={gamma_scratch_p99}");
+        println!("METRIC centered_direct_restoring_final_stored_align_gamma_scratch_max={gamma_scratch_max}");
         println!("METRIC centered_direct_restoring_final_stored_align_pop_barrel_p99={align_pop_barrel_p99}");
         println!("METRIC centered_direct_restoring_final_stored_align_branch_select_p99={branch_select_p99}");
         println!("METRIC centered_direct_restoring_final_stored_align_branch_count_p99={branch_count_p99}");
         println!("METRIC centered_direct_restoring_final_stored_align_branch_count_max={branch_count_max}");
         eprintln!(
-            "Direct-centered restoring-final stored alignment decoder: stored_mean={stored_mean:.1}, stored_branch_mean={stored_branch_mean:.1}, first64=({stored_first64:.1},{stored_branch_first64:.1}), p99=({stored_p99},{stored_branch_p99}), fixed_scratch_p99={fixed_scratch_p99}, variable_scratch_p99={variable_scratch_p99}, branch_count_p99={branch_count_p99}"
+            "Direct-centered restoring-final stored alignment decoder: stored_mean={stored_mean:.1}, stored_branch_mean={stored_branch_mean:.1}, first64=({stored_first64:.1},{stored_branch_first64:.1}), p99=({stored_p99},{stored_branch_p99}), fixed_scratch_p99={fixed_scratch_p99}, variable_scratch_p99={variable_scratch_p99}, delimited_p99={delimited_scratch_p99}, gamma_p99={gamma_scratch_p99}, branch_count_p99={branch_count_p99}"
         );
         assert!(
             stored_mean < TARGET && stored_first64 < TARGET,
@@ -17591,6 +17610,10 @@ mod tests {
         assert!(
             variable_scratch_p99 <= 663,
             "even variable alignment metadata stopped fitting; no compression target remains"
+        );
+        assert!(
+            delimited_scratch_p99 > 663 && gamma_scratch_p99 > 663,
+            "a simple self-delimiting alignment code fits; promote exact parser implementation"
         );
     }
 
