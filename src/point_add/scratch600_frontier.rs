@@ -109,7 +109,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "halfgcd_det_compressed_matrix_tail_payload",
             scratch_bits: 564,
             charged_toffoli: None,
-            blocker: "determinant-compressed matrix+tail payload fits and toy raw-tail streams are self-delimiting from the compressed payload, but omitted-entry recovery is a 262x128-bit exact division and cleanup is uncharged",
+            blocker: "determinant-compressed matrix+tail payload fits; arithmetic replay plus an optimistic recovery floor projects 1410512, but phase-clean matrix extraction and cleanup are uncharged",
         },
         Candidate {
             name: "folded_kaliski_one_pair_plus_required_sidecar",
@@ -178,6 +178,12 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let halfgcd_tail_raw_compressed_rank_max_mult_n14 = 1usize;
     let halfgcd_tail_raw_compressed_rank_degree_n14 = 0usize;
     let halfgcd_tail_raw_compressed_rank_density_n14 = 0usize;
+    let halfgcd_matrix_apply_p99_ccx = 236_313usize;
+    let halfgcd_tail_replay_p99_ccx = 102_725usize;
+    let halfgcd_det_recovery_floor_p99_ccx = 52_757usize;
+    let halfgcd_replay_with_recovery_floor_pointadd_p99 = 1_410_512usize;
+    let halfgcd_replay_with_recovery_floor_gap_to_2700k =
+        halfgcd_replay_with_recovery_floor_pointadd_p99 as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
 
     eprintln!("\nScratch-600 architecture frontier:");
     for c in candidates {
@@ -239,6 +245,11 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_halfgcd_tail_raw_compressed_rank_max_mult_n14={halfgcd_tail_raw_compressed_rank_max_mult_n14}");
     println!("METRIC scratch600_halfgcd_tail_raw_compressed_rank_degree_n14={halfgcd_tail_raw_compressed_rank_degree_n14}");
     println!("METRIC scratch600_halfgcd_tail_raw_compressed_rank_density_n14={halfgcd_tail_raw_compressed_rank_density_n14}");
+    println!("METRIC scratch600_halfgcd_matrix_apply_p99_ccx={halfgcd_matrix_apply_p99_ccx}");
+    println!("METRIC scratch600_halfgcd_tail_replay_p99_ccx={halfgcd_tail_replay_p99_ccx}");
+    println!("METRIC scratch600_halfgcd_det_recovery_floor_p99_ccx={halfgcd_det_recovery_floor_p99_ccx}");
+    println!("METRIC scratch600_halfgcd_replay_with_recovery_floor_pointadd_p99={halfgcd_replay_with_recovery_floor_pointadd_p99}");
+    println!("METRIC scratch600_halfgcd_replay_with_recovery_floor_gap_to_2700k={halfgcd_replay_with_recovery_floor_gap_to_2700k}");
 
     assert!(best_state <= STRICT_SCRATCH, "at least some state shapes fit");
     assert!(streamed_gap_to_google > 0, "no fully charged <=600-scratch row should be counted as solved yet");
@@ -268,5 +279,9 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && halfgcd_tail_raw_compressed_rank_degree_n14 == 0
             && halfgcd_tail_raw_compressed_rank_density_n14 == 0,
         "half-GCD compressed raw-tail parser toy result changed; update frontier blocker"
+    );
+    assert!(
+        halfgcd_replay_with_recovery_floor_gap_to_2700k < 0,
+        "half-GCD arithmetic replay floor changed; update matrix-extraction blocker"
     );
 }

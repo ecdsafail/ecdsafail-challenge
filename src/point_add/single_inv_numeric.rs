@@ -3284,6 +3284,49 @@ mod tests {
         (degree, density, max_multiplicity)
     }
 
+    fn u512_popcount_for_halfgcd_test(x: U512) -> usize {
+        x.as_limbs().iter().map(|w| w.count_ones() as usize).sum()
+    }
+
+    fn halfgcd_signed_two_coeff_apply_cost_for_test(
+        x0: SignedMagU512ForHalfGcdTest,
+        x1: SignedMagU512ForHalfGcdTest,
+    ) -> usize {
+        // Measured by `modular_primitive_cost_breakdown_for_by_rows`.
+        const MOD_ADD_FAST_CCX: usize = 1024;
+        const MOD_SUB_FAST_CCX: usize = 1277;
+        const MOD_DOUBLE_FAST_CCX: usize = 255;
+        const MOD_HALVE_FAST_CCX: usize = 255;
+        let top0 = u512_bit_len_for_halfgcd_test(x0.mag).saturating_sub(1);
+        let top1 = u512_bit_len_for_halfgcd_test(x1.mag).saturating_sub(1);
+        let top = top0.max(top1);
+        let mut cost = top * (MOD_DOUBLE_FAST_CCX + MOD_HALVE_FAST_CCX);
+        for z in [x0, x1] {
+            let add_cost = if z.neg { MOD_SUB_FAST_CCX } else { MOD_ADD_FAST_CCX };
+            cost += u512_popcount_for_halfgcd_test(z.mag) * add_cost;
+        }
+        cost
+    }
+
+    fn halfgcd_det_recovery_cost_floor_for_test(
+        lhs: SignedMagU512ForHalfGcdTest,
+        rhs: SignedMagU512ForHalfGcdTest,
+        denom: SignedMagU512ForHalfGcdTest,
+    ) -> usize {
+        // Optimistic floor for recovering one omitted matrix entry from
+        // `(lhs*rhs ± 1)/denom`: one schoolbook product, one carry-scale
+        // add/sub of the determinant, and one non-restoring exact division.
+        // It deliberately omits parser/control cleanup, so fitting here is not
+        // a production claim.
+        assert!(!denom.mag.is_zero());
+        let lhs_bits = u512_bit_len_for_halfgcd_test(lhs.mag);
+        let rhs_bits = u512_bit_len_for_halfgcd_test(rhs.mag);
+        let num_bits = u512_bit_len_for_halfgcd_test(lhs.mag * rhs.mag + U512::from(1u64));
+        let den_bits = u512_bit_len_for_halfgcd_test(denom.mag);
+        let digits = num_bits.saturating_sub(den_bits) + 1;
+        lhs_bits * rhs_bits + num_bits + digits * num_bits
+    }
+
     fn euclid_quotients_for_divisor(x: U256, p: U256) -> Vec<U256> {
         assert!(!x.is_zero());
         let mut u = p;
@@ -3577,6 +3620,102 @@ mod tests {
                 assert_eq!(density, 0);
             }
         }
+    }
+
+    #[test]
+    fn half_gcd_matrix_apply_and_recovery_floor_is_not_the_blocker() {
+        // Once determinant compression makes the payload fit, the next question
+        // is whether the arithmetic replay itself consumes the 2.7M budget.
+        // Charge the numerator-row prefix application using measured modular
+        // primitive costs, charge the tail quotient replay at the established
+        // 587 CCX per raw quotient bit, and add an optimistic floor for
+        // determinant recovery of a fixed omitted c-entry.
+        //
+        // This still does not charge the hard part: extracting/cleaning the
+        // checkpoint matrix from the denominator circuit.
+        const SCAFFOLD_AFTER_DIV: usize = 642_716;
+        const TAIL_REPLAY_PER_BIT_CCX: usize = 587;
+        let p = SECP256K1_P;
+        let samples = 2048usize;
+        let mut rng = 0xa17f_9cdd_0000_0001u64;
+        let mut prefix_apply = Vec::with_capacity(samples);
+        let mut tail_replay = Vec::with_capacity(samples);
+        let mut recovery_floor = Vec::with_capacity(samples);
+        let mut pointadd_without_recovery = Vec::with_capacity(samples);
+        let mut pointadd_with_recovery_floor = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = p;
+            let mut v = x;
+            let mut a = smag_for_halfgcd_test(false, U512::from(1u64));
+            let mut b = smag_for_halfgcd_test(false, U512::ZERO);
+            let mut c = smag_for_halfgcd_test(false, U512::ZERO);
+            let mut d = smag_for_halfgcd_test(false, U512::from(1u64));
+            while !v.is_zero() && u256_bit_len(u).max(u256_bit_len(v)) > 128 {
+                let q = u / v;
+                let rem = u - q * v;
+                let na = c;
+                let nb = d;
+                let nc = signed_sub_scaled_for_halfgcd_test(a, q, c);
+                let nd = signed_sub_scaled_for_halfgcd_test(b, q, d);
+                u = v;
+                v = rem;
+                a = na;
+                b = nb;
+                c = nc;
+                d = nd;
+            }
+
+            let mut tail_payload = 0usize;
+            let mut tu = u;
+            let mut tv = v;
+            while !tv.is_zero() {
+                let q = tu / tv;
+                tail_payload += u256_bit_len(q);
+                let rem = tu - q * tv;
+                tu = tv;
+                tv = rem;
+            }
+
+            let app = halfgcd_signed_two_coeff_apply_cost_for_test(b, d);
+            let replay = tail_payload * TAIL_REPLAY_PER_BIT_CCX;
+            let recover_c = halfgcd_det_recovery_cost_floor_for_test(a, d, b);
+            let one_div_no_recovery = app + replay;
+            let one_div_with_recovery = one_div_no_recovery + recover_c;
+            prefix_apply.push(app);
+            tail_replay.push(replay);
+            recovery_floor.push(recover_c);
+            pointadd_without_recovery.push(SCAFFOLD_AFTER_DIV + 2 * one_div_no_recovery);
+            pointadd_with_recovery_floor.push(SCAFFOLD_AFTER_DIV + 2 * one_div_with_recovery);
+        }
+        prefix_apply.sort_unstable();
+        tail_replay.sort_unstable();
+        recovery_floor.sort_unstable();
+        pointadd_without_recovery.sort_unstable();
+        pointadd_with_recovery_floor.sort_unstable();
+        let p99 = samples * 99 / 100;
+        let prefix_apply_p99 = prefix_apply[p99];
+        let tail_replay_p99 = tail_replay[p99];
+        let recovery_floor_p99 = recovery_floor[p99];
+        let no_recovery_p99 = pointadd_without_recovery[p99];
+        let with_recovery_p99 = pointadd_with_recovery_floor[p99];
+        let no_recovery_gap = no_recovery_p99 as isize - 2_700_000isize;
+        let with_recovery_gap = with_recovery_p99 as isize - 2_700_000isize;
+        eprintln!(
+            "half-GCD matrix replay floor: prefix_apply_p99={prefix_apply_p99}, tail_replay_p99={tail_replay_p99}, recovery_floor_p99={recovery_floor_p99}, no_recovery_p99={no_recovery_p99}, with_recovery_p99={with_recovery_p99}, with_recovery_gap={with_recovery_gap}"
+        );
+        println!("METRIC halfgcd_matrix_apply_p99_ccx={prefix_apply_p99}");
+        println!("METRIC halfgcd_tail_replay_p99_ccx={tail_replay_p99}");
+        println!("METRIC halfgcd_det_recovery_floor_p99_ccx={recovery_floor_p99}");
+        println!("METRIC halfgcd_replay_no_recovery_pointadd_p99={no_recovery_p99}");
+        println!("METRIC halfgcd_replay_no_recovery_gap_to_2700k={no_recovery_gap}");
+        println!("METRIC halfgcd_replay_with_recovery_floor_pointadd_p99={with_recovery_p99}");
+        println!("METRIC halfgcd_replay_with_recovery_floor_gap_to_2700k={with_recovery_gap}");
+        assert!(
+            with_recovery_gap < 0,
+            "half-GCD arithmetic replay/recovery floor alone no longer fits low-qubit target"
+        );
     }
 
     #[test]
