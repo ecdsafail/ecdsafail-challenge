@@ -3619,6 +3619,35 @@ mod tests {
     }
 
     #[test]
+    fn plusminus_offset_norm_base_core_already_exceeds_per_div_budget() {
+        // Sharper kill condition for the same offset-normalization subpath:
+        // even if denominator normalization, its width oracle, scale cleanup,
+        // and production packing were all free, the current non-denominator
+        // update core exceeds the per-DIV budget implied by the 2.7M target.
+        let target = 2_700_000usize;
+        let scaffold_after_div = 642_716usize;
+        let div_count = 2usize;
+        let steps_public = 202usize;
+        let base_step_without_den_barrel = 5_794usize;
+        let per_div_budget = (target - scaffold_after_div) / div_count;
+        let base_core_one_div = steps_public * base_step_without_den_barrel;
+        let base_core_over_budget = base_core_one_div as isize - per_div_budget as isize;
+        let required_base_step_ccx = per_div_budget / steps_public;
+        let required_base_step_cut_ccx = base_step_without_den_barrel - required_base_step_ccx;
+        let required_base_step_cut_ppm =
+            (required_base_step_cut_ccx * 1_000_000usize) / base_step_without_den_barrel;
+        eprintln!("plus-minus offset normalization base-core budget: per_div_budget={per_div_budget}, base_core_one_div={base_core_one_div}, over_budget={base_core_over_budget}, required_base_step={required_base_step_ccx}, required_cut={required_base_step_cut_ccx}, required_cut_ppm={required_base_step_cut_ppm}");
+        println!("METRIC plusminus_offset_norm_per_div_budget_ccx={per_div_budget}");
+        println!("METRIC plusminus_offset_norm_base_core_one_div_ccx={base_core_one_div}");
+        println!("METRIC plusminus_offset_norm_base_core_over_budget_ccx={base_core_over_budget}");
+        println!("METRIC plusminus_offset_norm_required_base_step_ccx={required_base_step_ccx}");
+        println!("METRIC plusminus_offset_norm_required_base_step_cut_ccx={required_base_step_cut_ccx}");
+        println!("METRIC plusminus_offset_norm_required_base_step_cut_ppm={required_base_step_cut_ppm}");
+        assert!(base_core_over_budget > 0, "free denominator normalization would fit; revive normalization scheduling");
+        assert!(required_base_step_cut_ccx >= 700, "required base-step cut is small enough to pursue locally");
+    }
+
+    #[test]
     fn plusminus_coeff_offset_den_barrel_budget_still_tight() {
         // If coefficient offsets delete the signed coefficient barrel shift but
         // denominators still physically barrel-shift, the step budget improves

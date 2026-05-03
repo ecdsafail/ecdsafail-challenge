@@ -79,7 +79,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "plusminus_scaled_konly_slack_denominator_blocked",
             scratch_bits: 517,
             charged_toffoli: None,
-            blocker: "scratch/history shell is phase-clean in toys, but current denominator shift/normalization lower bound misses by 512k before scale/oracle cleanup",
+            blocker: "scratch/history shell is phase-clean in toys, but the current offset-normalization core is already 141746 CCX over the per-DIV budget before normalization/scale/oracle cleanup",
         },
         Candidate {
             name: "centered_euclid_raw_q_stream_without_parser",

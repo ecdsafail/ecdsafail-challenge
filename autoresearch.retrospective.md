@@ -168,6 +168,23 @@ total before scale/oracle cleanup             = 3,212,222 CCX
 gap before scale to 2.7M                      = +512,222 CCX
 ```
 
+2026-05-03 update: the offset-normalization path is even worse than that
+headline miss. With the current scaffold, the two-DIV budget is `2,057,284`
+CCX, so each DIV gets only `1,028,642` CCX. The non-denominator update core
+alone is:
+
+```text
+202 steps * 5,794 CCX/update = 1,170,388 CCX per DIV
+base-core excess             =   141,746 CCX per DIV
+required update ceiling      =     5,092 CCX/update
+required base-step cut       =       702 CCX/update (~12.1%)
+```
+
+So denominator-normalization scheduling cannot rescue this subpath by itself.
+It would first need a separate double-digit-percent reduction in the already
+optimistic non-denominator update core, before paying any normalization oracle,
+scale correction, parser cleanup, or production packing.
+
 Therefore the current plus-minus physical-shift / barrel-shift / offset-normalization subpath is **gate-dead**. Plus-minus should only be revived if a new denominator recurrence eliminates physical denominator shifting/normalization, rather than optimizing the current normalization machinery.
 
 ## Introspection cadence for future work
