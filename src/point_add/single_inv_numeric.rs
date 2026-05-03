@@ -3284,6 +3284,64 @@ mod tests {
         (degree, density, max_multiplicity)
     }
 
+    fn half_gcd_second_column_tail_raw_rank_anf_stats(n: usize, p: u16) -> (usize, usize, usize) {
+        use std::collections::{BTreeMap, BTreeSet};
+        let size = 1usize << n;
+        let mut by_key: BTreeMap<(i128, i128, String), BTreeSet<Vec<usize>>> = BTreeMap::new();
+        let mut data = Vec::new();
+        for x in 1..p {
+            let mut u = p as i128;
+            let mut v = x as i128;
+            let mut b = 0i128;
+            let mut d = 1i128;
+            while v != 0 && ((u as u128).ilog2().max((v as u128).ilog2()) as usize + 1) > n / 2 {
+                let q = u / v;
+                let rem = u - q * v;
+                (b, d) = (d, b - q * d);
+                u = v;
+                v = rem;
+            }
+            let mut tail = Vec::new();
+            while v != 0 {
+                let q = u / v;
+                tail.push(q as usize);
+                let rem = u - q * v;
+                u = v;
+                v = rem;
+            }
+            let raw = raw_binary_bits_from_usizes_for_test(&tail);
+            let key = (b, d, raw);
+            by_key.entry(key.clone()).or_default().insert(tail.clone());
+            data.push((x as usize, key, tail));
+        }
+        let max_multiplicity = by_key.values().map(|tails| tails.len()).max().unwrap_or(1);
+        let ranked: BTreeMap<(i128, i128, String), Vec<Vec<usize>>> = by_key
+            .into_iter()
+            .map(|(key, tails)| (key, tails.into_iter().collect()))
+            .collect();
+        let mut anf = vec![0u8; size];
+        for (x, key, tail) in data {
+            let tails = ranked.get(&key).unwrap();
+            let rank = tails.iter().position(|candidate| *candidate == tail).unwrap();
+            anf[x] = (rank & 1) as u8;
+        }
+        for bit in 0..n {
+            for idx in 0..size {
+                if (idx & (1usize << bit)) != 0 {
+                    anf[idx] ^= anf[idx ^ (1usize << bit)];
+                }
+            }
+        }
+        let density = anf.iter().filter(|&&v| v != 0).count();
+        let degree = anf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v != 0 { Some(i.count_ones() as usize) } else { None })
+            .max()
+            .unwrap_or(0);
+        (degree, density, max_multiplicity)
+    }
+
     fn u512_popcount_for_halfgcd_test(x: U512) -> usize {
         x.as_limbs().iter().map(|w| w.count_ones() as usize).sum()
     }
@@ -3620,6 +3678,315 @@ mod tests {
                 assert_eq!(density, 0);
             }
         }
+    }
+
+    #[test]
+    fn half_gcd_second_column_tail_raw_stream_is_self_delimiting_in_toys() {
+        // The data-row prefix application only uses the second checkpoint
+        // column `(b,d)`, whose update is closed under `(b,d) -> (d,b-q*d)`.
+        // Check that raw concatenated tail quotients remain self-delimiting
+        // with only this smaller checkpoint, before charging a parser sidecar.
+        let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
+        for &(n, p) in &cases {
+            let (degree, density, max_mult) = half_gcd_second_column_tail_raw_rank_anf_stats(n, p);
+            let table = 1usize << n;
+            eprintln!(
+                "half-GCD second-column tail raw rank ANF: n={n}, max_mult={max_mult}, degree={degree}, density={density}/{table}"
+            );
+            if n == 14 {
+                println!("METRIC halfgcd_second_col_tail_raw_rank_max_mult_n14={max_mult}");
+                println!("METRIC halfgcd_second_col_tail_raw_rank_degree_n14={degree}");
+                println!("METRIC halfgcd_second_col_tail_raw_rank_density_n14={density}");
+            }
+            if max_mult > 1 {
+                assert!(degree + 1 >= n);
+                assert!(density > table / 4);
+            } else {
+                assert_eq!(degree, 0);
+                assert_eq!(density, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn half_gcd_second_column_schedule_removes_matrix_extraction_scratch_blocker() {
+        // Unlike a determinant-compressed full matrix, the second column can be
+        // generated and updated directly during the prefix loop.  Price the
+        // live `(b,d,u,v)` state and the tail-stream peak; this still does not
+        // charge the reversible quotient/division machinery needed to extract
+        // the checkpoint from the denominator.
+        let p = SECP256K1_P;
+        let samples = 2048usize;
+        let mut rng = 0x5ec0_0001_5ec0_0001u64;
+        let mut second_column_bits = Vec::with_capacity(samples);
+        let mut residual_bits = Vec::with_capacity(samples);
+        let mut second_column_residual_live = Vec::with_capacity(samples);
+        let mut second_column_tail_raw = Vec::with_capacity(samples);
+        let mut second_column_tail_stream_peak = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = p;
+            let mut v = x;
+            let mut b = smag_for_halfgcd_test(false, U512::ZERO);
+            let mut d = smag_for_halfgcd_test(false, U512::from(1u64));
+            while !v.is_zero() && u256_bit_len(u).max(u256_bit_len(v)) > 128 {
+                let q = u / v;
+                let rem = u - q * v;
+                let nb = d;
+                let nd = signed_sub_scaled_for_halfgcd_test(b, q, d);
+                u = v;
+                v = rem;
+                b = nb;
+                d = nd;
+            }
+
+            let entry_stored_bits = |z: SignedMagU512ForHalfGcdTest| {
+                u512_bit_len_for_halfgcd_test(z.mag) + (!z.mag.is_zero()) as usize
+            };
+            let col_bits = entry_stored_bits(b) + entry_stored_bits(d);
+            let rb = u256_bit_len(u) + u256_bit_len(v);
+            second_column_bits.push(col_bits);
+            residual_bits.push(rb);
+            second_column_residual_live.push(col_bits + rb);
+
+            let mut tail_payload = 0usize;
+            let mut tu = u;
+            let mut tv = v;
+            let mut peak = col_bits + u256_bit_len(tu) + u256_bit_len(tv);
+            while !tv.is_zero() {
+                let q = tu / tv;
+                tail_payload += u256_bit_len(q);
+                let rem = tu - q * tv;
+                tu = tv;
+                tv = rem;
+                peak = peak.max(col_bits + u256_bit_len(tu) + u256_bit_len(tv) + tail_payload);
+            }
+            second_column_tail_raw.push(col_bits + tail_payload);
+            second_column_tail_stream_peak.push(peak);
+        }
+        second_column_bits.sort_unstable();
+        residual_bits.sort_unstable();
+        second_column_residual_live.sort_unstable();
+        second_column_tail_raw.sort_unstable();
+        second_column_tail_stream_peak.sort_unstable();
+        let p99 = samples * 99 / 100;
+        let col_p99 = second_column_bits[p99];
+        let residual_p99 = residual_bits[p99];
+        let live_p99 = second_column_residual_live[p99];
+        let tail_raw_p99 = second_column_tail_raw[p99];
+        let tail_peak_p99 = second_column_tail_stream_peak[p99];
+        let tail_peak_gap_google = tail_peak_p99 as isize - 663isize;
+        eprintln!(
+            "half-GCD second-column schedule: col_p99={col_p99}, residual_p99={residual_p99}, live_p99={live_p99}, tail_raw_p99={tail_raw_p99}, tail_peak_p99={tail_peak_p99}, tail_peak_gap_google={tail_peak_gap_google}"
+        );
+        println!("METRIC halfgcd_second_col_bits_p99={col_p99}");
+        println!("METRIC halfgcd_second_col_residual_bits_p99={residual_p99}");
+        println!("METRIC halfgcd_second_col_residual_live_p99_bits={live_p99}");
+        println!("METRIC halfgcd_second_col_tail_raw_bits_p99={tail_raw_p99}");
+        println!("METRIC halfgcd_second_col_tail_stream_peak_p99_bits={tail_peak_p99}");
+        println!("METRIC halfgcd_second_col_tail_stream_peak_gap_google={tail_peak_gap_google}");
+        assert!(
+            live_p99 < 540 && tail_peak_gap_google < -100,
+            "second-column half-GCD schedule no longer has a scratch margin"
+        );
+    }
+
+    #[test]
+    fn half_gcd_second_column_prefix_width_ledger_has_lowqubit_margin() {
+        // Now price the missing prefix extractor in the same optimistic
+        // width-unit style used by the direct-centered ledgers: one fused
+        // non-restoring residual digit per active position, one signed
+        // coefficient update digit for `(b,d)`, and a bounded/exact alignment
+        // scan.  This is still not a production circuit because it does not
+        // prove a phase-clean extractor implementation.
+        const SCAFFOLD_AFTER_DIV: usize = 642_716;
+        const TAIL_REPLAY_PER_BIT_CCX: usize = 587;
+
+        #[derive(Clone, Copy)]
+        struct PrefixLedger {
+            residual_digit_width: usize,
+            coeff_digit_width: usize,
+            residual_width_sum: usize,
+            coeff_width_sum: usize,
+            max_digits: usize,
+            prefix_steps: usize,
+            prefix_digits: usize,
+            app: usize,
+            replay: usize,
+        }
+
+        let p = SECP256K1_P;
+        let samples = 4096usize;
+        let mut rng = 0x5ec0_0001_9ed6_0001u64;
+        let mut rows = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() { x = U256::from(1u64); }
+            let mut u = p;
+            let mut v = x;
+            let mut b = smag_for_halfgcd_test(false, U512::ZERO);
+            let mut d = smag_for_halfgcd_test(false, U512::from(1u64));
+            let mut residual_digit_width = 0usize;
+            let mut coeff_digit_width = 0usize;
+            let mut residual_width_sum = 0usize;
+            let mut coeff_width_sum = 0usize;
+            let mut max_digits = 0usize;
+            let mut prefix_steps = 0usize;
+            let mut prefix_digits = 0usize;
+            while !v.is_zero() && u256_bit_len(u).max(u256_bit_len(v)) > 128 {
+                let q = u / v;
+                let digits = nonrestoring_floor_signed_digits_for_centered_test(
+                    u512_from_u256_for_halfgcd_test(u),
+                    u512_from_u256_for_halfgcd_test(v),
+                );
+                let width = u256_bit_len(u).max(u256_bit_len(v));
+                let coeff_width = u512_bit_len_for_halfgcd_test(b.mag)
+                    .max(u512_bit_len_for_halfgcd_test(d.mag))
+                    .max(1)
+                    + 1;
+                residual_digit_width += digits.len() * width;
+                residual_width_sum += width;
+                coeff_width_sum += coeff_width;
+                max_digits = max_digits.max(digits.len());
+                prefix_digits += digits.len();
+
+                let mut coeff_acc = b;
+                for &(digit_neg, sh) in &digits {
+                    let term = signed_mul_mag_for_halfgcd_test(
+                        d,
+                        digit_neg,
+                        U512::from(1u64) << sh,
+                    );
+                    let next = signed_add_for_halfgcd_test(
+                        coeff_acc,
+                        signed_neg_for_halfgcd_test(term),
+                    );
+                    let op_width = u512_bit_len_for_halfgcd_test(coeff_acc.mag)
+                        .max(u512_bit_len_for_halfgcd_test(term.mag))
+                        .max(u512_bit_len_for_halfgcd_test(next.mag))
+                        .max(1)
+                        + 1;
+                    coeff_digit_width += op_width;
+                    coeff_acc = next;
+                }
+
+                let rem = u - q * v;
+                let nb = d;
+                let nd = signed_sub_scaled_for_halfgcd_test(b, q, d);
+                assert_eq!(coeff_acc, nd, "second-column signed digit replay mismatch");
+                u = v;
+                v = rem;
+                b = nb;
+                d = nd;
+                prefix_steps += 1;
+            }
+
+            let mut tail_payload = 0usize;
+            let mut tu = u;
+            let mut tv = v;
+            while !tv.is_zero() {
+                let q = tu / tv;
+                tail_payload += u256_bit_len(q);
+                let rem = tu - q * tv;
+                tu = tv;
+                tv = rem;
+            }
+
+            rows.push(PrefixLedger {
+                residual_digit_width,
+                coeff_digit_width,
+                residual_width_sum,
+                coeff_width_sum,
+                max_digits,
+                prefix_steps,
+                prefix_digits,
+                app: halfgcd_signed_two_coeff_apply_cost_for_test(b, d),
+                replay: tail_payload * TAIL_REPLAY_PER_BIT_CCX,
+            });
+        }
+
+        let bounded_barrel_bits = usize_bit_len_for_payload_test(
+            rows.iter().map(|row| row.max_digits).max().unwrap().saturating_sub(1),
+        );
+        let extraction_for = |row: PrefixLedger, barrel_bits: usize| -> usize {
+            row.residual_digit_width
+                + row.coeff_digit_width
+                + (row.residual_width_sum + row.coeff_width_sum) * (barrel_bits + 1)
+        };
+        let mut bounded_extraction = Vec::with_capacity(samples);
+        let mut exact_extraction = Vec::with_capacity(samples);
+        let mut bounded_pointadd = Vec::with_capacity(samples);
+        let mut exact_pointadd = Vec::with_capacity(samples);
+        let mut prefix_steps = Vec::with_capacity(samples);
+        let mut prefix_digits = Vec::with_capacity(samples);
+        let mut residual_digit_width = Vec::with_capacity(samples);
+        let mut coeff_digit_width = Vec::with_capacity(samples);
+        let mut app = Vec::with_capacity(samples);
+        let mut replay = Vec::with_capacity(samples);
+        for &row in &rows {
+            let bounded = extraction_for(row, bounded_barrel_bits);
+            let exact = extraction_for(row, 8);
+            bounded_extraction.push(bounded);
+            exact_extraction.push(exact);
+            bounded_pointadd.push(
+                SCAFFOLD_AFTER_DIV + 2 * (row.app + row.replay + 2 * bounded),
+            );
+            exact_pointadd.push(
+                SCAFFOLD_AFTER_DIV + 2 * (row.app + row.replay + 2 * exact),
+            );
+            prefix_steps.push(row.prefix_steps);
+            prefix_digits.push(row.prefix_digits);
+            residual_digit_width.push(row.residual_digit_width);
+            coeff_digit_width.push(row.coeff_digit_width);
+            app.push(row.app);
+            replay.push(row.replay);
+        }
+        bounded_extraction.sort_unstable();
+        exact_extraction.sort_unstable();
+        bounded_pointadd.sort_unstable();
+        exact_pointadd.sort_unstable();
+        prefix_steps.sort_unstable();
+        prefix_digits.sort_unstable();
+        residual_digit_width.sort_unstable();
+        coeff_digit_width.sort_unstable();
+        app.sort_unstable();
+        replay.sort_unstable();
+        let p99 = samples * 99 / 100;
+        let steps_p99 = prefix_steps[p99];
+        let digits_p99 = prefix_digits[p99];
+        let residual_digit_p99 = residual_digit_width[p99];
+        let coeff_digit_p99 = coeff_digit_width[p99];
+        let bounded_extraction_p99 = bounded_extraction[p99];
+        let exact_extraction_p99 = exact_extraction[p99];
+        let app_p99 = app[p99];
+        let replay_p99 = replay[p99];
+        let bounded_pointadd_p99 = bounded_pointadd[p99];
+        let exact_pointadd_p99 = exact_pointadd[p99];
+        let exact_gap = exact_pointadd_p99 as isize - 2_700_000isize;
+        let one_way_budget =
+            (2_700_000usize - SCAFFOLD_AFTER_DIV - 2 * (app_p99 + replay_p99)) / 4;
+        eprintln!(
+            "half-GCD second-column prefix ledger: steps_p99={steps_p99}, digits_p99={digits_p99}, bounded_barrel_bits={bounded_barrel_bits}, residual_digit_p99={residual_digit_p99}, coeff_digit_p99={coeff_digit_p99}, bounded_extraction_p99={bounded_extraction_p99}, exact_extraction_p99={exact_extraction_p99}, app_p99={app_p99}, replay_p99={replay_p99}, exact_pointadd_p99={exact_pointadd_p99}, exact_gap={exact_gap}"
+        );
+        println!("METRIC halfgcd_second_col_prefix_steps_p99={steps_p99}");
+        println!("METRIC halfgcd_second_col_prefix_digits_p99={digits_p99}");
+        println!("METRIC halfgcd_second_col_prefix_bounded_barrel_bits={bounded_barrel_bits}");
+        println!("METRIC halfgcd_second_col_prefix_residual_digit_width_p99={residual_digit_p99}");
+        println!("METRIC halfgcd_second_col_prefix_coeff_digit_width_p99={coeff_digit_p99}");
+        println!("METRIC halfgcd_second_col_prefix_oneway_budget_ccx={one_way_budget}");
+        println!("METRIC halfgcd_second_col_prefix_bounded_extraction_p99={bounded_extraction_p99}");
+        println!("METRIC halfgcd_second_col_prefix_exact_extraction_p99={exact_extraction_p99}");
+        println!("METRIC halfgcd_second_col_prefix_app_p99_ccx={app_p99}");
+        println!("METRIC halfgcd_second_col_prefix_tail_replay_p99_ccx={replay_p99}");
+        println!("METRIC halfgcd_second_col_prefix_bounded_pointadd_p99={bounded_pointadd_p99}");
+        println!("METRIC halfgcd_second_col_prefix_exact_pointadd_p99={exact_pointadd_p99}");
+        println!("METRIC halfgcd_second_col_prefix_exact_gap_to_2700k={exact_gap}");
+        assert!(bounded_barrel_bits <= 5, "prefix quotient widths no longer fit the sampled bounded barrel");
+        assert!(
+            exact_extraction_p99 < one_way_budget && exact_gap < 0,
+            "optimistic exact-barrel second-column prefix ledger no longer has low-qubit margin"
+        );
     }
 
     #[test]

@@ -124,6 +124,12 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             blocker: "compressed payload/replay fits, but straight-line prefix generation needs 769 bits and optimistic in-loop determinant recovery projects 4491940 Toffoli",
         },
         Candidate {
+            name: "halfgcd_second_column_tail_stream",
+            scratch_bits: 514,
+            charged_toffoli: None,
+            blocker: "second-column live/tail state fits; optimistic exact-barrel prefix ledger projects 2385096, but phase-clean extractor implementation is still unbuilt",
+        },
+        Candidate {
             name: "folded_kaliski_one_pair_plus_required_sidecar",
             scratch_bits: 512 + 255,
             charged_toffoli: Some(4_089_274),
@@ -229,6 +235,27 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let halfgcd_inloop_recovery_pointadd_p99 = 4_491_940usize;
     let halfgcd_inloop_recovery_gap_to_2700k =
         halfgcd_inloop_recovery_pointadd_p99 as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
+    let halfgcd_second_col_bits_p99 = 265usize;
+    let halfgcd_second_col_residual_bits_p99 = 256usize;
+    let halfgcd_second_col_residual_live_p99_bits = 514usize;
+    let halfgcd_second_col_tail_raw_bits_p99 = 434usize;
+    let halfgcd_second_col_tail_stream_peak_p99_bits = 514usize;
+    let halfgcd_second_col_tail_stream_peak_gap_google =
+        halfgcd_second_col_tail_stream_peak_p99_bits as isize - GOOGLE_LOW_QUBIT_SCRATCH as isize;
+    let halfgcd_second_col_tail_raw_rank_max_mult_n14 = 1usize;
+    let halfgcd_second_col_tail_raw_rank_degree_n14 = 0usize;
+    let halfgcd_second_col_tail_raw_rank_density_n14 = 0usize;
+    let halfgcd_second_col_prefix_steps_p99 = 91usize;
+    let halfgcd_second_col_prefix_digits_p99 = 253usize;
+    let halfgcd_second_col_prefix_bounded_barrel_bits = 5usize;
+    let halfgcd_second_col_prefix_residual_digit_width_p99 = 48_776usize;
+    let halfgcd_second_col_prefix_coeff_digit_width_p99 = 17_316usize;
+    let halfgcd_second_col_prefix_oneway_budget_ccx = 345_059usize;
+    let halfgcd_second_col_prefix_bounded_extraction_p99 = 206_323usize;
+    let halfgcd_second_col_prefix_exact_extraction_p99 = 276_840usize;
+    let halfgcd_second_col_prefix_exact_pointadd_p99 = 2_385_096usize;
+    let halfgcd_second_col_prefix_exact_gap_to_2700k =
+        halfgcd_second_col_prefix_exact_pointadd_p99 as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
 
     eprintln!("\nScratch-600 architecture frontier:");
     for c in candidates {
@@ -322,6 +349,25 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_halfgcd_inloop_recovery_floor_p99_ccx={halfgcd_inloop_recovery_floor_p99_ccx}");
     println!("METRIC scratch600_halfgcd_inloop_recovery_pointadd_p99={halfgcd_inloop_recovery_pointadd_p99}");
     println!("METRIC scratch600_halfgcd_inloop_recovery_gap_to_2700k={halfgcd_inloop_recovery_gap_to_2700k}");
+    println!("METRIC scratch600_halfgcd_second_col_bits_p99={halfgcd_second_col_bits_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_residual_bits_p99={halfgcd_second_col_residual_bits_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_residual_live_p99_bits={halfgcd_second_col_residual_live_p99_bits}");
+    println!("METRIC scratch600_halfgcd_second_col_tail_raw_bits_p99={halfgcd_second_col_tail_raw_bits_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_tail_stream_peak_p99_bits={halfgcd_second_col_tail_stream_peak_p99_bits}");
+    println!("METRIC scratch600_halfgcd_second_col_tail_stream_peak_gap_google={halfgcd_second_col_tail_stream_peak_gap_google}");
+    println!("METRIC scratch600_halfgcd_second_col_tail_raw_rank_max_mult_n14={halfgcd_second_col_tail_raw_rank_max_mult_n14}");
+    println!("METRIC scratch600_halfgcd_second_col_tail_raw_rank_degree_n14={halfgcd_second_col_tail_raw_rank_degree_n14}");
+    println!("METRIC scratch600_halfgcd_second_col_tail_raw_rank_density_n14={halfgcd_second_col_tail_raw_rank_density_n14}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_steps_p99={halfgcd_second_col_prefix_steps_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_digits_p99={halfgcd_second_col_prefix_digits_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_bounded_barrel_bits={halfgcd_second_col_prefix_bounded_barrel_bits}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_residual_digit_width_p99={halfgcd_second_col_prefix_residual_digit_width_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_coeff_digit_width_p99={halfgcd_second_col_prefix_coeff_digit_width_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_oneway_budget_ccx={halfgcd_second_col_prefix_oneway_budget_ccx}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_bounded_extraction_p99={halfgcd_second_col_prefix_bounded_extraction_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_exact_extraction_p99={halfgcd_second_col_prefix_exact_extraction_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_exact_pointadd_p99={halfgcd_second_col_prefix_exact_pointadd_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_prefix_exact_gap_to_2700k={halfgcd_second_col_prefix_exact_gap_to_2700k}");
 
     assert!(best_state <= STRICT_SCRATCH, "at least some state shapes fit");
     assert!(streamed_gap_to_google > 0, "no fully charged <=600-scratch row should be counted as solved yet");
@@ -387,5 +433,17 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     assert!(
         halfgcd_inloop_recovery_gap_to_2700k > 0,
         "half-GCD in-loop determinant recovery floor no longer blocks; revisit compressed checkpoint route"
+    );
+    assert!(
+        halfgcd_second_col_tail_stream_peak_gap_google < 0
+            && halfgcd_second_col_tail_raw_rank_max_mult_n14 == 1
+            && halfgcd_second_col_tail_raw_rank_degree_n14 == 0
+            && halfgcd_second_col_tail_raw_rank_density_n14 == 0,
+        "half-GCD second-column tail-stream scratch/parser changed; revisit prefix extraction route"
+    );
+    assert!(
+        halfgcd_second_col_prefix_exact_extraction_p99 < halfgcd_second_col_prefix_oneway_budget_ccx
+            && halfgcd_second_col_prefix_exact_gap_to_2700k < 0,
+        "half-GCD second-column optimistic prefix ledger no longer has low-qubit margin"
     );
 }
