@@ -3194,6 +3194,96 @@ mod tests {
         (degree, density, max_multiplicity)
     }
 
+    fn half_gcd_tail_raw_compressed_rank_anf_stats(n: usize, p: u16) -> (usize, usize, usize) {
+        use std::collections::{BTreeMap, BTreeSet};
+        fn signed_bits(x: i128) -> usize {
+            if x == 0 { 0 } else { (128 - x.unsigned_abs().leading_zeros() as usize) + 1 }
+        }
+        let size = 1usize << n;
+        let mut by_key: BTreeMap<(usize, i8, [i128; 3], String), BTreeSet<Vec<usize>>> =
+            BTreeMap::new();
+        let mut data = Vec::new();
+        for x in 1..p {
+            let mut u = p as i128;
+            let mut v = x as i128;
+            let mut a = 1i128;
+            let mut b = 0i128;
+            let mut c = 0i128;
+            let mut d = 1i128;
+            while v != 0 && ((u as u128).ilog2().max((v as u128).ilog2()) as usize + 1) > n / 2 {
+                let q = u / v;
+                let rem = u - q * v;
+                (a, b, c, d) = (c, d, a - q * c, b - q * d);
+                u = v;
+                v = rem;
+            }
+            let mut tail = Vec::new();
+            while v != 0 {
+                let q = u / v;
+                tail.push(q as usize);
+                let rem = u - q * v;
+                u = v;
+                v = rem;
+            }
+            let raw = raw_binary_bits_from_usizes_for_test(&tail);
+            let entries = [a, b, c, d];
+            let denoms = [d, c, b, a];
+            let mut best: Option<(usize, usize)> = None;
+            for omit in 0..4 {
+                if denoms[omit] == 0 {
+                    continue;
+                }
+                let stored = (0..4)
+                    .filter(|&i| i != omit)
+                    .map(|i| signed_bits(entries[i]))
+                    .sum::<usize>();
+                match best {
+                    Some((old_stored, _)) if old_stored <= stored => {}
+                    _ => best = Some((stored, omit)),
+                }
+            }
+            let (_, omit) = best.expect("at least one determinant denominator should be nonzero");
+            let mut stored_entries = [0i128; 3];
+            let mut j = 0usize;
+            for i in 0..4 {
+                if i != omit {
+                    stored_entries[j] = entries[i];
+                    j += 1;
+                }
+            }
+            let det = if a * d - b * c < 0 { -1i8 } else { 1i8 };
+            let key = (omit, det, stored_entries, raw);
+            by_key.entry(key.clone()).or_default().insert(tail.clone());
+            data.push((x as usize, key, tail));
+        }
+        let max_multiplicity = by_key.values().map(|tails| tails.len()).max().unwrap_or(1);
+        let ranked: BTreeMap<(usize, i8, [i128; 3], String), Vec<Vec<usize>>> = by_key
+            .into_iter()
+            .map(|(key, tails)| (key, tails.into_iter().collect()))
+            .collect();
+        let mut anf = vec![0u8; size];
+        for (x, key, tail) in data {
+            let tails = ranked.get(&key).unwrap();
+            let rank = tails.iter().position(|candidate| *candidate == tail).unwrap();
+            anf[x] = (rank & 1) as u8;
+        }
+        for bit in 0..n {
+            for idx in 0..size {
+                if (idx & (1usize << bit)) != 0 {
+                    anf[idx] ^= anf[idx ^ (1usize << bit)];
+                }
+            }
+        }
+        let density = anf.iter().filter(|&&v| v != 0).count();
+        let degree = anf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v != 0 { Some(i.count_ones() as usize) } else { None })
+            .max()
+            .unwrap_or(0);
+        (degree, density, max_multiplicity)
+    }
+
     fn euclid_quotients_for_divisor(x: U256, p: U256) -> Vec<U256> {
         assert!(!x.is_zero());
         let mut u = p;
@@ -3450,6 +3540,34 @@ mod tests {
                 println!("METRIC halfgcd_tail_raw_rank_max_mult_n14={max_mult}");
                 println!("METRIC halfgcd_tail_raw_rank_degree_n14={degree}");
                 println!("METRIC halfgcd_tail_raw_rank_density_n14={density}");
+            }
+            if max_mult > 1 {
+                assert!(degree + 1 >= n);
+                assert!(density > table / 4);
+            } else {
+                assert_eq!(degree, 0);
+                assert_eq!(density, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn half_gcd_tail_raw_stream_is_self_delimiting_with_compressed_matrix_in_toys() {
+        // The scratch-saving representation omits one matrix entry.  Check the
+        // actual stored payload, not the full matrix: omitted selector,
+        // determinant sign, three signed entries, and raw concatenated tail
+        // quotient bits.
+        let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
+        for &(n, p) in &cases {
+            let (degree, density, max_mult) = half_gcd_tail_raw_compressed_rank_anf_stats(n, p);
+            let table = 1usize << n;
+            eprintln!(
+                "half-GCD compressed tail raw rank ANF: n={n}, max_mult={max_mult}, degree={degree}, density={density}/{table}"
+            );
+            if n == 14 {
+                println!("METRIC halfgcd_tail_raw_compressed_rank_max_mult_n14={max_mult}");
+                println!("METRIC halfgcd_tail_raw_compressed_rank_degree_n14={degree}");
+                println!("METRIC halfgcd_tail_raw_compressed_rank_density_n14={density}");
             }
             if max_mult > 1 {
                 assert!(degree + 1 >= n);

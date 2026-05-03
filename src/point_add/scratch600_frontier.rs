@@ -109,7 +109,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "halfgcd_det_compressed_matrix_tail_payload",
             scratch_bits: 564,
             charged_toffoli: None,
-            blocker: "determinant-compressed matrix+tail payload fits and toy raw-tail streams are self-delimiting with the matrix, but omitted-entry recovery is a 262x128-bit exact division and cleanup is uncharged",
+            blocker: "determinant-compressed matrix+tail payload fits and toy raw-tail streams are self-delimiting from the compressed payload, but omitted-entry recovery is a 262x128-bit exact division and cleanup is uncharged",
         },
         Candidate {
             name: "folded_kaliski_one_pair_plus_required_sidecar",
@@ -175,6 +175,9 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let halfgcd_tail_raw_rank_max_mult_n14 = 1usize;
     let halfgcd_tail_raw_rank_degree_n14 = 0usize;
     let halfgcd_tail_raw_rank_density_n14 = 0usize;
+    let halfgcd_tail_raw_compressed_rank_max_mult_n14 = 1usize;
+    let halfgcd_tail_raw_compressed_rank_degree_n14 = 0usize;
+    let halfgcd_tail_raw_compressed_rank_density_n14 = 0usize;
 
     eprintln!("\nScratch-600 architecture frontier:");
     for c in candidates {
@@ -233,6 +236,9 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_halfgcd_tail_raw_rank_max_mult_n14={halfgcd_tail_raw_rank_max_mult_n14}");
     println!("METRIC scratch600_halfgcd_tail_raw_rank_degree_n14={halfgcd_tail_raw_rank_degree_n14}");
     println!("METRIC scratch600_halfgcd_tail_raw_rank_density_n14={halfgcd_tail_raw_rank_density_n14}");
+    println!("METRIC scratch600_halfgcd_tail_raw_compressed_rank_max_mult_n14={halfgcd_tail_raw_compressed_rank_max_mult_n14}");
+    println!("METRIC scratch600_halfgcd_tail_raw_compressed_rank_degree_n14={halfgcd_tail_raw_compressed_rank_degree_n14}");
+    println!("METRIC scratch600_halfgcd_tail_raw_compressed_rank_density_n14={halfgcd_tail_raw_compressed_rank_density_n14}");
 
     assert!(best_state <= STRICT_SCRATCH, "at least some state shapes fit");
     assert!(streamed_gap_to_google > 0, "no fully charged <=600-scratch row should be counted as solved yet");
@@ -256,5 +262,11 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && halfgcd_tail_raw_rank_degree_n14 == 0
             && halfgcd_tail_raw_rank_density_n14 == 0,
         "half-GCD raw-tail parser toy result changed; update frontier blocker"
+    );
+    assert!(
+        halfgcd_tail_raw_compressed_rank_max_mult_n14 == 1
+            && halfgcd_tail_raw_compressed_rank_degree_n14 == 0
+            && halfgcd_tail_raw_compressed_rank_density_n14 == 0,
+        "half-GCD compressed raw-tail parser toy result changed; update frontier blocker"
     );
 }
