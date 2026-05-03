@@ -15093,6 +15093,105 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_restoring_final_reverse_coeff_decode_needs_branch_bit() {
+        // The injective reverse image is actionable only if the quotient has a
+        // simple decoder.  The new coefficient pair narrows q_abs to two
+        // adjacent candidates: `(abs(nd)-1)/abs(nb)` or `ceil(abs(nd)/abs(nb))`,
+        // with the sign read from the coefficient signs.  Exact traces use both
+        // candidates, and the high-candidate selector is already a dense toy
+        // phase function, so the coefficient route has its own cleanup problem.
+        let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
+        for &(n, p) in &cases {
+            let (
+                transitions,
+                endpoints,
+                low_branch,
+                high_branch,
+                exact,
+                max_q_bits,
+                max_coeff_abs_bits,
+            ) = direct_centered_restoring_final_reverse_coeff_candidate_stats(p);
+            let (degree, density, max_high_count, total_high_count) =
+                direct_centered_restoring_final_reverse_coeff_high_branch_anf_stats(n, p);
+            let table = 1usize << n;
+            eprintln!(
+                "direct-centered restoring-final reverse coefficient candidates: n={n}, transitions={transitions}, endpoints={endpoints}, low={low_branch}, high={high_branch}, exact={exact}, high_branch_degree={degree}, high_branch_density={density}/{table}, max_high_count={max_high_count}, total_high_count={total_high_count}, max_q_bits={max_q_bits}, max_coeff_abs_bits={max_coeff_abs_bits}"
+            );
+            if n == 14 {
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_transitions_n14={transitions}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_endpoints_n14={endpoints}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_low_n14={low_branch}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_high_n14={high_branch}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_exact_n14={exact}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_high_branch_degree_n14={degree}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_high_branch_density_n14={density}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_high_branch_max_count_n14={max_high_count}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_high_branch_total_n14={total_high_count}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_max_q_bits_n14={max_q_bits}");
+                println!("METRIC centered_direct_restoring_final_reverse_coeff_candidates_max_coeff_abs_bits_n14={max_coeff_abs_bits}");
+            }
+            assert_eq!(endpoints, (p - 1) as usize, "expected one endpoint reverse step per denominator");
+            assert_eq!(exact, endpoints, "unexpected exact body coefficient candidates appeared");
+            assert_eq!(
+                transitions,
+                exact + low_branch + high_branch,
+                "reverse coefficient candidate accounting drifted"
+            );
+            assert!(low_branch > 0 && high_branch > 0, "coefficient decode stopped needing a branch");
+            assert!(degree + 1 >= n, "coefficient high-branch selector unexpectedly low degree");
+            assert!(density > table / 4, "coefficient high-branch selector unexpectedly sparse");
+        }
+    }
+
+    #[test]
+    fn direct_centered_restoring_final_coeff_decoder_cost_kills_margin() {
+        // The coefficient formula avoids a stored digit payload, but a coherent
+        // decoder still has to synthesize each quotient.  Charge a generous
+        // restoring-final non-restoring decoder for q from the coefficient
+        // pair.  Even without a final-fix add, it consumes more than the
+        // remaining direct-restoring-final low-qubit margin.
+        const PREVIOUS_SELECT3X_POINTADD_P99: usize = 2_638_012;
+        const GOOGLE_LOW_QUBIT_TOFFOLI: usize = 2_700_000;
+
+        let samples = 4096usize;
+        let mut rows = direct_centered_restoring_final_coeff_decoder_costs_for_test(
+            samples,
+            0xd1ce_c0ef_dec0_de02u64,
+        );
+        rows.sort_unstable_by_key(|row| row.0);
+        let p99 = samples * 99 / 100;
+        let (decoder_exact_p99, decoder_digit_p99, decoder_scan_p99, decoder_steps_p99, decoder_digits_p99) =
+            rows[p99];
+        let one_way_margin =
+            (GOOGLE_LOW_QUBIT_TOFFOLI - PREVIOUS_SELECT3X_POINTADD_P99) / 4;
+        let augmented_pointadd_p99 = PREVIOUS_SELECT3X_POINTADD_P99 + 4 * decoder_exact_p99;
+        let augmented_gap =
+            augmented_pointadd_p99 as isize - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
+        let decoder_margin =
+            one_way_margin as isize - decoder_exact_p99 as isize;
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_exact_p99={decoder_exact_p99}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_digit_width_p99={decoder_digit_p99}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_scan_p99={decoder_scan_p99}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_steps_p99={decoder_steps_p99}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_digits_p99={decoder_digits_p99}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_oneway_margin={one_way_margin}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_margin={decoder_margin}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_augmented_pointadd_p99={augmented_pointadd_p99}");
+        println!("METRIC centered_direct_restoring_final_coeff_decoder_augmented_gap_to_2700k={augmented_gap}");
+        eprintln!(
+            "direct-centered restoring-final coeff decoder cost: exact_p99={decoder_exact_p99}, digit_p99={decoder_digit_p99}, scan_p99={decoder_scan_p99}, one_way_margin={one_way_margin}, augmented_pointadd={augmented_pointadd_p99}, augmented_gap={augmented_gap}"
+        );
+        assert!(
+            decoder_exact_p99 > one_way_margin,
+            "coefficient decoder now fits the restoring-final margin; promote no-payload cleanup"
+        );
+        assert!(
+            augmented_gap > 0,
+            "charged coefficient decoder no longer kills the restoring-final no-payload route"
+        );
+    }
+
+    #[test]
     fn direct_centered_signnorm_normalization_sign_mbu_is_dense_too() {
         // The sign-normalized direct-centered route keeps quotient signs on the
         // phase-clean q_neg=false path by recording when the centered remainder
@@ -15627,6 +15726,233 @@ mod tests {
         let collisions = image.values().filter(|qs| qs.len() > 1).count();
         let max_mult = image.values().map(|qs| qs.len()).max().unwrap_or(0);
         (collisions, total_steps, image.len(), max_mult)
+    }
+
+    fn direct_centered_restoring_final_reverse_coeff_candidate_stats(
+        p: u16,
+    ) -> (usize, usize, usize, usize, usize, usize, usize) {
+        let mut transitions = 0usize;
+        let mut endpoint_steps = 0usize;
+        let mut low_branch = 0usize;
+        let mut high_branch = 0usize;
+        let mut exact_candidates = 0usize;
+        let mut max_q_bits = 0usize;
+        let mut max_coeff_abs_bits = 0usize;
+        for x in 1..p {
+            let mut u = p as i128;
+            let mut v = x as i128;
+            let mut coeff_u = 0i128;
+            let mut coeff_v = 1i128;
+            while v != 0 {
+                let abs_u = u.unsigned_abs();
+                let abs_v = v.unsigned_abs();
+                let adjusted = abs_u + (abs_v >> 1);
+                let q_abs = (adjusted / abs_v) as i128;
+                let q_signed = if (u < 0) ^ (v < 0) { -q_abs } else { q_abs };
+                let next_v = u - q_signed * v;
+                let next_coeff_v = coeff_u - q_signed * coeff_v;
+                let nb_abs = coeff_v.unsigned_abs();
+                let nd_abs = next_coeff_v.unsigned_abs();
+                let (low_q_abs, high_q_abs) = if coeff_u == 0 {
+                    endpoint_steps += 1;
+                    let q = nd_abs / nb_abs;
+                    (q, q)
+                } else {
+                    ((nd_abs - 1) / nb_abs, (nd_abs + nb_abs - 1) / nb_abs)
+                };
+                if low_q_abs == high_q_abs {
+                    exact_candidates += 1;
+                } else if q_abs as u128 == low_q_abs {
+                    low_branch += 1;
+                } else {
+                    assert_eq!(
+                        q_abs as u128, high_q_abs,
+                        "restoring-final coefficient quotient escaped adjacent candidates"
+                    );
+                    high_branch += 1;
+                }
+                let decoded_q_neg = !((next_coeff_v < 0) ^ (coeff_v < 0));
+                let decoded_low_q = if decoded_q_neg {
+                    -(low_q_abs as i128)
+                } else {
+                    low_q_abs as i128
+                };
+                let decoded_high_q = if decoded_q_neg {
+                    -(high_q_abs as i128)
+                } else {
+                    high_q_abs as i128
+                };
+                assert!(
+                    decoded_low_q == q_signed || decoded_high_q == q_signed,
+                    "restoring-final coefficient quotient escaped signed candidates"
+                );
+                max_q_bits =
+                    max_q_bits.max(usize_bit_len_for_payload_test(q_abs.unsigned_abs() as usize));
+                max_coeff_abs_bits = max_coeff_abs_bits.max(usize_bit_len_for_payload_test(
+                    nb_abs.max(nd_abs) as usize,
+                ));
+                u = v;
+                v = next_v;
+                coeff_u = coeff_v;
+                coeff_v = next_coeff_v;
+                transitions += 1;
+            }
+        }
+        (
+            transitions,
+            endpoint_steps,
+            low_branch,
+            high_branch,
+            exact_candidates,
+            max_q_bits,
+            max_coeff_abs_bits,
+        )
+    }
+
+    fn direct_centered_restoring_final_reverse_coeff_high_branch_anf_stats(
+        n: usize,
+        p: u16,
+    ) -> (usize, usize, usize, usize) {
+        let size = 1usize << n;
+        let mut anf = vec![0u8; size];
+        let mut max_high_count = 0usize;
+        let mut total_high_count = 0usize;
+        for x in 1..p {
+            let mut u = p as i128;
+            let mut v = x as i128;
+            let mut coeff_u = 0i128;
+            let mut coeff_v = 1i128;
+            let mut parity = 0u8;
+            let mut high_count = 0usize;
+            while v != 0 {
+                let abs_u = u.unsigned_abs();
+                let abs_v = v.unsigned_abs();
+                let adjusted = abs_u + (abs_v >> 1);
+                let q_abs = adjusted / abs_v;
+                let q_signed = if (u < 0) ^ (v < 0) {
+                    -(q_abs as i128)
+                } else {
+                    q_abs as i128
+                };
+                let next_v = u - q_signed * v;
+                let next_coeff_v = coeff_u - q_signed * coeff_v;
+                if coeff_u != 0 {
+                    let nb_abs = coeff_v.unsigned_abs();
+                    let nd_abs = next_coeff_v.unsigned_abs();
+                    let low_q_abs = (nd_abs - 1) / nb_abs;
+                    let high_q_abs = (nd_abs + nb_abs - 1) / nb_abs;
+                    if low_q_abs != high_q_abs {
+                        let high = q_abs == high_q_abs;
+                        parity ^= high as u8;
+                        high_count += high as usize;
+                    }
+                }
+                u = v;
+                v = next_v;
+                coeff_u = coeff_v;
+                coeff_v = next_coeff_v;
+            }
+            max_high_count = max_high_count.max(high_count);
+            total_high_count += high_count;
+            anf[x as usize] = parity;
+        }
+        for bit in 0..n {
+            for idx in 0..size {
+                if (idx & (1usize << bit)) != 0 {
+                    anf[idx] ^= anf[idx ^ (1usize << bit)];
+                }
+            }
+        }
+        let density = anf.iter().filter(|&&c| c != 0).count();
+        let degree = anf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &c)| if c != 0 { Some(i.count_ones() as usize) } else { None })
+            .max()
+            .unwrap_or(0);
+        (degree, density, max_high_count, total_high_count)
+    }
+
+    fn direct_centered_restoring_final_coeff_decoder_costs_for_test(
+        samples: usize,
+        mut rng: u64,
+    ) -> Vec<(usize, usize, usize, usize, usize)> {
+        let p = SECP256K1_P;
+        let exact_barrel_bits = 8usize;
+        let mut rows = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() {
+                x = U256::from(1u64);
+            }
+            let mut u = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(p));
+            let mut v = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(x));
+            let mut coeff_u = smag_for_halfgcd_test(false, U512::ZERO);
+            let mut coeff_v = smag_for_halfgcd_test(false, U512::from(1u64));
+            let mut digit_width = 0usize;
+            let mut width_sum = 0usize;
+            let mut steps = 0usize;
+            let mut digits_total = 0usize;
+            while !v.mag.is_zero() {
+                let adjusted = u.mag + (v.mag >> 1usize);
+                let q_direct = adjusted / v.mag;
+                let q_neg = u.neg ^ v.neg;
+                let qv = signed_mul_mag_for_halfgcd_test(v, q_neg, q_direct);
+                let next_v = signed_add_for_halfgcd_test(u, signed_neg_for_halfgcd_test(qv));
+                let qv_coeff = signed_mul_mag_for_halfgcd_test(coeff_v, q_neg, q_direct);
+                let next_coeff_v = signed_add_for_halfgcd_test(
+                    coeff_u,
+                    signed_neg_for_halfgcd_test(qv_coeff),
+                );
+                let denom = coeff_v.mag;
+                assert!(!denom.is_zero(), "restoring-final coefficient denominator vanished");
+                let low_numer = if coeff_u.mag.is_zero() {
+                    next_coeff_v.mag
+                } else {
+                    assert!(
+                        !next_coeff_v.mag.is_zero(),
+                        "restoring-final adjusted coefficient numerator underflow"
+                    );
+                    next_coeff_v.mag - U512::from(1u64)
+                };
+                let high_numer = if coeff_u.mag.is_zero() {
+                    low_numer
+                } else {
+                    next_coeff_v.mag + denom - U512::from(1u64)
+                };
+                let low_q = low_numer / denom;
+                let high_q = high_numer / denom;
+                let numer = if q_direct == low_q {
+                    low_numer
+                } else {
+                    assert_eq!(
+                        q_direct, high_q,
+                        "restoring-final coefficient reverse quotient candidates missed"
+                    );
+                    high_numer
+                };
+                let decoded_q_neg = !(next_coeff_v.neg ^ coeff_v.neg);
+                assert_eq!(decoded_q_neg, q_neg, "restoring-final coefficient reverse sign mismatch");
+                let signed_digits =
+                    nonrestoring_floor_restoring_final_digits_for_centered_test(numer, denom);
+                let width = u512_bit_len_for_halfgcd_test(numer)
+                    .max(u512_bit_len_for_halfgcd_test(denom))
+                    .max(1);
+                digit_width += signed_digits.len() * width.saturating_sub(1);
+                width_sum += width;
+                steps += 1;
+                digits_total += signed_digits.len();
+
+                u = v;
+                v = next_v;
+                coeff_u = coeff_v;
+                coeff_v = next_coeff_v;
+            }
+            let scan_width = width_sum * (exact_barrel_bits + 1);
+            let exact = digit_width + scan_width;
+            rows.push((exact, digit_width, scan_width, steps, digits_total));
+        }
+        rows
     }
 
     fn euclid_quotient_payload_parity_anf_stats(n: usize, p: u16) -> (usize, usize) {

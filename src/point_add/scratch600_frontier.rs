@@ -115,7 +115,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_raw_digits",
             scratch_bits: 618,
             charged_toffoli: None,
-            blocker: "restoring-final model is under 2.7M and phase-clean in toy; fast semantic inverse cleans toy at 632 CCX, generic payload MBU is dense, exact reverse q recovery is collision-free in toy, charged decoder unwired",
+            blocker: "restoring-final model is under 2.7M and phase-clean in toy; reverse q is collision-free, but coefficient decode needs a dense branch bit and oracle-assisted decoder projects 3380788 Toffoli",
         },
         Candidate {
             name: "direct_centered_signnorm_rank_compressed_signs",
@@ -244,6 +244,26 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_reverse_q_states_n14 = 89_008usize;
     let direct_restoring_final_reverse_q_total_steps_n14 = 89_008usize;
     let direct_restoring_final_reverse_q_max_mult_n14 = 1usize;
+    let direct_restoring_final_reverse_coeff_candidates_transitions_n14 = 105_388usize;
+    let direct_restoring_final_reverse_coeff_candidates_endpoints_n14 = 16_380usize;
+    let direct_restoring_final_reverse_coeff_candidates_low_n14 = 48_896usize;
+    let direct_restoring_final_reverse_coeff_candidates_high_n14 = 40_112usize;
+    let direct_restoring_final_reverse_coeff_candidates_exact_n14 = 16_380usize;
+    let direct_restoring_final_reverse_coeff_high_branch_degree_n14 = 13usize;
+    let direct_restoring_final_reverse_coeff_high_branch_density_n14 = 8_208usize;
+    let direct_restoring_final_reverse_coeff_high_branch_max_count_n14 = 8usize;
+    let direct_restoring_final_reverse_coeff_high_branch_total_n14 = 40_112usize;
+    let direct_restoring_final_reverse_coeff_candidates_max_q_bits_n14 = 14usize;
+    let direct_restoring_final_reverse_coeff_candidates_max_coeff_abs_bits_n14 = 14usize;
+    let direct_restoring_final_coeff_decoder_exact_p99 = 185_694usize;
+    let direct_restoring_final_coeff_decoder_digit_width_p99 = 46_950usize;
+    let direct_restoring_final_coeff_decoder_scan_p99 = 138_744usize;
+    let direct_restoring_final_coeff_decoder_steps_p99 = 119usize;
+    let direct_restoring_final_coeff_decoder_digits_p99 = 358usize;
+    let direct_restoring_final_coeff_decoder_oneway_margin = 15_497usize;
+    let direct_restoring_final_coeff_decoder_margin = -170_197isize;
+    let direct_restoring_final_coeff_decoder_augmented_pointadd_p99 = 3_380_788usize;
+    let direct_restoring_final_coeff_decoder_augmented_gap = 680_788isize;
     let plusminus_raw_scratch = 564usize;
     let plusminus_unary_scratch_p99 = 640usize;
     let plusminus_parser_over_strict = plusminus_unary_scratch_p99 - STRICT_SCRATCH;
@@ -419,6 +439,26 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_reverse_q_states_n14={direct_restoring_final_reverse_q_states_n14}");
     println!("METRIC scratch600_direct_restoring_final_reverse_q_total_steps_n14={direct_restoring_final_reverse_q_total_steps_n14}");
     println!("METRIC scratch600_direct_restoring_final_reverse_q_max_mult_n14={direct_restoring_final_reverse_q_max_mult_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_transitions_n14={direct_restoring_final_reverse_coeff_candidates_transitions_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_endpoints_n14={direct_restoring_final_reverse_coeff_candidates_endpoints_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_low_n14={direct_restoring_final_reverse_coeff_candidates_low_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_high_n14={direct_restoring_final_reverse_coeff_candidates_high_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_exact_n14={direct_restoring_final_reverse_coeff_candidates_exact_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_high_branch_degree_n14={direct_restoring_final_reverse_coeff_high_branch_degree_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_high_branch_density_n14={direct_restoring_final_reverse_coeff_high_branch_density_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_high_branch_max_count_n14={direct_restoring_final_reverse_coeff_high_branch_max_count_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_high_branch_total_n14={direct_restoring_final_reverse_coeff_high_branch_total_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_max_q_bits_n14={direct_restoring_final_reverse_coeff_candidates_max_q_bits_n14}");
+    println!("METRIC scratch600_direct_restoring_final_reverse_coeff_candidates_max_coeff_abs_bits_n14={direct_restoring_final_reverse_coeff_candidates_max_coeff_abs_bits_n14}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_exact_p99={direct_restoring_final_coeff_decoder_exact_p99}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_digit_width_p99={direct_restoring_final_coeff_decoder_digit_width_p99}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_scan_p99={direct_restoring_final_coeff_decoder_scan_p99}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_steps_p99={direct_restoring_final_coeff_decoder_steps_p99}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_digits_p99={direct_restoring_final_coeff_decoder_digits_p99}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_oneway_margin={direct_restoring_final_coeff_decoder_oneway_margin}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_margin={direct_restoring_final_coeff_decoder_margin}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_augmented_pointadd_p99={direct_restoring_final_coeff_decoder_augmented_pointadd_p99}");
+    println!("METRIC scratch600_direct_restoring_final_coeff_decoder_augmented_gap_to_2700k={direct_restoring_final_coeff_decoder_augmented_gap}");
     println!("METRIC scratch600_plusminus_raw_scratch_bits={plusminus_raw_scratch}");
     println!("METRIC scratch600_plusminus_unary_scratch_p99={plusminus_unary_scratch_p99}");
     println!("METRIC scratch600_plusminus_parser_over_strict_bits={plusminus_parser_over_strict}");
@@ -567,6 +607,35 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
                 == direct_restoring_final_reverse_q_total_steps_n14
             && direct_restoring_final_reverse_q_max_mult_n14 == 1,
         "restoring-final reverse q recovery changed; revisit no-payload decoder route"
+    );
+    assert!(
+        direct_restoring_final_reverse_coeff_candidates_transitions_n14
+            == direct_restoring_final_reverse_coeff_candidates_exact_n14
+                + direct_restoring_final_reverse_coeff_candidates_low_n14
+                + direct_restoring_final_reverse_coeff_candidates_high_n14
+            && direct_restoring_final_reverse_coeff_candidates_endpoints_n14
+                == direct_restoring_final_reverse_coeff_candidates_exact_n14
+            && direct_restoring_final_reverse_coeff_candidates_low_n14 > 0
+            && direct_restoring_final_reverse_coeff_candidates_high_n14 > 0,
+        "restoring-final coefficient candidate accounting changed; revisit branch selector"
+    );
+    assert!(
+        direct_restoring_final_reverse_coeff_high_branch_degree_n14 + 1 >= 14
+            && direct_restoring_final_reverse_coeff_high_branch_density_n14
+                > (1usize << 14) / 4
+            && direct_restoring_final_reverse_coeff_high_branch_max_count_n14 > 0
+            && direct_restoring_final_reverse_coeff_high_branch_total_n14
+                == direct_restoring_final_reverse_coeff_candidates_high_n14,
+        "restoring-final coefficient high-branch selector stopped looking dense"
+    );
+    assert!(
+        direct_restoring_final_coeff_decoder_exact_p99
+            > direct_restoring_final_coeff_decoder_oneway_margin
+            && direct_restoring_final_coeff_decoder_margin < 0
+            && direct_restoring_final_coeff_decoder_augmented_pointadd_p99
+                > GOOGLE_LOW_QUBIT_TOFFOLI
+            && direct_restoring_final_coeff_decoder_augmented_gap > 0,
+        "restoring-final coefficient decoder now fits; promote no-payload cleanup"
     );
     assert!(halfgcd_tail_over_google > 0, "half-GCD checkpoint must be fused before it fits");
     assert!(
