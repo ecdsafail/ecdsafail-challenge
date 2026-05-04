@@ -145,7 +145,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_signnorm_logical_coeff_signs",
             scratch_bits: 657,
             charged_toffoli: None,
-            blocker: "exact-rem logical-sign accounting clears the average harness metric before cleanup at 2575314 mean / 2574268 first64, but the det-low2 xor coeff_v_sign cleanup only applies to physically sign-normalized coefficient rows. In the actual logical-sign frame the determinant is not +/-p for 42656/89008 n14 toy steps and the predicate has 39897 formula mismatches; even low 8 determinant residue plus both live logical coefficient signs leaves 1358 exact n14 collisions, so the paired-cneg/no-history proof is not wireable without either paying the physical coefficient cneg or finding a non-local logical-sign recovery invariant",
+            blocker: "exact-rem logical-sign accounting clears the average harness metric before cleanup at 2575314 mean / 2574268 first64, but the det-low2 xor coeff_v_sign cleanup only applies to physically sign-normalized coefficient rows. In the actual logical-sign frame the determinant is not +/-p for 42656/89008 n14 toy steps and the predicate has 39897 formula mismatches; low determinant residue saturates slowly (low8 leaves 1358 exact n14 collisions and low14 still leaves 1161), so the paired-cneg/no-history proof is not wireable without either paying the physical coefficient cneg or finding a non-local logical-sign recovery invariant",
         },
         Candidate {
             name: "direct_centered_restoring_final_stored_alignment",
@@ -533,6 +533,15 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_signnorm_logsign_det_low8_coeffsign_collisions_n14 = 1_358usize;
     let direct_signnorm_logsign_det_low8_coeffsign_states_n14 = 80_644usize;
     let direct_signnorm_logsign_det_low8_coeffsign_max_mult_n14 = 2usize;
+    let direct_signnorm_logsign_det_low10_coeffsign_collisions_n14 = 1_211usize;
+    let direct_signnorm_logsign_det_low10_coeffsign_states_n14 = 81_233usize;
+    let direct_signnorm_logsign_det_low10_coeffsign_max_mult_n14 = 2usize;
+    let direct_signnorm_logsign_det_low12_coeffsign_collisions_n14 = 1_171usize;
+    let direct_signnorm_logsign_det_low12_coeffsign_states_n14 = 81_344usize;
+    let direct_signnorm_logsign_det_low12_coeffsign_max_mult_n14 = 2usize;
+    let direct_signnorm_logsign_det_low14_coeffsign_collisions_n14 = 1_161usize;
+    let direct_signnorm_logsign_det_low14_coeffsign_states_n14 = 81_354usize;
+    let direct_signnorm_logsign_det_low14_coeffsign_max_mult_n14 = 2usize;
     let direct_signnorm_det_coeffsign_predicate_p1_ccx = 14usize;
     let direct_signnorm_det_coeffsign_predicate_p1_peak_q = 18usize;
     let direct_signnorm_det_coeffsign_predicate_p1_valid_odd_det_cases = 3_072usize;
@@ -2208,6 +2217,15 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_signnorm_logsign_det_low8_coeffsign_collisions_n14={direct_signnorm_logsign_det_low8_coeffsign_collisions_n14}");
     println!("METRIC scratch600_direct_signnorm_logsign_det_low8_coeffsign_states_n14={direct_signnorm_logsign_det_low8_coeffsign_states_n14}");
     println!("METRIC scratch600_direct_signnorm_logsign_det_low8_coeffsign_max_mult_n14={direct_signnorm_logsign_det_low8_coeffsign_max_mult_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low10_coeffsign_collisions_n14={direct_signnorm_logsign_det_low10_coeffsign_collisions_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low10_coeffsign_states_n14={direct_signnorm_logsign_det_low10_coeffsign_states_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low10_coeffsign_max_mult_n14={direct_signnorm_logsign_det_low10_coeffsign_max_mult_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low12_coeffsign_collisions_n14={direct_signnorm_logsign_det_low12_coeffsign_collisions_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low12_coeffsign_states_n14={direct_signnorm_logsign_det_low12_coeffsign_states_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low12_coeffsign_max_mult_n14={direct_signnorm_logsign_det_low12_coeffsign_max_mult_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low14_coeffsign_collisions_n14={direct_signnorm_logsign_det_low14_coeffsign_collisions_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low14_coeffsign_states_n14={direct_signnorm_logsign_det_low14_coeffsign_states_n14}");
+    println!("METRIC scratch600_direct_signnorm_logsign_det_low14_coeffsign_max_mult_n14={direct_signnorm_logsign_det_low14_coeffsign_max_mult_n14}");
     println!("METRIC scratch600_direct_signnorm_det_coeffsign_predicate_p1_ccx={direct_signnorm_det_coeffsign_predicate_p1_ccx}");
     println!("METRIC scratch600_direct_signnorm_det_coeffsign_predicate_p1_peak_q={direct_signnorm_det_coeffsign_predicate_p1_peak_q}");
     println!("METRIC scratch600_direct_signnorm_det_coeffsign_predicate_p1_valid_odd_det_cases={direct_signnorm_det_coeffsign_predicate_p1_valid_odd_det_cases}");
@@ -3572,7 +3590,16 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_signnorm_logsign_det_low6_coeffsign_max_mult_n14 == 2
             && direct_signnorm_logsign_det_low8_coeffsign_collisions_n14 > 1_300
             && direct_signnorm_logsign_det_low8_coeffsign_states_n14 > 80_000
-            && direct_signnorm_logsign_det_low8_coeffsign_max_mult_n14 == 2,
+            && direct_signnorm_logsign_det_low8_coeffsign_max_mult_n14 == 2
+            && direct_signnorm_logsign_det_low10_coeffsign_collisions_n14 > 1_200
+            && direct_signnorm_logsign_det_low10_coeffsign_states_n14 > 81_000
+            && direct_signnorm_logsign_det_low10_coeffsign_max_mult_n14 == 2
+            && direct_signnorm_logsign_det_low12_coeffsign_collisions_n14 > 1_100
+            && direct_signnorm_logsign_det_low12_coeffsign_states_n14 > 81_000
+            && direct_signnorm_logsign_det_low12_coeffsign_max_mult_n14 == 2
+            && direct_signnorm_logsign_det_low14_coeffsign_collisions_n14 > 1_100
+            && direct_signnorm_logsign_det_low14_coeffsign_states_n14 > 81_000
+            && direct_signnorm_logsign_det_low14_coeffsign_max_mult_n14 == 2,
         "low determinant residues plus logical coefficient signs now recover cleanup"
     );
     assert!(

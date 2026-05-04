@@ -33369,15 +33369,17 @@ mod tests {
         // The logical-sign route is only metric-shaped if reverse cleanup can
         // recover the hidden normalization sign without paying physical cnegs.
         // Give the cleanup more than the det-low2 predicate: low determinant
-        // residues up to 8 bits, both live logical coefficient signs, and the
+        // residues up to 14 bits, both live logical coefficient signs, and the
         // reverse-visible step/remainder/quotient magnitudes.  Remaining exact
         // toy collisions mean this is not a small local residue invariant.
         use std::collections::BTreeMap;
 
         let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
-        let residue_bits = [2usize, 4, 6, 8];
+        let residue_bits = [2usize, 4, 6, 8, 10, 12, 14];
         let mut largest_k8_collisions = 0usize;
         let mut largest_k8_states = 0usize;
+        let mut largest_k14_collisions = 0usize;
+        let mut largest_k14_states = 0usize;
         for &(n, p) in &cases {
             for &k in &residue_bits {
                 let modulus = 1i128 << k;
@@ -33452,14 +33454,19 @@ mod tests {
                 if k == 8 {
                     largest_k8_collisions = largest_k8_collisions.max(collisions);
                     largest_k8_states = largest_k8_states.max(image.len());
+                } else if k == 14 {
+                    largest_k14_collisions = largest_k14_collisions.max(collisions);
+                    largest_k14_states = largest_k14_states.max(image.len());
                 }
             }
         }
         println!("METRIC centered_direct_logsign_det_low8_coeffsign_largest_collisions={largest_k8_collisions}");
         println!("METRIC centered_direct_logsign_det_low8_coeffsign_largest_states={largest_k8_states}");
+        println!("METRIC centered_direct_logsign_det_low14_coeffsign_largest_collisions={largest_k14_collisions}");
+        println!("METRIC centered_direct_logsign_det_low14_coeffsign_largest_states={largest_k14_states}");
         assert!(
-            largest_k8_collisions > 0,
-            "low 8 determinant bits plus both logical coefficient signs recover the normalization sign; price the cleanup predicate"
+            largest_k14_collisions > 0,
+            "low 14 determinant bits plus both logical coefficient signs recover the normalization sign; price the cleanup predicate"
         );
     }
 
