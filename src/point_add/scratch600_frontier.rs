@@ -137,9 +137,9 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         },
         Candidate {
             name: "direct_centered_restoring_final_stored_alignment",
-            scratch_bits: 663,
-            charged_toffoli: Some(2_710_904),
-            blocker: "restoring-final select1 has phase-clean toy cleanup; fixed 8-symbol range blocks lower-bound to 2656532 average at 663 scratch p99, and conditioning branch bits on alignment only reaches 660 scratch; a 2x binary compare/subtract parser floor still pushes 10832 over with 52 non-contiguous alignment-support steps before rank mapping, renormalization, or cleanup",
+            scratch_bits: 662,
+            charged_toffoli: Some(2_709_483),
+            blocker: "restoring-final select1 has phase-clean toy cleanup; 7-symbol branch-conditioned blocks fit 662 scratch and lower-bound to 2655117 average, but a 2x binary compare/subtract parser floor still pushes 9483 over with 52 non-contiguous alignment-support steps before rank mapping, renormalization, or cleanup",
         },
         Candidate {
             name: "direct_centered_restoring_final_block4_parser",
@@ -472,12 +472,24 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_block4_live_scratch_p99 = 675usize;
     let direct_restoring_final_block4_symbol_count_p99 = 235usize;
     let direct_restoring_final_block4_augmented_gap = -48_896.464f64;
+    let direct_restoring_final_block5_touch_floor_mean = 1_797.940f64;
+    let direct_restoring_final_block5_touch_floor_p99 = 1_936usize;
+    let direct_restoring_final_block5_compressed_bits_p99 = 388usize;
+    let direct_restoring_final_block5_live_scratch_p99 = 670usize;
+    let direct_restoring_final_block5_symbol_count_p99 = 235usize;
+    let direct_restoring_final_block5_augmented_gap = -47_538.241f64;
     let direct_restoring_final_block6_touch_floor_mean = 2_131.752f64;
     let direct_restoring_final_block6_touch_floor_p99 = 2_293usize;
     let direct_restoring_final_block6_compressed_bits_p99 = 384usize;
     let direct_restoring_final_block6_live_scratch_p99 = 666usize;
     let direct_restoring_final_block6_symbol_count_p99 = 235usize;
     let direct_restoring_final_block6_augmented_gap = -46_202.990f64;
+    let direct_restoring_final_block7_touch_floor_mean = 2_477.987f64;
+    let direct_restoring_final_block7_touch_floor_p99 = 2_664usize;
+    let direct_restoring_final_block7_compressed_bits_p99 = 382usize;
+    let direct_restoring_final_block7_live_scratch_p99 = 664usize;
+    let direct_restoring_final_block7_symbol_count_p99 = 235usize;
+    let direct_restoring_final_block7_augmented_gap = -44_818.050f64;
     let direct_restoring_final_block_parser_best_qrom_row_floor = 115_056usize;
     let direct_restoring_final_block_parser_best_qrom_max_rows_in_block = 4_934usize;
     let direct_restoring_final_block_parser_best_qrom_block_count_p99 = 30usize;
@@ -498,22 +510,28 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_block4_with_binary_lookup_2x_mean = 15_051.217f64;
     let direct_restoring_final_block4_with_binary_lookup_2x_gap = 5_474.868f64;
     let direct_restoring_final_block4_lookup_multiplier_budget = 1.798_612f64;
-    let direct_restoring_final_block_parser_cond_branch_best_block_symbols = 8usize;
-    let direct_restoring_final_block_parser_cond_branch_touch_floor_mean = 2_798.902f64;
-    let direct_restoring_final_block_parser_cond_branch_touch_floor_p99 = 3_010usize;
-    let direct_restoring_final_block_parser_cond_branch_compressed_bits_p99 = 378usize;
-    let direct_restoring_final_block_parser_cond_branch_live_scratch_p99 = 660usize;
-    let direct_restoring_final_block_parser_cond_branch_augmented_gap = -43_534.394f64;
+    let direct_restoring_final_block5_with_binary_lookup_2x_mean = 15_390.773f64;
+    let direct_restoring_final_block5_with_binary_lookup_2x_gap = 6_833.091f64;
+    let direct_restoring_final_block5_lookup_multiplier_budget = 1.748_651f64;
+    let direct_restoring_final_block7_with_binary_lookup_2x_mean = 16_070.820f64;
+    let direct_restoring_final_block7_with_binary_lookup_2x_gap = 9_553.282f64;
+    let direct_restoring_final_block7_lookup_multiplier_budget = 1.648_591f64;
+    let direct_restoring_final_block_parser_cond_branch_best_block_symbols = 7usize;
+    let direct_restoring_final_block_parser_cond_branch_touch_floor_mean = 2_461.660f64;
+    let direct_restoring_final_block_parser_cond_branch_touch_floor_p99 = 2_647usize;
+    let direct_restoring_final_block_parser_cond_branch_compressed_bits_p99 = 380usize;
+    let direct_restoring_final_block_parser_cond_branch_live_scratch_p99 = 662usize;
+    let direct_restoring_final_block_parser_cond_branch_augmented_gap = -44_883.358f64;
     let direct_restoring_final_block_parser_cond_branch_binary_lookup_floor_mean = 6_795.760f64;
     let direct_restoring_final_block_parser_cond_branch_binary_lookup_floor_p99 = 7_605usize;
     let direct_restoring_final_block_parser_cond_branch_best_with_binary_lookup_mean =
-        9_594.661f64;
+        9_257.420f64;
     let direct_restoring_final_block_parser_cond_branch_best_with_binary_lookup_gap =
-        -16_351.355f64;
+        -17_700.320f64;
     let direct_restoring_final_block_parser_cond_branch_best_with_binary_lookup_2x_mean =
-        16_390.421f64;
+        16_053.179f64;
     let direct_restoring_final_block_parser_cond_branch_best_with_binary_lookup_2x_gap =
-        10_831.683f64;
+        9_482.718f64;
     let direct_restoring_final_block_parser_align_support_noncontig_steps = 52usize;
     let direct_restoring_final_block_parser_align_support_offset_steps = 127usize;
     let direct_restoring_final_block_parser_align_support_max_span = 20usize;
@@ -1073,12 +1091,24 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_block4_live_scratch_p99={direct_restoring_final_block4_live_scratch_p99}");
     println!("METRIC scratch600_direct_restoring_final_block4_symbol_count_p99={direct_restoring_final_block4_symbol_count_p99}");
     println!("METRIC scratch600_direct_restoring_final_block4_augmented_gap_to_2700k={direct_restoring_final_block4_augmented_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block5_touch_floor_mean={direct_restoring_final_block5_touch_floor_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block5_touch_floor_p99={direct_restoring_final_block5_touch_floor_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block5_compressed_bits_p99={direct_restoring_final_block5_compressed_bits_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block5_live_scratch_p99={direct_restoring_final_block5_live_scratch_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block5_symbol_count_p99={direct_restoring_final_block5_symbol_count_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block5_augmented_gap_to_2700k={direct_restoring_final_block5_augmented_gap:.3}");
     println!("METRIC scratch600_direct_restoring_final_block6_touch_floor_mean={direct_restoring_final_block6_touch_floor_mean:.3}");
     println!("METRIC scratch600_direct_restoring_final_block6_touch_floor_p99={direct_restoring_final_block6_touch_floor_p99}");
     println!("METRIC scratch600_direct_restoring_final_block6_compressed_bits_p99={direct_restoring_final_block6_compressed_bits_p99}");
     println!("METRIC scratch600_direct_restoring_final_block6_live_scratch_p99={direct_restoring_final_block6_live_scratch_p99}");
     println!("METRIC scratch600_direct_restoring_final_block6_symbol_count_p99={direct_restoring_final_block6_symbol_count_p99}");
     println!("METRIC scratch600_direct_restoring_final_block6_augmented_gap_to_2700k={direct_restoring_final_block6_augmented_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block7_touch_floor_mean={direct_restoring_final_block7_touch_floor_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block7_touch_floor_p99={direct_restoring_final_block7_touch_floor_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block7_compressed_bits_p99={direct_restoring_final_block7_compressed_bits_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block7_live_scratch_p99={direct_restoring_final_block7_live_scratch_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block7_symbol_count_p99={direct_restoring_final_block7_symbol_count_p99}");
+    println!("METRIC scratch600_direct_restoring_final_block7_augmented_gap_to_2700k={direct_restoring_final_block7_augmented_gap:.3}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_best_qrom_row_floor={direct_restoring_final_block_parser_best_qrom_row_floor}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_best_qrom_max_rows_in_block={direct_restoring_final_block_parser_best_qrom_max_rows_in_block}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_best_qrom_block_count_p99={direct_restoring_final_block_parser_best_qrom_block_count_p99}");
@@ -1099,6 +1129,12 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_block4_with_binary_lookup_2x_mean={direct_restoring_final_block4_with_binary_lookup_2x_mean:.3}");
     println!("METRIC scratch600_direct_restoring_final_block4_with_binary_lookup_2x_gap_to_2700k={direct_restoring_final_block4_with_binary_lookup_2x_gap:.3}");
     println!("METRIC scratch600_direct_restoring_final_block4_lookup_multiplier_budget={direct_restoring_final_block4_lookup_multiplier_budget:.6}");
+    println!("METRIC scratch600_direct_restoring_final_block5_with_binary_lookup_2x_mean={direct_restoring_final_block5_with_binary_lookup_2x_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block5_with_binary_lookup_2x_gap_to_2700k={direct_restoring_final_block5_with_binary_lookup_2x_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block5_lookup_multiplier_budget={direct_restoring_final_block5_lookup_multiplier_budget:.6}");
+    println!("METRIC scratch600_direct_restoring_final_block7_with_binary_lookup_2x_mean={direct_restoring_final_block7_with_binary_lookup_2x_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block7_with_binary_lookup_2x_gap_to_2700k={direct_restoring_final_block7_with_binary_lookup_2x_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_block7_lookup_multiplier_budget={direct_restoring_final_block7_lookup_multiplier_budget:.6}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_cond_branch_best_block_symbols={direct_restoring_final_block_parser_cond_branch_best_block_symbols}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_cond_branch_touch_floor_mean={direct_restoring_final_block_parser_cond_branch_touch_floor_mean:.3}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_cond_branch_touch_floor_p99={direct_restoring_final_block_parser_cond_branch_touch_floor_p99}");
@@ -1600,9 +1636,14 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         direct_restoring_final_block4_touch_floor_mean
             < direct_restoring_final_block_parser_best_touch_floor_mean
             && direct_restoring_final_block4_live_scratch_p99 > GOOGLE_LOW_QUBIT_SCRATCH
+            && direct_restoring_final_block5_live_scratch_p99 > GOOGLE_LOW_QUBIT_SCRATCH
             && direct_restoring_final_block6_live_scratch_p99 > GOOGLE_LOW_QUBIT_SCRATCH
+            && direct_restoring_final_block7_live_scratch_p99 > GOOGLE_LOW_QUBIT_SCRATCH
             && direct_restoring_final_block4_with_binary_lookup_2x_gap > 0.0
             && direct_restoring_final_block4_with_binary_lookup_2x_gap
+                < direct_restoring_final_block_parser_best_with_binary_lookup_2x_gap
+            && direct_restoring_final_block7_with_binary_lookup_2x_gap > 0.0
+            && direct_restoring_final_block7_with_binary_lookup_2x_gap
                 < direct_restoring_final_block_parser_best_with_binary_lookup_2x_gap
             && direct_restoring_final_block4_lookup_multiplier_budget > 1.7
             && direct_restoring_final_block4_lookup_multiplier_budget < 2.0,
@@ -1627,7 +1668,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         "restoring-final binary-threshold parser accounting changed; revisit rank-map/parser route"
     );
     assert!(
-        direct_restoring_final_block_parser_cond_branch_best_block_symbols == 8
+        direct_restoring_final_block_parser_cond_branch_best_block_symbols == 7
             && direct_restoring_final_block_parser_cond_branch_live_scratch_p99
                 < direct_restoring_final_block_parser_best_live_scratch_p99
             && direct_restoring_final_block_parser_cond_branch_live_scratch_p99
@@ -1635,7 +1676,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_block_parser_cond_branch_binary_lookup_floor_mean
                 <= direct_restoring_final_block_parser_binary_lookup_floor_mean
             && direct_restoring_final_block_parser_cond_branch_best_with_binary_lookup_2x_gap
-                > 10_000.0,
+                > 9_000.0,
         "conditional branch model now fits restoring-final strict scratch/binary budget; build parser"
     );
     assert!(
