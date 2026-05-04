@@ -10396,6 +10396,231 @@ mod tests {
     }
 
     #[test]
+    fn half_gcd_full_block_endpoint_rank_code_stays_tiny_in_toys() {
+        // The raw endpoint repair pays four bits for the outgoing carry state
+        // of each active b32 block.  For decoding, the state value itself is
+        // overkill if a local key has only a few possible endpoint branches.
+        // Charge the harder object: the rank of the outgoing branch among all
+        // endpoints compatible with (block, incoming carry, local slices).
+        use std::collections::{BTreeMap, BTreeSet};
+
+        fn local_bits(
+            x0: SignedMagU512ForHalfGcdTest,
+            x1: SignedMagU512ForHalfGcdTest,
+            block_idx: usize,
+            block: usize,
+        ) -> u128 {
+            let mut word = 0u128;
+            let base = block_idx * block;
+            for offset in 0..block {
+                let bit = base + offset;
+                let b0 = if bit >= 512 {
+                    0
+                } else {
+                    ((x0.mag >> bit).as_limbs()[0] & 1) as u128
+                };
+                let b1 = if bit >= 512 {
+                    0
+                } else {
+                    ((x1.mag >> bit).as_limbs()[0] & 1) as u128
+                };
+                word |= b0 << (2 * offset);
+                word |= b1 << (2 * offset + 1);
+            }
+            word
+        }
+        let endpoint_state = |block_idx: usize, block_start_states: &[u8]| -> u8 {
+            block_start_states
+                .get(block_idx + 1)
+                .copied()
+                .unwrap_or(4)
+        };
+        let ceil_log2 = |x: usize| -> usize {
+            if x <= 1 {
+                0
+            } else {
+                usize::BITS as usize - (x - 1).leading_zeros() as usize
+            }
+        };
+
+        const DEPTH: usize = 64;
+        const BLOCK: usize = 32;
+        const SAMPLES: usize = 4096;
+        const FIELD_BITS: usize = 256;
+        const FULL_BLOCK_PATTERN_MEAN: f64 = 2_651_525.0;
+        const TARGET: f64 = 2_700_000.0;
+        const RANK_BITS_PER_ACTIVE_BLOCK: usize = 2;
+
+        let mut rng = 0x10ca_1dec_0de5_ec2u64;
+        let mut sample_active_blocks_total = 0usize;
+        for _ in 0..SAMPLES {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() {
+                x = U256::from(1u64);
+            }
+            let (b, d) = halfgcd_second_column_after_fixed_depth_for_test(
+                x,
+                SECP256K1_P,
+                DEPTH,
+            );
+            let (_, _, _, active_blocks, _, _, _, _digit_patterns, _block_start_states) =
+                halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, BLOCK);
+            sample_active_blocks_total += active_blocks;
+        }
+        let rank_bits_total = sample_active_blocks_total * RANK_BITS_PER_ACTIVE_BLOCK;
+        let rank_bits_mean_milli = rank_bits_total * 1_000 / SAMPLES;
+        let rank_source_mean = 2.0 * FIELD_BITS as f64 * rank_bits_total as f64 / SAMPLES as f64;
+        let rank_projected = FULL_BLOCK_PATTERN_MEAN + 2.0 * rank_source_mean;
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_sample_active_blocks_total={sample_active_blocks_total}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_sample_bits_mean_milli={rank_bits_mean_milli}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_sample_source_mean={rank_source_mean:.3}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_sample_projected_pointadd_mean={rank_projected:.3}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_sample_projected_gap_to_2700k={:.3}",
+            rank_projected - TARGET
+        );
+
+        let cases = [
+            (10usize, 1_021u32, 2usize),
+            (12usize, 4_093u32, 3usize),
+            (14usize, 16_381u32, 4usize),
+            (16usize, 65_521u32, 4usize),
+            (17usize, 65_537u32, 5usize),
+        ];
+        let mut largest_endpoint_variants = 0usize;
+        let mut largest_pattern_variants = 0usize;
+        let mut largest_rank_bits = 0usize;
+        let mut n17_ambiguous_keys = 0usize;
+        let mut n17_max_endpoint_variants = 0usize;
+        let mut n17_rank_bits_p99 = 0usize;
+        let mut n17_rank_bits_max = 0usize;
+        for &(toy_n, toy_p, toy_block) in &cases {
+            type LocalKey = (usize, u8, u128);
+            let toy_depth = (toy_n / 4).max(1);
+            let mut endpoint_rows = BTreeMap::<LocalKey, BTreeSet<u8>>::new();
+            let mut pattern_rows = BTreeMap::<LocalKey, BTreeSet<u128>>::new();
+            let mut occurrences = Vec::<LocalKey>::new();
+            for x in 1..toy_p {
+                let (b, d) = halfgcd_second_column_after_fixed_depth_for_test(
+                    U256::from(x as u64),
+                    U256::from(toy_p as u64),
+                    toy_depth,
+                );
+                let (_, _, _, _, _, _, _, digit_patterns, block_start_states) =
+                    halfgcd_signed_two_coeff_apply_block_active_trace_for_test(
+                        b, d, toy_block,
+                    );
+                for (block_idx, &pattern) in digit_patterns.iter().enumerate() {
+                    if pattern == 0 {
+                        continue;
+                    }
+                    let key = (
+                        block_idx,
+                        block_start_states[block_idx],
+                        local_bits(b, d, block_idx, toy_block),
+                    );
+                    endpoint_rows
+                        .entry(key)
+                        .or_default()
+                        .insert(endpoint_state(block_idx, &block_start_states));
+                    pattern_rows.entry(key).or_default().insert(pattern);
+                    occurrences.push(key);
+                }
+            }
+            let ambiguous_keys = pattern_rows
+                .values()
+                .filter(|patterns| patterns.len() > 1)
+                .count();
+            let max_endpoint_variants = endpoint_rows
+                .values()
+                .map(BTreeSet::len)
+                .max()
+                .unwrap_or(0);
+            let max_pattern_variants = pattern_rows
+                .values()
+                .map(BTreeSet::len)
+                .max()
+                .unwrap_or(0);
+            let mut rank_bits = occurrences
+                .iter()
+                .map(|key| ceil_log2(endpoint_rows[key].len()))
+                .collect::<Vec<_>>();
+            rank_bits.sort_unstable();
+            let rank_bits_p99 = rank_bits[rank_bits.len() * 99 / 100];
+            let rank_bits_max = *rank_bits.last().unwrap_or(&0);
+            println!("METRIC halfgcd_full_block_endpoint_rank_toy_n{toy_n}_local_keys={}", endpoint_rows.len());
+            println!("METRIC halfgcd_full_block_endpoint_rank_toy_n{toy_n}_ambiguous_local_keys={ambiguous_keys}");
+            println!("METRIC halfgcd_full_block_endpoint_rank_toy_n{toy_n}_max_endpoint_variants={max_endpoint_variants}");
+            println!("METRIC halfgcd_full_block_endpoint_rank_toy_n{toy_n}_max_pattern_variants={max_pattern_variants}");
+            println!("METRIC halfgcd_full_block_endpoint_rank_toy_n{toy_n}_rank_bits_p99={rank_bits_p99}");
+            println!("METRIC halfgcd_full_block_endpoint_rank_toy_n{toy_n}_rank_bits_max={rank_bits_max}");
+            eprintln!(
+                "half-GCD endpoint rank toy n{toy_n}: keys={}, ambiguous={ambiguous_keys}, endpoint_variants={max_endpoint_variants}, pattern_variants={max_pattern_variants}, rank_bits_p99={rank_bits_p99}, rank_bits_max={rank_bits_max}",
+                endpoint_rows.len()
+            );
+
+            largest_endpoint_variants = largest_endpoint_variants.max(max_endpoint_variants);
+            largest_pattern_variants = largest_pattern_variants.max(max_pattern_variants);
+            largest_rank_bits = largest_rank_bits.max(rank_bits_max);
+            if toy_n == 17 {
+                n17_ambiguous_keys = ambiguous_keys;
+                n17_max_endpoint_variants = max_endpoint_variants;
+                n17_rank_bits_p99 = rank_bits_p99;
+                n17_rank_bits_max = rank_bits_max;
+            }
+        }
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_toy_largest_endpoint_variants={largest_endpoint_variants}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_toy_largest_pattern_variants={largest_pattern_variants}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_rank_toy_largest_rank_bits={largest_rank_bits}"
+        );
+        eprintln!(
+            "half-GCD endpoint rank-code projection: rank_bits_mean_milli={rank_bits_mean_milli}, projected={rank_projected:.1}, largest_endpoint_variants={largest_endpoint_variants}, largest_rank_bits={largest_rank_bits}"
+        );
+
+        assert!(
+            largest_endpoint_variants <= 4 && largest_pattern_variants <= 4,
+            "endpoint branch rank outgrew two bits; raw endpoint state is still needed"
+        );
+        assert!(
+            largest_rank_bits <= RANK_BITS_PER_ACTIVE_BLOCK,
+            "two-bit endpoint rank code no longer covers exact toy domains"
+        );
+        assert!(
+            rank_projected < TARGET,
+            "two-bit endpoint rank source consumes the full full-block-pattern margin"
+        );
+        assert_eq!(
+            n17_ambiguous_keys, 1_346,
+            "n17 local ambiguity changed; update endpoint-rank ledger"
+        );
+        assert_eq!(
+            n17_max_endpoint_variants, 4,
+            "n17 endpoint branch rank changed; update endpoint-rank ledger"
+        );
+        assert_eq!(
+            n17_rank_bits_p99, 2,
+            "n17 endpoint rank p99 changed; update endpoint-rank ledger"
+        );
+        assert_eq!(
+            n17_rank_bits_max, 2,
+            "n17 endpoint rank max changed; update endpoint-rank ledger"
+        );
+    }
+
+    #[test]
     fn half_gcd_full_block_endpoint_table_floor_needs_algorithmic_decoder() {
         // Endpoint state reopens the full-block code, but only barely.  A
         // generic coherent table over endpoint keys is already at the margin

@@ -298,6 +298,12 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             blocker: "adding 4 outgoing-carry bits per active b32 block makes the local block-pattern key injective on the 4096 secp sample and exact n10/n12/n14/n16/n17 toys; endpoint-source projection is 2667706 (-32294), but a generic endpoint-key row scan has only 594 slack if paid once and misses by 31106 if paid per app, so this needs a phase-clean algorithmic block-DP decoder rather than a support table",
         },
         Candidate {
+            name: "halfgcd_second_column_full_block_endpoint_rank_decoder_opening",
+            scratch_bits: 539,
+            charged_toffoli: None,
+            blocker: "the outgoing endpoint value can be compressed to a two-bit branch rank per active b32 block: exact n10/n12/n14/n16/n17 toys have at most 4 compatible endpoint/pattern branches per local key, and the secp rank-source projection is 2659620 (-40380). This improves the raw endpoint-state margin, but it still needs a phase-clean local rank decoder and branch cleanup; a generic row scan is still too tight if paid per application",
+        },
+        Candidate {
             name: "halfgcd_second_column_zero_row_id_noactive_floor",
             scratch_bits: 515,
             charged_toffoli: Some(2_831_471),
@@ -2158,6 +2164,39 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         63_400usize;
     let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_gap =
         31_106isize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_active_blocks_total =
+        16_190usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_bits_mean_milli =
+        7_905usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_source_mean_milli =
+        4_047_500usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_mean =
+        2_659_620usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_gap =
+        halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_mean as isize
+            - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_local_keys =
+        3_838usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_ambiguous =
+        1_346usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_max_endpoint_variants =
+        4usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_p99 =
+        2usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_max =
+        2usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_endpoint_variants =
+        4usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_pattern_variants =
+        4usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_rank_bits =
+        2usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_margin =
+        40_380usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_one_roundtrip_slack =
+        8_680isize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_two_app_gap =
+        23_020isize;
     let halfgcd_second_col_joint_signed_binary_active_degree_n14 = 13usize;
     let halfgcd_second_col_joint_signed_binary_active_density_n14 = 8_194usize;
     let halfgcd_second_col_joint_signed_binary_active_positions_n14 = 15usize;
@@ -3650,6 +3689,22 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_one_roundtrip_slack={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_one_roundtrip_slack}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_floor={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_floor}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_gap={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_gap}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_active_blocks_total={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_active_blocks_total}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_bits_mean_milli={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_bits_mean_milli}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_source_mean_milli={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_source_mean_milli}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_mean={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_mean}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_gap_to_2700k={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_gap}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_local_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_local_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_ambiguous={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_ambiguous}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_max_endpoint_variants={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_max_endpoint_variants}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_p99={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_p99}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_max={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_max}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_endpoint_variants={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_endpoint_variants}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_pattern_variants={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_pattern_variants}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_rank_bits={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_rank_bits}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_margin={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_margin}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_one_roundtrip_slack={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_one_roundtrip_slack}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_two_app_gap={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_two_app_gap}");
     println!("METRIC scratch600_halfgcd_second_col_joint_signed_binary_active_degree_n14={halfgcd_second_col_joint_signed_binary_active_degree_n14}");
     println!("METRIC scratch600_halfgcd_second_col_joint_signed_binary_active_density_n14={halfgcd_second_col_joint_signed_binary_active_density_n14}");
     println!("METRIC scratch600_halfgcd_second_col_joint_signed_binary_active_positions_n14={halfgcd_second_col_joint_signed_binary_active_positions_n14}");
@@ -5206,7 +5261,35 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
                 < 1_000
             && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_floor
                 == 4 * halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_sample_keys
-            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_gap > 0,
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_two_app_gap > 0
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_active_blocks_total
+                == 16_190
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_sample_bits_mean_milli
+                == 7_905
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_mean
+                < halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_mean
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_gap < 0
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_local_keys
+                == halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_keys
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_ambiguous
+                == halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_ambiguous
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_max_endpoint_variants
+                == 4
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_p99
+                == 2
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_n17_rank_bits_max
+                == 2
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_endpoint_variants
+                <= 4
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_pattern_variants
+                <= 4
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_toy_largest_rank_bits
+                <= 2
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_margin
+                == 40_380
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_one_roundtrip_slack
+                > halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_table_one_roundtrip_slack
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_table_two_app_gap > 0,
         "full block-pattern endpoint decoder opening changed; revisit half-GCD block parser"
     );
     assert!(
