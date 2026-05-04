@@ -289,7 +289,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "halfgcd_second_column_full_block_pattern_code_opening",
             scratch_bits: 515,
             charged_toffoli: None,
-            blocker: "encoding the entire sampled b32 block digit pattern instead of separate active/source routes projects 2651525 (-48475) with 24051 one-way source, but the best secp block saturates all 4096 samples at 12 bits. Exact toy domains add unseen support in 5/5 cases, so samples are not a proof; however n17 exact support remains compact at 1885 patterns / 11 bits. This needs an exact scalable block-pattern decoder/proof before it can be charged",
+            blocker: "encoding the entire sampled b32 block digit pattern instead of separate active/source routes projects 2651525 (-48475) with 24051 one-way source, but the best secp block saturates all 4096 samples at 12 bits. Exact toy domains add unseen support in 5/5 cases, so samples are not a proof; however n17 exact support remains compact at 1885 patterns / 11 bits. A local decoder keyed by block index, incoming signed-binary carry state, and local coefficient slices is not enough: secp samples have 0 ambiguous keys, but exact n17 toy has 1346 ambiguous keys with multiplicity up to 4. This needs a stronger nonlocal parser or proof before it can be charged",
         },
         Candidate {
             name: "halfgcd_second_column_zero_row_id_noactive_floor",
@@ -2070,6 +2070,22 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         1_885usize;
     let halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_bits =
         11usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_keys =
+        15_903usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_total_patterns =
+        15_903usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_ambiguous =
+        0usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_max_mult =
+        1usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_keys =
+        3_838usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_total_patterns =
+        5_794usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_ambiguous =
+        1_346usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_max_mult =
+        4usize;
     let halfgcd_second_col_joint_signed_binary_active_degree_n14 = 13usize;
     let halfgcd_second_col_joint_signed_binary_active_density_n14 = 8_194usize;
     let halfgcd_second_col_joint_signed_binary_active_positions_n14 = 15usize;
@@ -3516,6 +3532,14 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_missing_patterns={halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_missing_patterns}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_patterns={halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_patterns}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_bits={halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_bits}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_total_patterns={halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_total_patterns}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_ambiguous={halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_ambiguous}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_max_mult={halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_max_mult}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_total_patterns={halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_total_patterns}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_ambiguous={halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_ambiguous}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_max_mult={halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_max_mult}");
     println!("METRIC scratch600_halfgcd_second_col_joint_signed_binary_active_degree_n14={halfgcd_second_col_joint_signed_binary_active_degree_n14}");
     println!("METRIC scratch600_halfgcd_second_col_joint_signed_binary_active_density_n14={halfgcd_second_col_joint_signed_binary_active_density_n14}");
     println!("METRIC scratch600_halfgcd_second_col_joint_signed_binary_active_positions_n14={halfgcd_second_col_joint_signed_binary_active_positions_n14}");
@@ -5022,8 +5046,18 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
                 >= 2_000
             && halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_patterns
                 < 4_096
-            && halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_bits <= 11,
-        "full block-pattern code stopped clearing under sampled support; reprioritize half-GCD pattern decoder"
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_toy_largest_exact_bits <= 11
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_keys
+                == halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_total_patterns
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_ambiguous == 0
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_local_sample_max_mult == 1
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_ambiguous
+                >= 1_000
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_max_mult
+                >= 4
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_total_patterns
+                > halfgcd_second_col_fixed_depth64_full_block_pattern_local_toy_n17_keys,
+        "full block-pattern code local decoder no longer has the recorded nonlocal-context blocker"
     );
     assert!(
         halfgcd_second_col_joint_signed_binary_active_degree_n14 + 1 >= 14

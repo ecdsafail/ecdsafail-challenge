@@ -4462,7 +4462,7 @@ mod tests {
         x0: SignedMagU512ForHalfGcdTest,
         x1: SignedMagU512ForHalfGcdTest,
         block: usize,
-    ) -> (usize, usize, usize, usize, usize, usize, Vec<u128>, Vec<u128>) {
+    ) -> (usize, usize, usize, usize, usize, usize, Vec<u128>, Vec<u128>, Vec<u8>) {
         const MOD_ADD_FAST_CCX: usize = 1024;
         const MOD_DOUBLE_FAST_CCX: usize = 255;
         const MOD_HALVE_FAST_CCX: usize = 255;
@@ -4607,6 +4607,7 @@ mod tests {
             .expect("block-active trace carry did not drain");
         let mut masks = vec![0u128; (total_bits + block - 1) / block];
         let mut digit_patterns = vec![0u128; masks.len()];
+        let mut block_start_states = vec![0u8; masks.len()];
         let digit_code = |digit: i8| -> u128 {
             match digit {
                 -1 => 2,
@@ -4621,6 +4622,7 @@ mod tests {
         for bit in 0..total_bits {
             if bit % block == 0 {
                 seen_idx = 0;
+                block_start_states[bit / block] = (c0i * 3 + c1i) as u8;
             }
             let b0 = bit_at(x0.mag, bit);
             let b1 = bit_at(x1.mag, bit);
@@ -4702,6 +4704,7 @@ mod tests {
             row.digits,
             masks,
             digit_patterns,
+            block_start_states,
         )
     }
 
@@ -9553,6 +9556,7 @@ mod tests {
                     digits,
                     masks,
                     digit_patterns,
+                    _block_start_states,
                 ) = halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, block);
                 let block_cost = app + compact_source + block_active_source;
                 block_costs[idx].push(block_cost);
@@ -9878,7 +9882,7 @@ mod tests {
                 .map(|x| {
                     let (b, d) =
                         halfgcd_second_column_after_fixed_depth_for_test(U256::from(x as u64), p, depth);
-                    let (_, _, _, _, _, _, _, digit_patterns) =
+                    let (_, _, _, _, _, _, _, digit_patterns, _block_start_states) =
                         halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, block);
                     digit_patterns
                 })
@@ -9981,6 +9985,151 @@ mod tests {
                 && largest_exact_max_patterns >= 630
                 && largest_exact_max_bits >= 10,
             "exact toy full-block support stopped showing the sample/proof gap"
+        );
+    }
+
+    #[test]
+    fn half_gcd_full_block_pattern_local_state_decoder_probe() {
+        // The support-size probe says samples are not a proof, but does not
+        // say whether a block code needs nonlocal suffix context.  Check the
+        // stronger structural premise: once the incoming signed-binary carry
+        // state is known, each active block pattern should be determined by
+        // the public block index and the two local coefficient-bit slices.
+        // Exact toy collisions mean a decoder needs extra nonlocal state, not
+        // just a larger exact local support table.
+        use std::collections::{BTreeMap, BTreeSet};
+
+        fn local_bits(
+            x0: SignedMagU512ForHalfGcdTest,
+            x1: SignedMagU512ForHalfGcdTest,
+            block_idx: usize,
+            block: usize,
+        ) -> u128 {
+            let mut word = 0u128;
+            let base = block_idx * block;
+            for offset in 0..block {
+                let bit = base + offset;
+                let b0 = if bit >= 512 {
+                    0
+                } else {
+                    ((x0.mag >> bit).as_limbs()[0] & 1) as u128
+                };
+                let b1 = if bit >= 512 {
+                    0
+                } else {
+                    ((x1.mag >> bit).as_limbs()[0] & 1) as u128
+                };
+                word |= b0 << (2 * offset);
+                word |= b1 << (2 * offset + 1);
+            }
+            word
+        }
+        let stats = |rows: &BTreeMap<(usize, u8, u128), BTreeSet<u128>>| {
+            let ambiguous = rows.values().filter(|patterns| patterns.len() > 1).count();
+            let max_mult = rows.values().map(BTreeSet::len).max().unwrap_or(0);
+            let total_patterns = rows.values().map(BTreeSet::len).sum::<usize>();
+            (ambiguous, max_mult, rows.len(), total_patterns)
+        };
+
+        const DEPTH: usize = 64;
+        const BLOCK: usize = 32;
+        const SAMPLES: usize = 4096;
+        let p = SECP256K1_P;
+        let mut rng = 0x10ca_1dec_0de5_ec0u64;
+        let mut sample_rows = BTreeMap::<(usize, u8, u128), BTreeSet<u128>>::new();
+        for _ in 0..SAMPLES {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() {
+                x = U256::from(1u64);
+            }
+            let (b, d) = halfgcd_second_column_after_fixed_depth_for_test(x, p, DEPTH);
+            let (_, _, _, _, _, _, _, digit_patterns, block_start_states) =
+                halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, BLOCK);
+            for (block_idx, &pattern) in digit_patterns.iter().enumerate() {
+                if pattern == 0 {
+                    continue;
+                }
+                let key = (
+                    block_idx,
+                    block_start_states[block_idx],
+                    local_bits(b, d, block_idx, BLOCK),
+                );
+                sample_rows.entry(key).or_default().insert(pattern);
+            }
+        }
+        let (sample_ambiguous, sample_max_mult, sample_keys, sample_total_patterns) =
+            stats(&sample_rows);
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_sample_keys={sample_keys}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_sample_total_patterns={sample_total_patterns}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_sample_ambiguous_keys={sample_ambiguous}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_sample_max_multiplicity={sample_max_mult}"
+        );
+        eprintln!(
+            "half-GCD full-block local decoder sample: keys={sample_keys}, patterns={sample_total_patterns}, ambiguous={sample_ambiguous}, max_mult={sample_max_mult}"
+        );
+
+        let toy_n = 17usize;
+        let toy_p = 65_537u32;
+        let toy_block = 5usize;
+        let toy_depth = (toy_n / 4).max(1);
+        let mut toy_rows = BTreeMap::<(usize, u8, u128), BTreeSet<u128>>::new();
+        for x in 1..toy_p {
+            let (b, d) = halfgcd_second_column_after_fixed_depth_for_test(
+                U256::from(x as u64),
+                U256::from(toy_p as u64),
+                toy_depth,
+            );
+            let (_, _, _, _, _, _, _, digit_patterns, block_start_states) =
+                halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, toy_block);
+            for (block_idx, &pattern) in digit_patterns.iter().enumerate() {
+                if pattern == 0 {
+                    continue;
+                }
+                let key = (
+                    block_idx,
+                    block_start_states[block_idx],
+                    local_bits(b, d, block_idx, toy_block),
+                );
+                toy_rows.entry(key).or_default().insert(pattern);
+            }
+        }
+        let (toy_ambiguous, toy_max_mult, toy_keys, toy_total_patterns) = stats(&toy_rows);
+        println!("METRIC halfgcd_full_block_pattern_local_state_toy_n17_keys={toy_keys}");
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_toy_n17_total_patterns={toy_total_patterns}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_toy_n17_ambiguous_keys={toy_ambiguous}"
+        );
+        println!(
+            "METRIC halfgcd_full_block_pattern_local_state_toy_n17_max_multiplicity={toy_max_mult}"
+        );
+        eprintln!(
+            "half-GCD full-block local decoder toy n17: keys={toy_keys}, patterns={toy_total_patterns}, ambiguous={toy_ambiguous}, max_mult={toy_max_mult}"
+        );
+
+        assert_eq!(
+            sample_ambiguous, 0,
+            "sampled secp full-block pattern now has local-state collisions"
+        );
+        assert_eq!(
+            sample_max_mult, 1,
+            "sampled secp full-block pattern local-state multiplicity changed"
+        );
+        assert_eq!(
+            toy_ambiguous, 1_346,
+            "exact toy local-state ambiguity changed; update the decoder blocker ledger"
+        );
+        assert_eq!(
+            toy_max_mult, 4,
+            "exact toy local-state multiplicity changed; update the decoder blocker ledger"
         );
     }
 
