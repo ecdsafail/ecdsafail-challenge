@@ -22616,6 +22616,340 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_restoring_final_selective_pair_lookup_budget_probe() {
+        // The full mixed-block rank decoder clears the binary lookup floor but
+        // hides a large, dense rank side channel.  Try the smaller structural
+        // escape first: group only adjacent metadata positions whose joint
+        // support saves binary-lookup bits, leaving other symbols decoded
+        // independently.  This measures whether the remaining ~1k lookup-bit
+        // mean can be recovered with much less rank support.
+        use std::collections::{BTreeMap, BTreeSet};
+
+        #[derive(Clone, Debug)]
+        struct PairCandidate {
+            saving: f64,
+            support_rows: usize,
+            patterns: usize,
+        }
+
+        let p = SECP256K1_P;
+        let samples = 8192usize;
+        const MAX_STEPS: usize = 260;
+        const TARGET: f64 = 2_700_000.0;
+        const STORED_BRANCH_MEAN: f64 = 2_645_270.0;
+        const GOOGLE_SCRATCH: usize = 663;
+        let mut rng = 0xd1ce_c0ef_a119_6001u64;
+        let trace_alignment_metadata = |rng: &mut u64| -> (Vec<usize>, Vec<(usize, bool)>) {
+            let mut x = rand_u256(rng);
+            if x.is_zero() {
+                x = U256::from(1u64);
+            }
+            let mut u = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(p));
+            let mut v = smag_for_halfgcd_test(false, u512_from_u256_for_halfgcd_test(x));
+            let mut coeff_u = smag_for_halfgcd_test(false, U512::ZERO);
+            let mut coeff_v = smag_for_halfgcd_test(false, U512::from(1u64));
+            let mut alignments = Vec::new();
+            let mut branches = Vec::new();
+            while !v.mag.is_zero() {
+                let adjusted = u.mag + (v.mag >> 1usize);
+                let q_direct = adjusted / v.mag;
+                let q_neg = u.neg ^ v.neg;
+                let qv = signed_mul_mag_for_halfgcd_test(v, q_neg, q_direct);
+                let next_v = signed_add_for_halfgcd_test(u, signed_neg_for_halfgcd_test(qv));
+                let qv_coeff = signed_mul_mag_for_halfgcd_test(coeff_v, q_neg, q_direct);
+                let next_coeff_v = signed_add_for_halfgcd_test(
+                    coeff_u,
+                    signed_neg_for_halfgcd_test(qv_coeff),
+                );
+                let denom = coeff_v.mag;
+                assert!(!denom.is_zero(), "restoring-final coefficient denominator vanished");
+                let low_numer = if coeff_u.mag.is_zero() {
+                    next_coeff_v.mag
+                } else {
+                    assert!(
+                        !next_coeff_v.mag.is_zero(),
+                        "restoring-final adjusted coefficient numerator underflow"
+                    );
+                    next_coeff_v.mag - U512::from(1u64)
+                };
+                let high_numer = if coeff_u.mag.is_zero() {
+                    low_numer
+                } else {
+                    next_coeff_v.mag + denom - U512::from(1u64)
+                };
+                let low_q = low_numer / denom;
+                let high_q = high_numer / denom;
+                let high_branch = q_direct != low_q;
+                let numer = if high_branch {
+                    assert_eq!(
+                        q_direct, high_q,
+                        "restoring-final coefficient reverse quotient candidates missed"
+                    );
+                    high_numer
+                } else {
+                    low_numer
+                };
+                if low_q != high_q {
+                    branches.push((alignments.len(), high_branch));
+                }
+                let alignment = u512_bit_len_for_halfgcd_test(numer)
+                    .saturating_sub(u512_bit_len_for_halfgcd_test(denom));
+                alignments.push(alignment);
+
+                u = v;
+                v = next_v;
+                coeff_u = coeff_v;
+                coeff_v = next_coeff_v;
+            }
+            assert_eq!(u.mag, U512::from(1u64), "restoring-final trace ended at non-unit gcd");
+            (alignments, branches)
+        };
+
+        let mut traces = Vec::with_capacity(samples);
+        let mut align_by_step = vec![BTreeMap::<usize, usize>::new(); MAX_STEPS];
+        let mut branch_by_step = [[0usize; 2]; MAX_STEPS];
+        let mut branch_by_step_alignment =
+            vec![BTreeMap::<usize, [usize; 2]>::new(); MAX_STEPS];
+        for _ in 0..samples {
+            let (alignments, branches) = trace_alignment_metadata(&mut rng);
+            assert!(alignments.len() < MAX_STEPS, "trace exceeded alignment model");
+            for (step, &alignment) in alignments.iter().enumerate() {
+                *align_by_step[step].entry(alignment).or_insert(0) += 1;
+            }
+            for &(step, branch) in &branches {
+                branch_by_step[step][branch as usize] += 1;
+                branch_by_step_alignment[step]
+                    .entry(alignments[step])
+                    .or_insert([0usize; 2])[branch as usize] += 1;
+            }
+            traces.push((alignments, branches));
+        }
+
+        let max_align_model_total = align_by_step
+            .iter()
+            .map(|counts| counts.values().sum::<usize>())
+            .max()
+            .unwrap_or(0);
+        let max_branch_model_total = branch_by_step
+            .iter()
+            .map(|counts| counts.iter().sum::<usize>())
+            .max()
+            .unwrap_or(0);
+        let model_precision_bits =
+            usize_bit_len_for_payload_test(max_align_model_total.max(max_branch_model_total) - 1);
+        let ceil_log2 = |x: usize| -> usize {
+            if x <= 1 { 0 } else { usize_bit_len_for_payload_test(x - 1) }
+        };
+        let code_len = |freq: usize, total: usize| -> f64 {
+            assert!(freq > 0 && total > 0, "entropy model missing a seen symbol");
+            (total as f64).log2() - (freq as f64).log2()
+        };
+        let mean_usize = |rows: &[usize]| -> f64 {
+            rows.iter().map(|&v| v as f64).sum::<f64>() / rows.len() as f64
+        };
+        let p99_usize = |rows: &mut Vec<usize>| -> usize {
+            rows.sort_unstable();
+            rows[rows.len() * 99 / 100]
+        };
+
+        let mut cond_symbol_prefix_rows = Vec::with_capacity(samples);
+        let mut symbol_rows = Vec::<Vec<(usize, usize)>>::with_capacity(samples);
+        let mut cost_rows = Vec::<Vec<usize>>::with_capacity(samples);
+        let mut baseline_lookup_rows = Vec::with_capacity(samples);
+        let mut max_symbol_positions = 0usize;
+        for (alignments, branches) in &traces {
+            let mut branch_at_step = vec![None; alignments.len()];
+            for &(step, branch) in branches {
+                branch_at_step[step] = Some(branch);
+            }
+            let mut prefix = Vec::with_capacity(alignments.len() + branches.len() + 1);
+            let mut symbols = Vec::with_capacity(alignments.len() + branches.len());
+            let mut costs = Vec::with_capacity(alignments.len() + branches.len());
+            prefix.push(0.0f64);
+            let mut running_bits = 0.0f64;
+            let mut lookup_cost = 0usize;
+            for (step, &alignment) in alignments.iter().enumerate() {
+                let step_total = align_by_step[step].values().sum::<usize>();
+                let step_freq = *align_by_step[step].get(&alignment).unwrap();
+                running_bits += code_len(step_freq, step_total);
+                prefix.push(running_bits);
+                symbols.push((2 * step, alignment));
+                let align_cost = model_precision_bits * ceil_log2(align_by_step[step].len());
+                costs.push(align_cost);
+                lookup_cost += align_cost;
+                if let Some(branch) = branch_at_step[step] {
+                    let branch_counts = branch_by_step_alignment[step]
+                        .get(&alignment)
+                        .expect("conditional branch model missing seen alignment");
+                    let branch_total = branch_counts.iter().sum::<usize>();
+                    let branch_idx = branch as usize;
+                    running_bits += code_len(branch_counts[branch_idx], branch_total);
+                    prefix.push(running_bits);
+                    symbols.push((2 * step + 1, branch_idx));
+                    let branch_support = branch_counts.iter().filter(|&&count| count > 0).count();
+                    let branch_cost = model_precision_bits * ceil_log2(branch_support);
+                    costs.push(branch_cost);
+                    lookup_cost += branch_cost;
+                }
+            }
+            max_symbol_positions = max_symbol_positions.max(symbols.len());
+            cond_symbol_prefix_rows.push(prefix);
+            symbol_rows.push(symbols);
+            cost_rows.push(costs);
+            baseline_lookup_rows.push(lookup_cost);
+        }
+
+        let eval_cond_schedule_fast =
+            |schedule: &[usize]| -> (f64, usize, usize, usize, usize, f64) {
+                let mut compressed_bits_rows = Vec::with_capacity(samples);
+                let mut live_scratch_rows = Vec::with_capacity(samples);
+                let mut symbol_count_rows = Vec::with_capacity(samples);
+                let mut state_touch_floor_rows = Vec::with_capacity(samples);
+                for prefix in &cond_symbol_prefix_rows {
+                    let symbol_count = prefix.len() - 1;
+                    let mut compressed_bits = 0usize;
+                    let mut state_touch_floor = 0usize;
+                    let mut pos = 0usize;
+                    let mut block_idx = 0usize;
+                    while pos < symbol_count {
+                        let block_len = schedule[block_idx % schedule.len()]
+                            .min(symbol_count - pos);
+                        let block_bits = (prefix[pos + block_len] - prefix[pos]).ceil() as usize;
+                        compressed_bits += block_bits;
+                        state_touch_floor += block_bits * block_len;
+                        pos += block_len;
+                        block_idx += 1;
+                    }
+                    compressed_bits_rows.push(compressed_bits);
+                    live_scratch_rows.push(256 + compressed_bits + 2 * model_precision_bits);
+                    symbol_count_rows.push(symbol_count);
+                    state_touch_floor_rows.push(state_touch_floor);
+                }
+                let touch_mean = mean_usize(&state_touch_floor_rows);
+                let touch_p99 = p99_usize(&mut state_touch_floor_rows);
+                let compressed_p99 = p99_usize(&mut compressed_bits_rows);
+                let scratch_p99 = p99_usize(&mut live_scratch_rows);
+                let symbol_count_p99 = p99_usize(&mut symbol_count_rows);
+                let augmented_gap = STORED_BRANCH_MEAN + 4.0 * touch_mean - TARGET;
+                (
+                    touch_mean,
+                    touch_p99,
+                    compressed_p99,
+                    scratch_p99,
+                    symbol_count_p99,
+                    augmented_gap,
+                )
+            };
+
+        let mut pair_patterns = vec![BTreeSet::<Vec<(usize, usize)>>::new(); max_symbol_positions];
+        let mut pair_individual_cost_sum = vec![0usize; max_symbol_positions];
+        let mut pair_seen = vec![0usize; max_symbol_positions];
+        for (symbols, costs) in symbol_rows.iter().zip(cost_rows.iter()) {
+            for pos in 0..symbols.len().saturating_sub(1) {
+                pair_patterns[pos].insert(vec![symbols[pos], symbols[pos + 1]]);
+                pair_individual_cost_sum[pos] += costs[pos] + costs[pos + 1];
+                pair_seen[pos] += 1;
+            }
+        }
+
+        let mut candidates = vec![None; max_symbol_positions];
+        for pos in 0..max_symbol_positions {
+            if pair_seen[pos] == 0 {
+                continue;
+            }
+            let patterns = pair_patterns[pos].len();
+            let joint_cost = model_precision_bits * ceil_log2(patterns);
+            let saved_total = pair_individual_cost_sum[pos]
+                .saturating_sub(joint_cost * pair_seen[pos]);
+            let saving = saved_total as f64 / samples as f64;
+            if saving > 0.0 {
+                candidates[pos] = Some(PairCandidate {
+                    saving,
+                    support_rows: patterns.saturating_sub(1),
+                    patterns,
+                });
+            }
+        }
+
+        let mut dp = vec![0.0f64; max_symbol_positions + 2];
+        for pos in (0..max_symbol_positions).rev() {
+            let skip = dp[pos + 1];
+            let take = candidates[pos]
+                .as_ref()
+                .map(|candidate| candidate.saving + dp[pos + 2])
+                .unwrap_or(f64::NEG_INFINITY);
+            dp[pos] = skip.max(take);
+        }
+        let mut selected_positions = Vec::new();
+        let mut selected_support_rows = 0usize;
+        let mut selected_max_patterns = 0usize;
+        let mut selected_saving = 0.0f64;
+        let mut pos = 0usize;
+        while pos < max_symbol_positions {
+            if let Some(candidate) = &candidates[pos] {
+                if candidate.saving + dp[pos + 2] >= dp[pos + 1] {
+                    selected_positions.push(pos);
+                    selected_support_rows += candidate.support_rows;
+                    selected_max_patterns = selected_max_patterns.max(candidate.patterns);
+                    selected_saving += candidate.saving;
+                    pos += 2;
+                    continue;
+                }
+            }
+            pos += 1;
+        }
+
+        let baseline_lookup_mean = mean_usize(&baseline_lookup_rows);
+        let selective_pair_lookup_mean = baseline_lookup_mean - selected_saving;
+        let oneway_parser_budget = (TARGET - STORED_BRANCH_MEAN) / 4.0;
+        let schedule = [6usize, 5, 6, 8];
+        let (
+            mixed4to8_touch_mean,
+            mixed4to8_touch_p99,
+            mixed4to8_compressed_p99,
+            mixed4to8_scratch_p99,
+            mixed4to8_symbol_count_p99,
+            mixed4to8_augmented_gap,
+        ) = eval_cond_schedule_fast(&schedule);
+        let target_lookup_mean = (oneway_parser_budget - mixed4to8_touch_mean) / 2.0;
+        let required_saving = baseline_lookup_mean - target_lookup_mean;
+        let selective_pair_gap = STORED_BRANCH_MEAN
+            + 4.0 * (mixed4to8_touch_mean + 2.0 * selective_pair_lookup_mean)
+            - TARGET;
+        println!("METRIC centered_direct_restoring_final_selective_pair_lookup_baseline_mean={baseline_lookup_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_lookup_selected_saving_mean={selected_saving:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_lookup_required_saving_mean={required_saving:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_lookup_mean={selective_pair_lookup_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_lookup_target_mean={target_lookup_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_gap_to_2700k={selective_pair_gap:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_selected_positions={}", selected_positions.len());
+        println!("METRIC centered_direct_restoring_final_selective_pair_support_rows={selected_support_rows}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_max_patterns={selected_max_patterns}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_mixed4to8_touch_mean={mixed4to8_touch_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_mixed4to8_touch_p99={mixed4to8_touch_p99}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_mixed4to8_compressed_p99={mixed4to8_compressed_p99}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_mixed4to8_scratch_p99={mixed4to8_scratch_p99}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_mixed4to8_symbol_count_p99={mixed4to8_symbol_count_p99}");
+        println!("METRIC centered_direct_restoring_final_selective_pair_mixed4to8_augmented_gap_to_2700k={mixed4to8_augmented_gap:.3}");
+        eprintln!(
+            "Direct-centered selective-pair lookup: baseline={baseline_lookup_mean:.1}, selected_saving={selected_saving:.1}, required_saving={required_saving:.1}, selective={selective_pair_lookup_mean:.1}, gap={selective_pair_gap:.1}, pairs={}, support_rows={selected_support_rows}, max_patterns={selected_max_patterns}, scratch={mixed4to8_scratch_p99}",
+            selected_positions.len()
+        );
+        assert!(
+            mixed4to8_scratch_p99 <= GOOGLE_SCRATCH,
+            "mixed 4..8 parser no longer fits Google scratch"
+        );
+        assert!(
+            selected_saving > 0.0 && selected_support_rows > 0,
+            "selective pair grouping found no lookup savings"
+        );
+        assert!(
+            selected_saving * 20.0 < required_saving && selective_pair_gap > 8_000.0,
+            "selective adjacent-pair grouping now nearly closes the direct-centered parser lookup gap"
+        );
+    }
+
+    #[test]
     fn direct_centered_restoring_final_huffman_tree_toy_shows_coherent_full_tree_tax() {
         // A Huffman lookup floor is only a path-depth floor.  If the tree path
         // is controlled by quantum metadata, the circuit still has to emit the

@@ -151,13 +151,13 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_mixed4to8_parser",
             scratch_bits: 663,
             charged_toffoli: Some(2_708_680),
-            blocker: "period-4 code-8656 mixed 4..8 branch-conditioned blocks fit 663 scratch and reduce the 2x binary lookup miss to 8680 Toffoli, but still require sub-1.681x lookup cleanup; coherent full-tree lookup still misses",
+            blocker: "period-4 code-8656 mixed 4..8 branch-conditioned blocks fit 663 scratch and reduce the 2x binary lookup miss to 8680 Toffoli, but still require sub-1.681x lookup cleanup; selective adjacent-pair grouping saves only 26.9 of 1084.9 needed, and coherent full-tree lookup still misses",
         },
         Candidate {
             name: "direct_centered_restoring_final_mixed4to8_joint_binary_floor",
             scratch_bits: 663,
             charged_toffoli: Some(2_693_369),
-            blocker: "joint block-pattern binary-depth floor would clear 2.7M by 6631 at 663 scratch, but assumes a phase-clean block-rank decoder; exact n14 rank parity is degree 14 and 8098/16384 dense, while arbitrary full-scan support is 68058 rows and misses by 498777",
+            blocker: "joint block-pattern binary-depth floor would clear 2.7M by 6631 at 663 scratch, but assumes a phase-clean block-rank decoder; exact n14 rank parity is degree 14 and 8098/16384 dense, selective adjacent-pair grouping saves only 26.9 of 1084.9 needed, and arbitrary full-scan support is 68058 rows and misses by 498777",
         },
         Candidate {
             name: "direct_centered_restoring_final_mixed67_huffman_floor",
@@ -658,6 +658,15 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         138_376.848f64;
     let direct_restoring_final_cond_mixed4to8_with_block_joint_scan_lookup_2x_gap =
         498_777.392f64;
+    let direct_restoring_final_selective_pair_lookup_baseline_mean = 6_795.760f64;
+    let direct_restoring_final_selective_pair_lookup_selected_saving_mean = 26.854f64;
+    let direct_restoring_final_selective_pair_lookup_required_saving_mean = 1_084.933f64;
+    let direct_restoring_final_selective_pair_lookup_mean = 6_768.906f64;
+    let direct_restoring_final_selective_pair_lookup_target_mean = 5_710.826f64;
+    let direct_restoring_final_selective_pair_lookup_gap = 8_464.638f64;
+    let direct_restoring_final_selective_pair_lookup_selected_positions = 3usize;
+    let direct_restoring_final_selective_pair_lookup_support_rows = 132usize;
+    let direct_restoring_final_selective_pair_lookup_max_patterns = 90usize;
     let direct_restoring_final_block_joint_rank_degree_n14 = 14usize;
     let direct_restoring_final_block_joint_rank_density_n14 = 8_098usize;
     let direct_restoring_final_block_joint_rank_max_rank_n14 = 2_938usize;
@@ -1398,6 +1407,15 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_cond_mixed4to8_block_joint_lookup_multiplier_budget={direct_restoring_final_cond_mixed4to8_block_joint_lookup_multiplier_budget:.6}");
     println!("METRIC scratch600_direct_restoring_final_cond_mixed4to8_with_block_joint_scan_lookup_2x_mean={direct_restoring_final_cond_mixed4to8_with_block_joint_scan_lookup_2x_mean:.3}");
     println!("METRIC scratch600_direct_restoring_final_cond_mixed4to8_with_block_joint_scan_lookup_2x_gap_to_2700k={direct_restoring_final_cond_mixed4to8_with_block_joint_scan_lookup_2x_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_baseline_mean={direct_restoring_final_selective_pair_lookup_baseline_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_selected_saving_mean={direct_restoring_final_selective_pair_lookup_selected_saving_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_required_saving_mean={direct_restoring_final_selective_pair_lookup_required_saving_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_mean={direct_restoring_final_selective_pair_lookup_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_target_mean={direct_restoring_final_selective_pair_lookup_target_mean:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_gap_to_2700k={direct_restoring_final_selective_pair_lookup_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_selected_positions={direct_restoring_final_selective_pair_lookup_selected_positions}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_support_rows={direct_restoring_final_selective_pair_lookup_support_rows}");
+    println!("METRIC scratch600_direct_restoring_final_selective_pair_lookup_max_patterns={direct_restoring_final_selective_pair_lookup_max_patterns}");
     println!("METRIC scratch600_direct_restoring_final_block_joint_rank_degree_n14={direct_restoring_final_block_joint_rank_degree_n14}");
     println!("METRIC scratch600_direct_restoring_final_block_joint_rank_density_n14={direct_restoring_final_block_joint_rank_density_n14}");
     println!("METRIC scratch600_direct_restoring_final_block_joint_rank_max_rank_n14={direct_restoring_final_block_joint_rank_max_rank_n14}");
@@ -2024,6 +2042,16 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_cond_mixed4to8_block_joint_lookup_multiplier_budget
                 > 2.3,
         "block-joint lookup floor no longer has the expected binary-depth opening/full-scan blocker"
+    );
+    assert!(
+        direct_restoring_final_selective_pair_lookup_selected_saving_mean * 20.0
+            < direct_restoring_final_selective_pair_lookup_required_saving_mean
+            && direct_restoring_final_selective_pair_lookup_gap > 8_000.0
+            && direct_restoring_final_selective_pair_lookup_selected_positions > 0
+            && direct_restoring_final_selective_pair_lookup_support_rows < 1_000
+            && direct_restoring_final_selective_pair_lookup_mean
+                > direct_restoring_final_selective_pair_lookup_target_mean,
+        "selective adjacent-pair lookup now closes the restoring-final parser gap; revisit rank decoder"
     );
     assert!(
         direct_restoring_final_block_joint_rank_degree_n14 >= 14
