@@ -15169,6 +15169,72 @@ mod tests {
         b.free(sign_false);
     }
 
+    fn emit_toy_direct_centered_restoring_final_branch_digit_for_centered_test(
+        b: &mut super::super::B,
+        coeff_acc: &[super::super::QubitId],
+        coeff_v: &[super::super::QubitId],
+        branch_digit: super::super::QubitId,
+        q_neg: bool,
+    ) {
+        assert_eq!(coeff_acc.len(), coeff_v.len());
+        let coeff_sign = b.alloc_qubit();
+        if q_neg {
+            b.x(coeff_sign);
+        }
+        let shifted_cv = b.alloc_qubits(coeff_v.len());
+        for i in 0..coeff_v.len() {
+            b.cx(coeff_v[i], shifted_cv[i]);
+        }
+        emit_active_fused_sign_controlled_addsub_digit_for_centered_test(
+            b,
+            coeff_acc,
+            &shifted_cv,
+            branch_digit,
+            coeff_sign,
+        );
+        for i in (0..coeff_v.len()).rev() {
+            b.cx(coeff_v[i], shifted_cv[i]);
+        }
+        b.free_vec(&shifted_cv);
+        if q_neg {
+            b.x(coeff_sign);
+        }
+        b.free(coeff_sign);
+    }
+
+    fn emit_toy_direct_centered_restoring_final_branch_digit_inverse_for_centered_test(
+        b: &mut super::super::B,
+        coeff_acc: &[super::super::QubitId],
+        coeff_v: &[super::super::QubitId],
+        branch_digit: super::super::QubitId,
+        q_neg: bool,
+    ) {
+        assert_eq!(coeff_acc.len(), coeff_v.len());
+        let coeff_sign = b.alloc_qubit();
+        if !q_neg {
+            b.x(coeff_sign);
+        }
+        let shifted_cv = b.alloc_qubits(coeff_v.len());
+        for i in 0..coeff_v.len() {
+            b.cx(coeff_v[i], shifted_cv[i]);
+        }
+        emit_active_fused_sign_controlled_addsub_digit_for_centered_test(
+            b,
+            coeff_acc,
+            &shifted_cv,
+            branch_digit,
+            coeff_sign,
+        );
+        for i in (0..coeff_v.len()).rev() {
+            b.cx(coeff_v[i], shifted_cv[i]);
+        }
+        b.free_vec(&shifted_cv);
+        if !q_neg {
+            b.x(coeff_sign);
+        }
+        b.free(coeff_sign);
+    }
+
     fn emit_toy_direct_centered_restoring_final_adjusted_step_fast_for_centered_test(
         b: &mut super::super::B,
         rem: &[super::super::QubitId],
@@ -16538,6 +16604,254 @@ mod tests {
                 "Centered direct restoring-final single-selector Bennett toy ({suffix}): ccx={ccx}, peak={peak}"
             );
             assert!(ccx < 632, "single-selector cleanup stopped beating the old fast-inverse toy");
+        }
+    }
+
+    #[test]
+    fn direct_centered_restoring_final_branch_digit_bennett_toy_cleans_history() {
+        // The stored low/high coefficient branch can be folded only if the
+        // branch bit behaves like a real extra quotient digit, not a hidden
+        // irreversible selector.  Decode the low candidate with the existing
+        // restoring-final single-selector toy, apply the branch bit as one
+        // controlled unshifted coefficient digit, copy out the useful outputs,
+        // and reverse everything.
+        use sha3::digest::{ExtendableOutput, Update};
+
+        const REM_W: usize = 11;
+        const DIV_W: usize = 4;
+        const COEFF_W: usize = 8;
+        const DIGITS: usize = 6;
+        let raw_from_i64 = |x: i64, width: usize| -> u64 {
+            ((x as i128) & ((1i128 << width) - 1)) as u64
+        };
+        let i64_from_raw = |raw: u64, width: usize| -> i64 {
+            let mask = (1u64 << width) - 1;
+            let raw = raw & mask;
+            if (raw & (1u64 << (width - 1))) != 0 {
+                raw as i64 - (1i64 << width)
+            } else {
+                raw as i64
+            }
+        };
+
+        for q_neg in [false, true] {
+            let mut b = super::super::B::new();
+            let rem = b.alloc_qubits(REM_W);
+            let divisor = b.alloc_qubits(DIV_W);
+            let coeff_acc = b.alloc_qubits(COEFF_W);
+            let coeff_v = b.alloc_qubits(COEFF_W);
+            let rem_copy = b.alloc_qubits(REM_W);
+            let coeff_copy = b.alloc_qubits(COEFF_W);
+            let digit_hist = b.alloc_qubits(DIGITS);
+            let branch_digit = b.alloc_qubit();
+            let final_neg1 = b.alloc_qubit();
+            let final_neg2 = b.alloc_qubit();
+            let final_pos_ge = b.alloc_qubit();
+            let final_lt_tmp = b.alloc_qubit();
+            let start = b.ops.len();
+            emit_toy_direct_centered_restoring_final_single_selector_for_centered_test(
+                &mut b,
+                &rem,
+                &divisor,
+                &coeff_acc,
+                &coeff_v,
+                &digit_hist,
+                final_neg1,
+                final_neg2,
+                final_pos_ge,
+                final_lt_tmp,
+                q_neg,
+            );
+            let branch_start = b.ops.len();
+            emit_toy_direct_centered_restoring_final_branch_digit_for_centered_test(
+                &mut b,
+                &coeff_acc,
+                &coeff_v,
+                branch_digit,
+                q_neg,
+            );
+            let forward_end = b.ops.len();
+            for i in 0..REM_W {
+                b.cx(rem[i], rem_copy[i]);
+            }
+            for i in 0..COEFF_W {
+                b.cx(coeff_acc[i], coeff_copy[i]);
+            }
+            emit_toy_direct_centered_restoring_final_branch_digit_inverse_for_centered_test(
+                &mut b,
+                &coeff_acc,
+                &coeff_v,
+                branch_digit,
+                q_neg,
+            );
+            emit_toy_direct_centered_restoring_final_single_selector_inverse_for_centered_test(
+                &mut b,
+                &rem,
+                &divisor,
+                &coeff_acc,
+                &coeff_v,
+                &digit_hist,
+                final_neg1,
+                final_neg2,
+                final_pos_ge,
+                final_lt_tmp,
+                q_neg,
+            );
+
+            let branch_digit_ccx =
+                local_count_ccx_for_plusminus_cost(&b.ops[branch_start..forward_end]);
+            let forward_ccx = local_count_ccx_for_plusminus_cost(&b.ops[start..forward_end]);
+            let roundtrip_ccx = local_count_ccx_for_plusminus_cost(&b.ops[start..]);
+            let peak = b.peak_qubits;
+            let num_qubits = b.next_qubit as usize;
+            let num_bits = b.next_bit as usize;
+            let ops = b.ops;
+            let rem_mask = (1u64 << REM_W) - 1;
+            let coeff_mask = (1u64 << COEFF_W) - 1;
+            let div_mask = (1u64 << DIV_W) - 1;
+            let mut branch_one_cases = 0usize;
+            for branch in 0u64..=1 {
+                for d in 1u64..(1u64 << DIV_W) {
+                    for n in 0u64..49u64 {
+                        for cu0 in -5i64..=5i64 {
+                            for cv0 in -2i64..=2i64 {
+                                let adjusted = n + (d >> 1);
+                                let low_q = (adjusted / d) as i64;
+                                let expected_q = low_q + branch as i64;
+                                let expected_rem = n as i64 - low_q * d as i64;
+                                let expected_coeff = if q_neg {
+                                    cu0 + expected_q * cv0
+                                } else {
+                                    cu0 - expected_q * cv0
+                                };
+                                assert!(
+                                    (-128..128).contains(&expected_coeff),
+                                    "toy coefficient fixture overflowed"
+                                );
+                                let mut hasher = sha3::Shake128::default();
+                                hasher.update(
+                                    b"direct-centered-restoring-final-branch-digit-bennett-toy-v1",
+                                );
+                                hasher.update(&[q_neg as u8, branch as u8]);
+                                let mut xof = hasher.finalize_xof();
+                                let mut sim =
+                                    crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+                                set_slice_u512_pm(&mut sim, &rem, U512::from(adjusted));
+                                set_slice_u512_pm(&mut sim, &divisor, U512::from(d));
+                                set_slice_u512_pm(
+                                    &mut sim,
+                                    &coeff_acc,
+                                    U512::from(raw_from_i64(cu0, COEFF_W)),
+                                );
+                                set_slice_u512_pm(
+                                    &mut sim,
+                                    &coeff_v,
+                                    U512::from(raw_from_i64(cv0, COEFF_W)),
+                                );
+                                if branch != 0 {
+                                    *sim.qubit_mut(branch_digit) = 1;
+                                    branch_one_cases += 1;
+                                }
+                                sim.apply(&ops);
+
+                                let rem_restored =
+                                    get_slice_u512_pm(&sim, &rem).as_limbs()[0] & rem_mask;
+                                let div_out =
+                                    get_slice_u512_pm(&sim, &divisor).as_limbs()[0] & div_mask;
+                                let rem_out = i64_from_raw(
+                                    get_slice_u512_pm(&sim, &rem_copy).as_limbs()[0] & rem_mask,
+                                    REM_W,
+                                );
+                                let coeff_restored = i64_from_raw(
+                                    get_slice_u512_pm(&sim, &coeff_acc).as_limbs()[0] & coeff_mask,
+                                    COEFF_W,
+                                );
+                                let coeff_out = i64_from_raw(
+                                    get_slice_u512_pm(&sim, &coeff_copy).as_limbs()[0] & coeff_mask,
+                                    COEFF_W,
+                                );
+                                let coeff_v_out = i64_from_raw(
+                                    get_slice_u512_pm(&sim, &coeff_v).as_limbs()[0] & coeff_mask,
+                                    COEFF_W,
+                                );
+                                let hist = get_slice_u512_pm(&sim, &digit_hist).as_limbs()[0];
+                                assert_eq!(
+                                    rem_restored, adjusted,
+                                    "low numerator was not restored n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    rem_out, expected_rem,
+                                    "copied low centered remainder mismatch n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    coeff_restored, cu0,
+                                    "coefficient accumulator was not restored n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    coeff_out, expected_coeff,
+                                    "branch digit coefficient mismatch n={n} d={d} branch={branch} cu0={cu0} cv0={cv0} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    coeff_v_out, cv0,
+                                    "coeff_v changed n={n} d={d} branch={branch} cv0={cv0} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    sim.qubit(branch_digit) & 1,
+                                    branch,
+                                    "branch digit control changed n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    hist, 0,
+                                    "digit history leaked n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    sim.qubit(final_neg1) & 1,
+                                    0,
+                                    "final_neg1 leaked n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    sim.qubit(final_neg2) & 1,
+                                    0,
+                                    "final_neg2 leaked n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    sim.qubit(final_pos_ge) & 1,
+                                    0,
+                                    "final_pos_ge leaked n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    sim.qubit(final_lt_tmp) & 1,
+                                    0,
+                                    "final_lt_tmp leaked n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    div_out, d,
+                                    "divisor changed n={n} d={d} branch={branch} q_neg={q_neg}"
+                                );
+                                assert_eq!(
+                                    sim.global_phase() & 1,
+                                    0,
+                                    "unexpected phase n={n} d={d} branch={branch} cu0={cu0} cv0={cv0} q_neg={q_neg}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            let suffix = if q_neg { "qneg" } else { "qpos" };
+            println!("METRIC centered_direct_restoring_final_branch_digit_toy_{suffix}_branch_ccx={branch_digit_ccx}");
+            println!("METRIC centered_direct_restoring_final_branch_digit_toy_{suffix}_forward_ccx={forward_ccx}");
+            println!("METRIC centered_direct_restoring_final_branch_digit_toy_{suffix}_roundtrip_ccx={roundtrip_ccx}");
+            println!("METRIC centered_direct_restoring_final_branch_digit_toy_{suffix}_peak_q={peak}");
+            println!("METRIC centered_direct_restoring_final_branch_digit_toy_{suffix}_branch_one_cases={branch_one_cases}");
+            eprintln!(
+                "Centered direct restoring-final branch digit Bennett toy ({suffix}): branch_ccx={branch_digit_ccx}, forward_ccx={forward_ccx}, roundtrip_ccx={roundtrip_ccx}, peak={peak}, branch_one_cases={branch_one_cases}"
+            );
+            assert!(branch_one_cases > 0, "toy fixture did not exercise branch=1");
+            assert!(
+                branch_digit_ccx < 80,
+                "branch digit toy stopped looking like one unshifted quotient digit"
+            );
         }
     }
 

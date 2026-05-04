@@ -157,7 +157,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_low_branch_digit_mixed4to8_floor",
             scratch_bits: 663,
             charged_toffoli: Some(2_643_614),
-            blocker: "low-candidate branch-as-final-digit lower bound clears by 56386 and high_q=low_q+1 on the sample set, but no phase-clean controlled final-digit fold through reverse coefficient decoding and parser cleanup has been built",
+            blocker: "low-candidate branch-as-final-digit lower bound clears by 56386, high_q=low_q+1 on the sample set, and a 23-CCX branch digit toy is Bennett-clean, but full-scale reverse decoder/parser integration is still unbuilt",
         },
         Candidate {
             name: "direct_centered_restoring_final_mixed4to8_joint_binary_floor",
@@ -386,6 +386,11 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_single_selector_toy_peak_q = 88usize;
     let direct_restoring_final_single_selector_bennett_toy_ccx = 596usize;
     let direct_restoring_final_single_selector_bennett_toy_peak_q = 108usize;
+    let direct_restoring_final_branch_digit_toy_branch_ccx = 23usize;
+    let direct_restoring_final_branch_digit_toy_forward_ccx = 321usize;
+    let direct_restoring_final_branch_digit_toy_roundtrip_ccx = 642usize;
+    let direct_restoring_final_branch_digit_toy_peak_q = 109usize;
+    let direct_restoring_final_branch_digit_toy_branch_one_cases = 40_425usize;
     let direct_restoring_final_payload_mbu_degree_n14 = 13usize;
     let direct_restoring_final_payload_mbu_density_n14 = 8_284usize;
     let direct_restoring_final_payload_max_n14 = 26usize;
@@ -1179,6 +1184,11 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_single_selector_toy_peak_q={direct_restoring_final_single_selector_toy_peak_q}");
     println!("METRIC scratch600_direct_restoring_final_single_selector_bennett_toy_ccx={direct_restoring_final_single_selector_bennett_toy_ccx}");
     println!("METRIC scratch600_direct_restoring_final_single_selector_bennett_toy_peak_q={direct_restoring_final_single_selector_bennett_toy_peak_q}");
+    println!("METRIC scratch600_direct_restoring_final_branch_digit_toy_branch_ccx={direct_restoring_final_branch_digit_toy_branch_ccx}");
+    println!("METRIC scratch600_direct_restoring_final_branch_digit_toy_forward_ccx={direct_restoring_final_branch_digit_toy_forward_ccx}");
+    println!("METRIC scratch600_direct_restoring_final_branch_digit_toy_roundtrip_ccx={direct_restoring_final_branch_digit_toy_roundtrip_ccx}");
+    println!("METRIC scratch600_direct_restoring_final_branch_digit_toy_peak_q={direct_restoring_final_branch_digit_toy_peak_q}");
+    println!("METRIC scratch600_direct_restoring_final_branch_digit_toy_branch_one_cases={direct_restoring_final_branch_digit_toy_branch_one_cases}");
     println!("METRIC scratch600_direct_restoring_final_payload_mbu_degree_n14={direct_restoring_final_payload_mbu_degree_n14}");
     println!("METRIC scratch600_direct_restoring_final_payload_mbu_density_n14={direct_restoring_final_payload_mbu_density_n14}");
     println!("METRIC scratch600_direct_restoring_final_payload_max_n14={direct_restoring_final_payload_max_n14}");
@@ -1858,6 +1868,19 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_single_selector_bennett_toy_peak_q
                 > direct_restoring_final_bennett_fast_inverse_toy_peak_q,
         "restoring-final select1 toy changed; revisit selector-factor ledger"
+    );
+    assert!(
+        direct_restoring_final_branch_digit_toy_branch_ccx
+            < direct_restoring_final_single_selector_toy_ccx / 10
+            && direct_restoring_final_branch_digit_toy_forward_ccx
+                == direct_restoring_final_single_selector_toy_ccx
+                    + direct_restoring_final_branch_digit_toy_branch_ccx
+            && direct_restoring_final_branch_digit_toy_roundtrip_ccx
+                == 2 * direct_restoring_final_branch_digit_toy_forward_ccx
+            && direct_restoring_final_branch_digit_toy_peak_q
+                == direct_restoring_final_single_selector_bennett_toy_peak_q + 1
+            && direct_restoring_final_branch_digit_toy_branch_one_cases > 0,
+        "restoring-final branch-digit toy changed; revisit low-branch fold integration"
     );
     assert!(
         direct_restoring_final_payload_mbu_degree_n14 + 1 >= 14
