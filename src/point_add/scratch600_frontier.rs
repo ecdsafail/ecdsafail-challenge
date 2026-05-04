@@ -301,7 +301,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "halfgcd_second_column_full_block_endpoint_rank_decoder_opening",
             scratch_bits: 539,
             charged_toffoli: None,
-            blocker: "the outgoing endpoint value can be compressed to a two-bit branch rank per active b32 block: exact n10/n12/n14/n16/n17 toys have at most 4 compatible endpoint/pattern branches per local key, and each coefficient lane has at most two outgoing carry values. A local min-cost endpoint DP reproduces every traced active block in the 4096 secp sample and exact toys (16202 sample blocks, 299013 toy blocks, 0 mismatches), so this is an algorithmic decoder shape rather than pure support lookup. The secp rank-source projection is 2659620 (-40380). The DP choice stream is not an 8-pair local rule (697 collision keys in a 65536-sample holdout), but has a sampled 12-pair horizon (0 collisions over 7370995 choices); exact toys still need the full toy block (k4 has 48 collision keys, k5 has 0). A generic k12 choice table is dead by lower bound: 6874430 sampled keys already imply a one-roundtrip row floor 13708480 over target. Exact toys also have coupled non-cartesian endpoint sets (n17=216 keys, largest=227), so independent carry decoders are not enough; it still needs a proof of the 12-pair horizon plus an algebraic phase-clean joint local DP/rank parser and cleanup",
+            blocker: "the outgoing endpoint value can be compressed to a two-bit branch rank per active b32 block: exact n10/n12/n14/n16/n17 toys have at most 4 compatible endpoint/pattern branches per local key, and each coefficient lane has at most two outgoing carry values. A local min-cost endpoint DP reproduces every traced active block in the 4096 secp sample and exact toys (16202 sample blocks, 299013 toy blocks, 0 mismatches), so this is an algorithmic decoder shape rather than pure support lookup. The secp rank-source projection is 2659620 (-40380). The DP choice stream is not an 8-pair local rule (697 collision keys in a 65536-sample holdout), but has a sampled 12-pair horizon (0 collisions over 7370995 choices); exact toys still need the full toy block (k4 has 48 collision keys, k5 has 0). A generic k12 choice table is dead by lower bound: 6874430 sampled keys already imply a one-roundtrip row floor 13708480 over target. Exact toys also have coupled non-cartesian endpoint sets (n17=216 keys, largest=227), so independent carry decoders are not enough; splitting the DP choice by coefficient lane is also false (sample k12 lane collisions 75247/79247, exact full-toy lane collisions 89/101). It still needs a proof of the 12-pair horizon plus an algebraic phase-clean joint local DP/rank parser and cleanup",
         },
         Candidate {
             name: "halfgcd_second_column_zero_row_id_noactive_floor",
@@ -2211,6 +2211,22 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_mean as isize
             + halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_one_roundtrip_floor as isize
             - GOOGLE_LOW_QUBIT_TOFFOLI as isize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_keys =
+        824_065usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_collision_keys =
+        75_247usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_keys =
+        800_896usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_collision_keys =
+        79_247usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_keys =
+        1_139usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_collision_keys =
+        89usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_keys =
+        1_185usize;
+    let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_collision_keys =
+        101usize;
     let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c0_variants =
         2usize;
     let halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c1_variants =
@@ -3743,6 +3759,14 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_collision_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_collision_keys}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_one_roundtrip_floor={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_one_roundtrip_floor}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_one_roundtrip_gap={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_one_roundtrip_gap}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_collision_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_collision_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_collision_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_collision_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_collision_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_collision_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_keys}");
+    println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_collision_keys={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_collision_keys}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c0_variants={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c0_variants}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c1_variants={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c1_variants}");
     println!("METRIC scratch600_halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_non_cartesian={halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_non_cartesian}");
@@ -5347,6 +5371,22 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
                 == 0
             && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_one_roundtrip_gap
                 > 10_000_000
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_keys
+                == 824_065
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane0_collision_keys
+                == 75_247
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_keys
+                == 800_896
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_k12_lane1_collision_keys
+                == 79_247
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_keys
+                == 1_139
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane0_collision_keys
+                == 89
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_keys
+                == 1_185
+            && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_dp_lookahead_toy_full_lane1_collision_keys
+                == 101
             && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c0_variants
                 == 2
             && halfgcd_second_col_fixed_depth64_full_block_pattern_endpoint_rank_split_largest_c1_variants

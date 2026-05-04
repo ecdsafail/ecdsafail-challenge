@@ -11359,6 +11359,28 @@ mod tests {
             word
         }
 
+        fn lane_window_bits(
+            x: U512,
+            block_idx: usize,
+            block: usize,
+            total_bits: usize,
+            offset: usize,
+            lookahead: usize,
+        ) -> u128 {
+            let base = block_idx * block + offset;
+            let mut word = 0u128;
+            for k in 0..lookahead {
+                let bit = base + k;
+                let b = if bit >= total_bits || bit >= 512 {
+                    0
+                } else {
+                    ((x >> bit).as_limbs()[0] & 1) as u128
+                };
+                word |= b << k;
+            }
+            word
+        }
+
         let endpoint_state = |block_idx: usize, block_start_states: &[u8]| -> u8 {
             block_start_states
                 .get(block_idx + 1)
@@ -11403,6 +11425,57 @@ mod tests {
                 }
             }
         };
+        let record_lane = |lane0_map: &mut BTreeMap<(usize, usize, usize, usize, usize, u128), u8>,
+                           lane0_collisions: &mut BTreeSet<(usize, usize, usize, usize, usize, u128)>,
+                           lane1_map: &mut BTreeMap<(usize, usize, usize, usize, usize, u128), u8>,
+                           lane1_collisions: &mut BTreeSet<(usize, usize, usize, usize, usize, u128)>,
+                           lookahead: usize,
+                           x0: SignedMagU512ForHalfGcdTest,
+                           x1: SignedMagU512ForHalfGcdTest,
+                           block_idx: usize,
+                           block: usize,
+                           total_bits: usize,
+                           choice: Choice| {
+            let end_c0i = (choice.end_state / 3) as usize;
+            let end_c1i = (choice.end_state % 3) as usize;
+            let key0 = (
+                choice.offset,
+                choice.len,
+                choice.c0i,
+                choice.seen,
+                end_c0i,
+                lane_window_bits(x0.mag, block_idx, block, total_bits, choice.offset, lookahead),
+            );
+            let digit0 = choice.digit_pair >> 2;
+            match lane0_map.get(&key0).copied() {
+                Some(old) if old != digit0 => {
+                    lane0_collisions.insert(key0);
+                }
+                Some(_) => {}
+                None => {
+                    lane0_map.insert(key0, digit0);
+                }
+            }
+
+            let key1 = (
+                choice.offset,
+                choice.len,
+                choice.c1i,
+                choice.seen,
+                end_c1i,
+                lane_window_bits(x1.mag, block_idx, block, total_bits, choice.offset, lookahead),
+            );
+            let digit1 = choice.digit_pair & 3;
+            match lane1_map.get(&key1).copied() {
+                Some(old) if old != digit1 => {
+                    lane1_collisions.insert(key1);
+                }
+                Some(_) => {}
+                None => {
+                    lane1_map.insert(key1, digit1);
+                }
+            }
+        };
 
         const DEPTH: usize = 64;
         const BLOCK: usize = 32;
@@ -11410,6 +11483,10 @@ mod tests {
         const SAMPLE_LOOKAHEADS: [usize; 8] = [0, 2, 4, 6, 8, 12, 16, 32];
         let mut sample_maps = vec![BTreeMap::new(); SAMPLE_LOOKAHEADS.len()];
         let mut sample_collisions = vec![BTreeSet::new(); SAMPLE_LOOKAHEADS.len()];
+        let mut sample_lane0_map = BTreeMap::new();
+        let mut sample_lane0_collisions = BTreeSet::new();
+        let mut sample_lane1_map = BTreeMap::new();
+        let mut sample_lane1_collisions = BTreeSet::new();
         let mut rng = 0x10ca_1dec_0de5_ec4u64;
         let mut sample_choices = 0usize;
         let mut sample_mismatches = 0usize;
@@ -11451,6 +11528,19 @@ mod tests {
                         total_bits,
                         choice,
                     );
+                    record_lane(
+                        &mut sample_lane0_map,
+                        &mut sample_lane0_collisions,
+                        &mut sample_lane1_map,
+                        &mut sample_lane1_collisions,
+                        12,
+                        b,
+                        d,
+                        block_idx,
+                        BLOCK,
+                        total_bits,
+                        choice,
+                    );
                 }
             }
         }
@@ -11470,6 +11560,22 @@ mod tests {
                 sample_collisions[idx].len()
             );
         }
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_sample_k12_lane0_keys={}",
+            sample_lane0_map.len()
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_sample_k12_lane0_collision_keys={}",
+            sample_lane0_collisions.len()
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_sample_k12_lane1_keys={}",
+            sample_lane1_map.len()
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_sample_k12_lane1_collision_keys={}",
+            sample_lane1_collisions.len()
+        );
 
         const TOY_LOOKAHEADS: [usize; 6] = [0, 1, 2, 3, 4, 5];
         let cases = [
@@ -11481,6 +11587,10 @@ mod tests {
         ];
         let mut toy_maps = vec![BTreeMap::new(); TOY_LOOKAHEADS.len()];
         let mut toy_collisions = vec![BTreeSet::new(); TOY_LOOKAHEADS.len()];
+        let mut toy_lane0_map = BTreeMap::new();
+        let mut toy_lane0_collisions = BTreeSet::new();
+        let mut toy_lane1_map = BTreeMap::new();
+        let mut toy_lane1_collisions = BTreeSet::new();
         let mut toy_choices_total = 0usize;
         let mut toy_mismatches_total = 0usize;
         for &(toy_n, toy_p, toy_block) in &cases {
@@ -11524,6 +11634,19 @@ mod tests {
                             total_bits,
                             choice,
                         );
+                        record_lane(
+                            &mut toy_lane0_map,
+                            &mut toy_lane0_collisions,
+                            &mut toy_lane1_map,
+                            &mut toy_lane1_collisions,
+                            toy_block,
+                            b,
+                            d,
+                            block_idx,
+                            toy_block,
+                            total_bits,
+                            choice,
+                        );
                     }
                 }
             }
@@ -11544,13 +11667,33 @@ mod tests {
                 toy_collisions[idx].len()
             );
         }
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_toy_full_lane0_keys={}",
+            toy_lane0_map.len()
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_toy_full_lane0_collision_keys={}",
+            toy_lane0_collisions.len()
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_toy_full_lane1_keys={}",
+            toy_lane1_map.len()
+        );
+        println!(
+            "METRIC halfgcd_full_block_endpoint_dp_lookahead_toy_full_lane1_collision_keys={}",
+            toy_lane1_collisions.len()
+        );
         eprintln!(
-            "half-GCD endpoint DP lookahead: sample_choices={sample_choices}, sample_k12_collisions={}, sample_k16_collisions={}, sample_k32_collisions={}, toy_k4_collisions={}, toy_k5_collisions={}",
+            "half-GCD endpoint DP lookahead: sample_choices={sample_choices}, sample_k12_collisions={}, sample_k16_collisions={}, sample_k32_collisions={}, sample_lane_collisions=({},{}), toy_k4_collisions={}, toy_k5_collisions={}, toy_lane_collisions=({},{})",
             sample_collisions[5].len(),
             sample_collisions[6].len(),
             sample_collisions[7].len(),
+            sample_lane0_collisions.len(),
+            sample_lane1_collisions.len(),
             toy_collisions[4].len(),
-            toy_collisions[5].len()
+            toy_collisions[5].len(),
+            toy_lane0_collisions.len(),
+            toy_lane1_collisions.len()
         );
 
         assert_eq!(
@@ -11570,6 +11713,10 @@ mod tests {
             0,
             "12-pair local lookahead no longer determines sampled endpoint DP choices"
         );
+        assert!(
+            !sample_lane0_collisions.is_empty() || !sample_lane1_collisions.is_empty(),
+            "sampled endpoint DP choices now split by coefficient lane; build independent lane parsers"
+        );
         assert_eq!(
             sample_collisions[7].len(),
             0,
@@ -11583,6 +11730,10 @@ mod tests {
             toy_collisions[5].len(),
             0,
             "full toy suffix does not determine endpoint DP choices"
+        );
+        assert!(
+            !toy_lane0_collisions.is_empty() || !toy_lane1_collisions.is_empty(),
+            "exact toy endpoint DP choices now split by coefficient lane; build independent lane parsers"
         );
     }
 
