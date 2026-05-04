@@ -32619,6 +32619,162 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_signnorm_nohistory_normalization_roundtrip_is_clean() {
+        // Stronger local integration check for the no-history signnorm route.
+        // Forward cleanup starts with the raw signed post-step row, uses the raw
+        // remainder sign as a temporary normalization latch, normalizes the
+        // remainder/coefficient pair, then clears that latch by recomputing the
+        // det-low2 predicate on the normalized row. Reverse cleanup starts from
+        // the normalized row, recovers the same latch, undoes both cnegs, and
+        // clears the latch with the restored raw remainder sign.
+        use sha3::digest::{ExtendableOutput, Update};
+
+        const REM_W: usize = 5;
+        const COEFF_W: usize = 6;
+        let p = 13i128;
+        let p_low2 = (p & 3) as u8;
+        let mut b = super::super::B::new();
+        let v = b.alloc_qubits(REM_W);
+        let next_v = b.alloc_qubits(REM_W);
+        let coeff_v = b.alloc_qubits(COEFF_W);
+        let next_coeff = b.alloc_qubits(COEFF_W);
+        let next_v_copy = b.alloc_qubits(REM_W);
+        let next_coeff_copy = b.alloc_qubits(COEFF_W);
+        let recovered = b.alloc_qubit();
+        let start = b.ops.len();
+        b.cx(next_v[REM_W - 1], recovered);
+        emit_twos_cneg_exact_for_centered_test(&mut b, &next_v, recovered);
+        emit_twos_cneg_exact_for_centered_test(&mut b, &next_coeff, recovered);
+        emit_toy_signnorm_det_low2_coeff_sign_predicate_for_centered_test(
+            &mut b,
+            [v[0], v[1]],
+            [next_v[0], next_v[1]],
+            [coeff_v[0], coeff_v[1]],
+            [next_coeff[0], next_coeff[1]],
+            coeff_v[COEFF_W - 1],
+            recovered,
+            p_low2,
+        );
+        for i in 0..REM_W {
+            b.cx(next_v[i], next_v_copy[i]);
+        }
+        for i in 0..COEFF_W {
+            b.cx(next_coeff[i], next_coeff_copy[i]);
+        }
+        emit_toy_signnorm_det_low2_coeff_sign_predicate_for_centered_test(
+            &mut b,
+            [v[0], v[1]],
+            [next_v[0], next_v[1]],
+            [coeff_v[0], coeff_v[1]],
+            [next_coeff[0], next_coeff[1]],
+            coeff_v[COEFF_W - 1],
+            recovered,
+            p_low2,
+        );
+        emit_twos_cneg_exact_for_centered_test(&mut b, &next_v, recovered);
+        emit_twos_cneg_exact_for_centered_test(&mut b, &next_coeff, recovered);
+        b.cx(next_v[REM_W - 1], recovered);
+        let ccx = local_count_ccx_for_plusminus_cost(&b.ops[start..]);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let raw_from_i128 = |x: i128, width: usize| -> u64 {
+            (x & ((1i128 << width) - 1)) as u64
+        };
+        let mut valid_states = 0usize;
+        let mut exercised_norm_cases = 0usize;
+        let mut dirty_recovered_cases = 0usize;
+        let mut wrong_raw_remainder_cases = 0usize;
+        let mut wrong_raw_coeff_cases = 0usize;
+        let mut wrong_norm_remainder_cases = 0usize;
+        let mut wrong_norm_coeff_cases = 0usize;
+        let mut phase_dirty_cases = 0usize;
+        for x in 1..p {
+            let mut u = p;
+            let mut vv = x;
+            let mut coeff_u = 0i128;
+            let mut coeff_vv = 1i128;
+            while vv != 0 {
+                let adjusted = u + (vv >> 1);
+                let q = adjusted / vv;
+                let rem = u - q * vv;
+                let norm_sign = rem < 0;
+                let next_vv = rem.abs();
+                let next_coeff_raw = coeff_u - q * coeff_vv;
+                let next_coeff_norm = if norm_sign {
+                    -next_coeff_raw
+                } else {
+                    next_coeff_raw
+                };
+                if next_vv != 0 {
+                    valid_states += 1;
+                    exercised_norm_cases += norm_sign as usize;
+                    let mut hasher = sha3::Shake128::default();
+                    hasher.update(b"signnorm-nohistory-normalization-roundtrip-v1");
+                    let mut xof = hasher.finalize_xof();
+                    let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+                    set_slice_u512_pm(&mut sim, &v, U512::from(vv as u64));
+                    set_slice_u512_pm(&mut sim, &next_v, U512::from(raw_from_i128(rem, REM_W)));
+                    set_slice_u512_pm(
+                        &mut sim,
+                        &coeff_v,
+                        U512::from(raw_from_i128(coeff_vv, COEFF_W)),
+                    );
+                    set_slice_u512_pm(
+                        &mut sim,
+                        &next_coeff,
+                        U512::from(raw_from_i128(next_coeff_raw, COEFF_W)),
+                    );
+                    sim.apply(&ops);
+                    dirty_recovered_cases += ((sim.qubit(recovered) & 1) != 0) as usize;
+                    wrong_raw_remainder_cases += (get_slice_u512_pm(&sim, &next_v).as_limbs()[0]
+                        & ((1u64 << REM_W) - 1)
+                        != raw_from_i128(rem, REM_W)) as usize;
+                    wrong_raw_coeff_cases += (get_slice_u512_pm(&sim, &next_coeff).as_limbs()[0]
+                        & ((1u64 << COEFF_W) - 1)
+                        != raw_from_i128(next_coeff_raw, COEFF_W)) as usize;
+                    wrong_norm_remainder_cases +=
+                        (get_slice_u512_pm(&sim, &next_v_copy).as_limbs()[0]
+                            & ((1u64 << REM_W) - 1)
+                            != raw_from_i128(next_vv, REM_W)) as usize;
+                    wrong_norm_coeff_cases +=
+                        (get_slice_u512_pm(&sim, &next_coeff_copy).as_limbs()[0]
+                            & ((1u64 << COEFF_W) - 1)
+                            != raw_from_i128(next_coeff_norm, COEFF_W)) as usize;
+                    phase_dirty_cases += ((sim.global_phase() & 1) != 0) as usize;
+                }
+                u = vv;
+                vv = next_vv;
+                coeff_u = coeff_vv;
+                coeff_vv = next_coeff_norm;
+            }
+        }
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_ccx={ccx}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_peak_q={peak}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_valid_states={valid_states}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_norm_cases={exercised_norm_cases}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_dirty_cases={dirty_recovered_cases}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_wrong_raw_remainder_cases={wrong_raw_remainder_cases}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_wrong_raw_coeff_cases={wrong_raw_coeff_cases}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_wrong_norm_remainder_cases={wrong_norm_remainder_cases}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_wrong_norm_coeff_cases={wrong_norm_coeff_cases}");
+        println!("METRIC centered_direct_signnorm_nohistory_normalization_roundtrip_phase_dirty_cases={phase_dirty_cases}");
+        eprintln!(
+            "Signnorm no-history normalization roundtrip: ccx={ccx}, peak={peak}, valid={valid_states}, norm_cases={exercised_norm_cases}, dirty={dirty_recovered_cases}, raw_rem={wrong_raw_remainder_cases}, raw_coeff={wrong_raw_coeff_cases}, norm_rem={wrong_norm_remainder_cases}, norm_coeff={wrong_norm_coeff_cases}, phase_dirty={phase_dirty_cases}"
+        );
+        assert!(valid_states > 0, "toy did not produce exact post-step rows");
+        assert!(exercised_norm_cases > 0, "toy did not exercise normalization");
+        assert_eq!(dirty_recovered_cases, 0, "no-history norm latch leaked");
+        assert_eq!(wrong_raw_remainder_cases, 0, "work remainder was not restored to raw");
+        assert_eq!(wrong_raw_coeff_cases, 0, "work coefficient was not restored to raw");
+        assert_eq!(wrong_norm_remainder_cases, 0, "normalized remainder copy was wrong");
+        assert_eq!(wrong_norm_coeff_cases, 0, "normalized coefficient copy was wrong");
+        assert_eq!(phase_dirty_cases, 0, "no-history normalization roundtrip introduced phase dirt");
+        assert_eq!(ccx, 64, "no-history normalization roundtrip cost drifted");
+    }
+
+    #[test]
     fn direct_centered_signed_domain_nonrestoring_floor_toy_is_phase_clean() {
         // Structural check for the sign-normalized direct route: consume signed
         // two's-complement residual and divisor lanes directly.  The streamed

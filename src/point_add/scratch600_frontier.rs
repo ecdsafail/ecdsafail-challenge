@@ -145,7 +145,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_signnorm_logical_coeff_signs",
             scratch_bits: 657,
             charged_toffoli: None,
-            blocker: "det-low2 xor coeff_v_sign removes the normalization-sign sidecar in exact toys, and the local predicate toy is phase-clean at 14 CCX. Exact-rem logical-sign accounting clears the average harness metric before cleanup at 2575314 mean / 2574268 first64; the former predicate-roundtrip estimate was 2581169 mean / 2580122 first64 with p99 2753624. A paired remainder+coefficient cneg followed by raw-remainder-sign latch clear restores raw rows, clears the latch, and is phase-clean on exact p13 rows (32 CCX, 0/16 dirty), reducing the recovery estimate to 2578241 mean / 2577195 first64 while p99 remains 2750292. Promotion now needs the full direct-centered extractor, exact normalized-rem cneg, coefficient-sign recovery, raw-sign latch cleanup, and reverse cleanup wired into the production point-add; p99 is still above 2.7M in the conservative ledger, but the measured objective is average",
+            blocker: "det-low2 xor coeff_v_sign removes the normalization-sign sidecar in exact toys, and the local predicate toy is phase-clean at 14 CCX. Exact-rem logical-sign accounting clears the average harness metric before cleanup at 2575314 mean / 2574268 first64; the former predicate-roundtrip estimate was 2581169 mean / 2580122 first64 with p99 2753624. A paired remainder+coefficient cneg followed by raw-remainder-sign latch clear restores raw rows, clears the latch, and is phase-clean on exact p13 rows (32 CCX, 0/16 dirty), reducing the recovery estimate to 2578241 mean / 2577195 first64 while p99 remains 2750292. A stronger no-history local normalization roundtrip also cleans both forward and reverse latches while copying the normalized row (64 CCX, 0/16 dirty, phase-clean). Promotion now needs the full direct-centered extractor, exact normalized-rem cneg, coefficient-sign recovery, no-history latch cleanup, and reverse cleanup wired into the production point-add; p99 is still above 2.7M in the conservative ledger, but the measured objective is average",
         },
         Candidate {
             name: "direct_centered_restoring_final_stored_alignment",
@@ -483,6 +483,16 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_remainder_cases = 0usize;
     let direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_coeff_cases = 0usize;
     let direct_signnorm_logsign_paired_cneg_raw_sign_clear_phase_dirty_cases = 0usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_ccx = 64usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_peak_q = 41usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_valid_states = 16usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_norm_cases = 7usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_dirty_cases = 0usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_remainder_cases = 0usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_coeff_cases = 0usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_remainder_cases = 0usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_coeff_cases = 0usize;
+    let direct_signnorm_logsign_nohistory_norm_roundtrip_phase_dirty_cases = 0usize;
     let direct_signnorm_mbu_degree_n14 = 13usize;
     let direct_signnorm_mbu_density_n14 = 8_208usize;
     let direct_signnorm_mbu_max_count_n14 = 8usize;
@@ -2012,6 +2022,16 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_remainder_cases={direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_remainder_cases}");
     println!("METRIC scratch600_direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_coeff_cases={direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_coeff_cases}");
     println!("METRIC scratch600_direct_signnorm_logsign_paired_cneg_raw_sign_clear_phase_dirty_cases={direct_signnorm_logsign_paired_cneg_raw_sign_clear_phase_dirty_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_ccx={direct_signnorm_logsign_nohistory_norm_roundtrip_ccx}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_peak_q={direct_signnorm_logsign_nohistory_norm_roundtrip_peak_q}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_valid_states={direct_signnorm_logsign_nohistory_norm_roundtrip_valid_states}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_norm_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_norm_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_dirty_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_dirty_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_remainder_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_remainder_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_coeff_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_coeff_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_remainder_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_remainder_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_coeff_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_coeff_cases}");
+    println!("METRIC scratch600_direct_signnorm_logsign_nohistory_norm_roundtrip_phase_dirty_cases={direct_signnorm_logsign_nohistory_norm_roundtrip_phase_dirty_cases}");
     println!("METRIC scratch600_direct_signnorm_logsign_exact_once_p99={direct_signnorm_logsign_exact_once_p99}");
     println!("METRIC scratch600_direct_signnorm_logsign_exact_split_p99={direct_signnorm_logsign_exact_split_p99}");
     println!("METRIC scratch600_direct_signnorm_logsign_no_rem_cneg_projection_p99={direct_signnorm_logsign_no_rem_cneg_projection_p99}");
@@ -3263,6 +3283,19 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_signnorm_logsign_paired_cneg_raw_sign_clear_wrong_coeff_cases == 0
             && direct_signnorm_logsign_paired_cneg_raw_sign_clear_phase_dirty_cases == 0,
         "raw-remainder sign no longer clears the signnorm recovered latch"
+    );
+    assert!(
+        direct_signnorm_logsign_nohistory_norm_roundtrip_ccx == 64
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_peak_q == 41
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_valid_states == 16
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_norm_cases == 7
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_dirty_cases == 0
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_remainder_cases == 0
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_raw_coeff_cases == 0
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_remainder_cases == 0
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_wrong_norm_coeff_cases == 0
+            && direct_signnorm_logsign_nohistory_norm_roundtrip_phase_dirty_cases == 0,
+        "signnorm no-history normalization roundtrip changed; revisit latch-cleanup accounting"
     );
     assert!(
         direct_signnorm_logsign_direct_rem_toy_ccx == 148
