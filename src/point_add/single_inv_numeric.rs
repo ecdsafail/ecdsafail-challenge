@@ -21017,9 +21017,11 @@ mod tests {
         };
 
         let mut best: Option<(usize, f64, usize, usize, usize, usize, f64)> = None;
+        let mut block4: Option<(f64, usize, usize, usize, usize, f64)> = None;
+        let mut block6: Option<(f64, usize, usize, usize, usize, f64)> = None;
         let mut block32: Option<(f64, usize, usize, usize, usize, f64)> = None;
         let mut best_cond_branch: Option<(usize, f64, usize, usize, usize, usize, f64)> = None;
-        for &block_symbols in &[8usize, 12, 16, 24, 32, 48, 64, 96, 128] {
+        for &block_symbols in &[2usize, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128] {
             let mut compressed_bits_rows = Vec::with_capacity(samples);
             let mut live_scratch_rows = Vec::with_capacity(samples);
             let mut symbol_count_rows = Vec::with_capacity(samples);
@@ -21102,6 +21104,26 @@ mod tests {
                     augmented_gap,
                 ));
             }
+            if block_symbols == 4 {
+                block4 = Some((
+                    touch_mean,
+                    touch_p99,
+                    compressed_p99,
+                    scratch_p99,
+                    symbol_count_p99,
+                    augmented_gap,
+                ));
+            }
+            if block_symbols == 6 {
+                block6 = Some((
+                    touch_mean,
+                    touch_p99,
+                    compressed_p99,
+                    scratch_p99,
+                    symbol_count_p99,
+                    augmented_gap,
+                ));
+            }
             let scratch_fit = scratch_p99 <= GOOGLE_SCRATCH;
             let row = (
                 block_symbols,
@@ -21158,6 +21180,22 @@ mod tests {
             best_symbol_count_p99,
             best_augmented_gap,
         ) = best.unwrap();
+        let (
+            block4_touch_mean,
+            block4_touch_p99,
+            block4_compressed_p99,
+            block4_scratch_p99,
+            block4_symbol_count_p99,
+            block4_augmented_gap,
+        ) = block4.unwrap();
+        let (
+            block6_touch_mean,
+            block6_touch_p99,
+            block6_compressed_p99,
+            block6_scratch_p99,
+            block6_symbol_count_p99,
+            block6_augmented_gap,
+        ) = block6.unwrap();
         let (
             block32_touch_mean,
             block32_touch_p99,
@@ -21280,6 +21318,7 @@ mod tests {
         let best_with_lookup_gap = STORED_BRANCH_MEAN + 4.0 * best_with_lookup_mean - TARGET;
         let binary_lookup_floor_mean = mean_usize(&binary_lookup_floor_rows);
         let binary_lookup_floor_p99 = p99_usize(&mut binary_lookup_floor_rows);
+        let oneway_parser_budget = (TARGET - STORED_BRANCH_MEAN) / 4.0;
         let cond_branch_binary_lookup_floor_mean =
             mean_usize(&cond_branch_binary_lookup_floor_rows);
         let cond_branch_binary_lookup_floor_p99 =
@@ -21287,6 +21326,12 @@ mod tests {
         let best_with_binary_lookup_mean = best_touch_mean + binary_lookup_floor_mean;
         let best_with_binary_lookup_2x_mean =
             best_touch_mean + 2.0 * binary_lookup_floor_mean;
+        let block4_with_binary_lookup_2x_mean =
+            block4_touch_mean + 2.0 * binary_lookup_floor_mean;
+        let block4_with_binary_lookup_2x_gap =
+            STORED_BRANCH_MEAN + 4.0 * block4_with_binary_lookup_2x_mean - TARGET;
+        let block4_lookup_multiplier_budget =
+            (oneway_parser_budget - block4_touch_mean) / binary_lookup_floor_mean;
         let best_with_binary_lookup_gap =
             STORED_BRANCH_MEAN + 4.0 * best_with_binary_lookup_mean - TARGET;
         let best_with_binary_lookup_2x_gap =
@@ -21299,7 +21344,6 @@ mod tests {
             STORED_BRANCH_MEAN + 4.0 * best_cond_branch_with_binary_lookup_mean - TARGET;
         let best_cond_branch_with_binary_lookup_2x_gap =
             STORED_BRANCH_MEAN + 4.0 * best_cond_branch_with_binary_lookup_2x_mean - TARGET;
-        let oneway_parser_budget = (TARGET - STORED_BRANCH_MEAN) / 4.0;
         println!("METRIC centered_direct_restoring_final_block_parser_model_precision_bits={model_precision_bits}");
         println!("METRIC centered_direct_restoring_final_block_parser_oneway_budget={oneway_parser_budget:.3}");
         println!("METRIC centered_direct_restoring_final_block_parser_best_block_symbols={best_block}");
@@ -21315,6 +21359,18 @@ mod tests {
         println!("METRIC centered_direct_restoring_final_block32_live_scratch_p99={block32_scratch_p99}");
         println!("METRIC centered_direct_restoring_final_block32_symbol_count_p99={block32_symbol_count_p99}");
         println!("METRIC centered_direct_restoring_final_block32_augmented_gap_to_2700k={block32_augmented_gap:.3}");
+        println!("METRIC centered_direct_restoring_final_block4_touch_floor_mean={block4_touch_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_block4_touch_floor_p99={block4_touch_p99}");
+        println!("METRIC centered_direct_restoring_final_block4_compressed_bits_p99={block4_compressed_p99}");
+        println!("METRIC centered_direct_restoring_final_block4_live_scratch_p99={block4_scratch_p99}");
+        println!("METRIC centered_direct_restoring_final_block4_symbol_count_p99={block4_symbol_count_p99}");
+        println!("METRIC centered_direct_restoring_final_block4_augmented_gap_to_2700k={block4_augmented_gap:.3}");
+        println!("METRIC centered_direct_restoring_final_block6_touch_floor_mean={block6_touch_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_block6_touch_floor_p99={block6_touch_p99}");
+        println!("METRIC centered_direct_restoring_final_block6_compressed_bits_p99={block6_compressed_p99}");
+        println!("METRIC centered_direct_restoring_final_block6_live_scratch_p99={block6_scratch_p99}");
+        println!("METRIC centered_direct_restoring_final_block6_symbol_count_p99={block6_symbol_count_p99}");
+        println!("METRIC centered_direct_restoring_final_block6_augmented_gap_to_2700k={block6_augmented_gap:.3}");
         println!("METRIC centered_direct_restoring_final_block_parser_cond_branch_best_block_symbols={best_cond_branch_block}");
         println!("METRIC centered_direct_restoring_final_block_parser_cond_branch_best_touch_floor_mean={best_cond_branch_touch_mean:.3}");
         println!("METRIC centered_direct_restoring_final_block_parser_cond_branch_best_touch_floor_p99={best_cond_branch_touch_p99}");
@@ -21339,6 +21395,9 @@ mod tests {
         println!("METRIC centered_direct_restoring_final_block_parser_best_with_binary_lookup_gap_to_2700k={best_with_binary_lookup_gap:.3}");
         println!("METRIC centered_direct_restoring_final_block_parser_best_with_binary_lookup_2x_mean={best_with_binary_lookup_2x_mean:.3}");
         println!("METRIC centered_direct_restoring_final_block_parser_best_with_binary_lookup_2x_gap_to_2700k={best_with_binary_lookup_2x_gap:.3}");
+        println!("METRIC centered_direct_restoring_final_block4_with_binary_lookup_2x_mean={block4_with_binary_lookup_2x_mean:.3}");
+        println!("METRIC centered_direct_restoring_final_block4_with_binary_lookup_2x_gap_to_2700k={block4_with_binary_lookup_2x_gap:.3}");
+        println!("METRIC centered_direct_restoring_final_block4_lookup_multiplier_budget={block4_lookup_multiplier_budget:.6}");
         println!("METRIC centered_direct_restoring_final_block_parser_cond_branch_binary_lookup_floor_mean={cond_branch_binary_lookup_floor_mean:.3}");
         println!("METRIC centered_direct_restoring_final_block_parser_cond_branch_binary_lookup_floor_p99={cond_branch_binary_lookup_floor_p99}");
         println!("METRIC centered_direct_restoring_final_block_parser_cond_branch_best_with_binary_lookup_mean={best_cond_branch_with_binary_lookup_mean:.3}");
@@ -21349,11 +21408,15 @@ mod tests {
         println!("METRIC centered_direct_restoring_final_block_parser_align_support_offset_steps={align_support_offset_steps}");
         println!("METRIC centered_direct_restoring_final_block_parser_align_support_max_span={align_support_max_span}");
         eprintln!(
-            "Direct-centered restoring-final block parser floor: best_block={best_block}, touch_mean={best_touch_mean:.1}, cond_branch_block={best_cond_branch_block}, cond_touch={best_cond_branch_touch_mean:.1}, cond_scratch={best_cond_branch_scratch_p99}, cond_binary2x_gap={best_cond_branch_with_binary_lookup_2x_gap:.1}, qrom_rows={best_qrom_row_floor}, lookup_mean={lookup_scan_floor_mean:.1}, binary_lookup={binary_lookup_floor_mean:.1}, binary2x_gap={best_with_binary_lookup_2x_gap:.1}, noncontig_steps={align_support_noncontig_steps}, touch_plus_lookup={best_with_lookup_mean:.1}, scratch_p99={best_scratch_p99}, compressed_p99={best_compressed_p99}, augmented_gap={best_augmented_gap:.1}, qrom_gap={best_qrom_gap:.1}, lookup_gap={best_with_lookup_gap:.1}, block32_touch={block32_touch_mean:.1}, block32_qrom_rows={block32_qrom_row_floor}, block32_scratch={block32_scratch_p99}"
+            "Direct-centered restoring-final block parser floor: best_block={best_block}, touch_mean={best_touch_mean:.1}, cond_branch_block={best_cond_branch_block}, cond_touch={best_cond_branch_touch_mean:.1}, cond_scratch={best_cond_branch_scratch_p99}, cond_binary2x_gap={best_cond_branch_with_binary_lookup_2x_gap:.1}, qrom_rows={best_qrom_row_floor}, lookup_mean={lookup_scan_floor_mean:.1}, binary_lookup={binary_lookup_floor_mean:.1}, binary2x_gap={best_with_binary_lookup_2x_gap:.1}, noncontig_steps={align_support_noncontig_steps}, touch_plus_lookup={best_with_lookup_mean:.1}, scratch_p99={best_scratch_p99}, compressed_p99={best_compressed_p99}, augmented_gap={best_augmented_gap:.1}, qrom_gap={best_qrom_gap:.1}, lookup_gap={best_with_lookup_gap:.1}, block4_touch={block4_touch_mean:.1}, block4_scratch={block4_scratch_p99}, block4_binary2x_gap={block4_with_binary_lookup_2x_gap:.1}, block4_lookup_multiplier_budget={block4_lookup_multiplier_budget:.3}, block6_touch={block6_touch_mean:.1}, block6_scratch={block6_scratch_p99}, block32_touch={block32_touch_mean:.1}, block32_qrom_rows={block32_qrom_row_floor}, block32_scratch={block32_scratch_p99}"
         );
         assert!(
             best_scratch_p99 <= GOOGLE_SCRATCH,
             "blocked range parser no longer fits scratch; keep monolithic parser demotion"
+        );
+        assert!(
+            block4_scratch_p99 > GOOGLE_SCRATCH || block4_augmented_gap > best_augmented_gap,
+            "tiny block parser became the restoring-final best row; update frontier and revisit lookup cleanup"
         );
         assert!(
             best_touch_mean <= oneway_parser_budget,
