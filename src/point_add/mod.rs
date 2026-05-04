@@ -4369,7 +4369,7 @@ fn mulmod(a: U256, b: U256, p: U256) -> U256 {
 /// (since max(r,s) doubles per iter starting from max=1, so max ≤ 2^iter_idx).
 /// In that range, mod_double(r)'s Solinas cadd is identity — replace with
 /// a plain shift (0 Toffoli) for ~255 CCX savings per iter.
-const R_SMALL_THRESHOLD: usize = 259;
+const R_SMALL_THRESHOLD: usize = 260;
 
 fn r_small_threshold() -> usize {
     std::env::var("KAL_R_SMALL_THRESHOLD")
@@ -8672,7 +8672,7 @@ fn build_standard_point_add(
     // algebra probe with an iteration-threshold phase cliff.  Env overrides are
     // for approximate-correctness threshold research only; default remains the
     // exact checked setting.  For the normal exact path, full-harness probes
-    // after the R_SMALL_THRESHOLD=259 update found pair2=400 clean; pair2=399
+    // after the R_SMALL_THRESHOLD=260 update found pair2=400 clean; pair2=399
     // remains outside the verified safety margin.
     let pair2_default = if tagged_div_validate || pair2_branch_inv { 404 } else { 400 };
     let pair2_iters = std::env::var("KAL_PAIR2_ITERS")
