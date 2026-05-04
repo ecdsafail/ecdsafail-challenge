@@ -303,6 +303,14 @@ fn append_results_row(
     }
 }
 
+fn write_score(avg_tof: f64, qubits: u32) {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/score.txt");
+    let score = avg_tof * f64::from(qubits);
+    if let Err(e) = std::fs::write(path, format!("{score:.3}\n")) {
+        eprintln!("warning: failed to write score.txt: {e}");
+    }
+}
+
 fn main() {
     let note = parse_note();
     println!("=== quantum_ecc: secp256k1 point addition baseline ===\n");
@@ -387,6 +395,7 @@ fn main() {
     println!("  qubits                : {}", total_qubits);
 
     append_results_row("OK", avg_tof, avg_cliff, total_qubits, ops.len(), &note);
+    write_score(avg_tof, total_qubits);
 
     println!("\n=== experiment OK ===");
 }
