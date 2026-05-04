@@ -145,7 +145,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_signnorm_logical_coeff_signs",
             scratch_bits: 657,
             charged_toffoli: Some(2_723_992),
-            blocker: "det-low2 xor coeff_v_sign removes the normalization-sign sidecar in exact toys, and the local predicate toy is phase-clean at 14 CCX. Deleting physical rem cneg would clear p99 by 2720, but the tested signed-remainder recurrence jumps to 3136080 from 180 p99 steps, so this needs a new logical-magnitude step rather than a simple sign-only wire-in",
+            blocker: "det-low2 xor coeff_v_sign removes the normalization-sign sidecar in exact toys, and the local predicate toy is phase-clean at 14 CCX. Deleting physical rem cneg would clear p99 by 2720, but the tested signed-remainder recurrence jumps to 3136080 from 180 p99 steps, and the signed-domain non-restoring body needs a relative-negative zero predicate per digit (toy 416 CCX, scaled predicate 1025 CCX), so there is no simple two's-complement signed-domain wire-in",
         },
         Candidate {
             name: "direct_centered_restoring_final_stored_alignment",
@@ -434,6 +434,11 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_signnorm_det_coeffsign_predicate_p3_ccx = 14usize;
     let direct_signnorm_det_coeffsign_predicate_p3_peak_q = 18usize;
     let direct_signnorm_det_coeffsign_predicate_p3_valid_odd_det_cases = 3_072usize;
+    let direct_signnorm_signed_domain_relative_negative_toy_ccx = 45usize;
+    let direct_signnorm_signed_domain_relative_negative_257_ccx = 1_025usize;
+    let direct_signnorm_signed_domain_floor_toy_ccx = 416usize;
+    let direct_signnorm_signed_domain_floor_toy_peak_q = 62usize;
+    let direct_signnorm_signed_domain_floor_toy_final_negative_cases = 1_984usize;
     let direct_restoring_final_coeff_width_p99 = 47_654usize;
     let direct_restoring_final_digit_payload_p99 = 362usize;
     let direct_restoring_final_raw_digit_scratch_p99 = 256usize + direct_restoring_final_digit_payload_p99;
@@ -1767,6 +1772,11 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_signnorm_det_coeffsign_predicate_p3_ccx={direct_signnorm_det_coeffsign_predicate_p3_ccx}");
     println!("METRIC scratch600_direct_signnorm_det_coeffsign_predicate_p3_peak_q={direct_signnorm_det_coeffsign_predicate_p3_peak_q}");
     println!("METRIC scratch600_direct_signnorm_det_coeffsign_predicate_p3_valid_odd_det_cases={direct_signnorm_det_coeffsign_predicate_p3_valid_odd_det_cases}");
+    println!("METRIC scratch600_direct_signnorm_signed_domain_relative_negative_toy_ccx={direct_signnorm_signed_domain_relative_negative_toy_ccx}");
+    println!("METRIC scratch600_direct_signnorm_signed_domain_relative_negative_257_ccx={direct_signnorm_signed_domain_relative_negative_257_ccx}");
+    println!("METRIC scratch600_direct_signnorm_signed_domain_floor_toy_ccx={direct_signnorm_signed_domain_floor_toy_ccx}");
+    println!("METRIC scratch600_direct_signnorm_signed_domain_floor_toy_peak_q={direct_signnorm_signed_domain_floor_toy_peak_q}");
+    println!("METRIC scratch600_direct_signnorm_signed_domain_floor_toy_final_negative_cases={direct_signnorm_signed_domain_floor_toy_final_negative_cases}");
     println!("METRIC scratch600_direct_restoring_final_coeff_width_p99={direct_restoring_final_coeff_width_p99}");
     println!("METRIC scratch600_direct_restoring_final_digit_payload_p99={direct_restoring_final_digit_payload_p99}");
     println!("METRIC scratch600_direct_restoring_final_raw_digit_scratch_p99={direct_restoring_final_raw_digit_scratch_p99}");
@@ -2856,6 +2866,15 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_signnorm_det_coeffsign_predicate_p3_peak_q <= 18
             && direct_signnorm_det_coeffsign_predicate_p3_valid_odd_det_cases > 3_000,
         "det-low2 coefficient-sign recovery predicate toy changed"
+    );
+    assert!(
+        direct_signnorm_signed_domain_relative_negative_toy_ccx == 45
+            && direct_signnorm_signed_domain_relative_negative_257_ccx
+                > direct_signnorm_logsign_exact_cneg257
+            && direct_signnorm_signed_domain_floor_toy_ccx == 416
+            && direct_signnorm_signed_domain_floor_toy_peak_q == 62
+            && direct_signnorm_signed_domain_floor_toy_final_negative_cases > 1_900,
+        "signed-domain floor body needs an expensive zero-guarded relative sign predicate"
     );
     assert!(
         direct_restoring_final_raw_digit_over_strict > 0

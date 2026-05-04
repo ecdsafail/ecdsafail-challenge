@@ -30076,6 +30076,143 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_signed_domain_nonrestoring_floor_toy_is_phase_clean() {
+        // Structural check for the sign-normalized direct route: consume signed
+        // two's-complement residual and divisor lanes directly.  The streamed
+        // digit is recorded in the numerator's sign domain, while the physical
+        // add/sub direction is corrected by the divisor sign.  This is only the
+        // raw floor body, not the centered half-adjusted production step.
+        use sha3::digest::{ExtendableOutput, Update};
+
+        const REM_W: usize = 12;
+        const DIV_W: usize = 5;
+        const DIGITS: usize = 6;
+        let mut b = super::super::B::new();
+        let rem = b.alloc_qubits(REM_W);
+        let divisor = b.alloc_qubits(DIV_W);
+        let domain_sign = b.alloc_qubit();
+        let digit_hist = b.alloc_qubits(DIGITS);
+        let final_negative = b.alloc_qubit();
+        let start = b.ops.len();
+        emit_toy_signed_domain_nonrestoring_floor_for_centered_test(
+            &mut b,
+            &rem,
+            &divisor,
+            domain_sign,
+            &digit_hist,
+            final_negative,
+        );
+        let ccx = local_count_ccx_for_plusminus_cost(&b.ops[start..]);
+        let peak = b.peak_qubits;
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let raw_from_i64 = |x: i64, width: usize| -> u64 {
+            ((x as i128) & ((1i128 << width) - 1)) as u64
+        };
+        let i64_from_raw = |raw: u64, width: usize| -> i64 {
+            let mask = (1u64 << width) - 1;
+            let raw = raw & mask;
+            if (raw & (1u64 << (width - 1))) != 0 {
+                raw as i64 - (1i64 << width)
+            } else {
+                raw as i64
+            }
+        };
+
+        let mut final_negative_cases = 0usize;
+        for numerator_negative in [false, true] {
+            for divisor_negative in [false, true] {
+                let su = if numerator_negative { -1i64 } else { 1i64 };
+                let sv = if divisor_negative { -1i64 } else { 1i64 };
+                for d in 1i64..(1i64 << (DIV_W - 1)) {
+                    for n in 1i64..(1i64 << DIGITS) {
+                        let mut hasher = sha3::Shake128::default();
+                        hasher.update(b"signed-domain-nonrestoring-floor-v1");
+                        hasher.update(&[numerator_negative as u8, divisor_negative as u8]);
+                        let mut xof = hasher.finalize_xof();
+                        let mut sim =
+                            crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+                        set_slice_u512_pm(
+                            &mut sim,
+                            &rem,
+                            U512::from(raw_from_i64(su * n, REM_W)),
+                        );
+                        set_slice_u512_pm(
+                            &mut sim,
+                            &divisor,
+                            U512::from(raw_from_i64(sv * d, DIV_W)),
+                        );
+                        if numerator_negative {
+                            *sim.qubit_mut(domain_sign) |= 1;
+                        }
+                        sim.apply(&ops);
+
+                        let rem_out =
+                            i64_from_raw(get_slice_u512_pm(&sim, &rem).as_limbs()[0], REM_W);
+                        let divisor_out = i64_from_raw(
+                            get_slice_u512_pm(&sim, &divisor).as_limbs()[0],
+                            DIV_W,
+                        );
+                        let hist = get_slice_u512_pm(&sim, &digit_hist).as_limbs()[0];
+                        let mut q = 0i64;
+                        for sh in 0..DIGITS {
+                            if ((hist >> sh) & 1) == 0 {
+                                q += 1i64 << sh;
+                            } else {
+                                q -= 1i64 << sh;
+                            }
+                        }
+                        if (sim.qubit(final_negative) & 1) != 0 {
+                            q -= 1;
+                            final_negative_cases += 1;
+                        }
+
+                        assert_eq!(q, n / d, "quotient mismatch n={n} d={d} su={su} sv={sv}");
+                        assert_eq!(
+                            rem_out,
+                            su * (n % d),
+                            "remainder mismatch n={n} d={d} su={su} sv={sv}"
+                        );
+                        assert_eq!(
+                            divisor_out,
+                            sv * d,
+                            "divisor changed n={n} d={d} su={su} sv={sv}"
+                        );
+                        assert_eq!(
+                            (sim.qubit(domain_sign) & 1) != 0,
+                            numerator_negative,
+                            "domain sign changed"
+                        );
+                        assert_eq!(
+                            sim.global_phase() & 1,
+                            0,
+                            "unexpected phase n={n} d={d} su={su} sv={sv}"
+                        );
+                    }
+                }
+            }
+        }
+
+        let relative_negative_ccx = 4 * (REM_W - 1) + 1;
+        let expected_ccx =
+            DIGITS * ((REM_W - 1) + relative_negative_ccx)
+                + relative_negative_ccx
+                + (3 * REM_W - 1);
+        println!("METRIC centered_direct_signed_domain_floor_toy_ccx={ccx}");
+        println!("METRIC centered_direct_signed_domain_floor_toy_peak_q={peak}");
+        println!("METRIC centered_direct_signed_domain_floor_toy_final_negative_cases={final_negative_cases}");
+        eprintln!(
+            "Centered direct signed-domain floor toy: ccx={ccx}, peak={peak}, final_negative_cases={final_negative_cases}, expected_ccx={expected_ccx}"
+        );
+        assert_eq!(ccx, expected_ccx, "signed-domain floor toy cost drifted");
+        assert!(
+            final_negative_cases > 0,
+            "toy did not exercise final-negative correction"
+        );
+    }
+
+    #[test]
     fn euclid_quotient_stream_entropy_also_exceeds_scratch600() {
         // Follow-up to the raw-payload quotient-stream DIV test.  The tempting
         // objection is that a clever prefix/arithmetic code could pack the
@@ -30619,6 +30756,100 @@ mod tests {
         b.free(p2_low);
         b.free(p1_high);
         b.free(p1_low);
+    }
+
+    fn emit_toy_signed_domain_nonrestoring_floor_for_centered_test(
+        b: &mut super::super::B,
+        rem: &[super::super::QubitId],
+        divisor: &[super::super::QubitId],
+        domain_sign: super::super::QubitId,
+        digit_hist: &[super::super::QubitId],
+        final_negative: super::super::QubitId,
+    ) {
+        assert_eq!(rem.len(), 12);
+        assert_eq!(divisor.len(), 5);
+        assert_eq!(digit_hist.len(), 6);
+        let top_shift = digit_hist.len() - 1;
+        let divisor_sign = divisor[divisor.len() - 1];
+        let shifted_v = b.alloc_qubits(rem.len());
+
+        for i in 0..divisor.len() {
+            b.cx(divisor[i], shifted_v[i + top_shift]);
+        }
+        for q in shifted_v.iter().skip(top_shift + divisor.len()) {
+            b.cx(divisor_sign, *q);
+        }
+
+        for sh in (0..digit_hist.len()).rev() {
+            emit_signed_domain_relative_negative_for_centered_test(
+                b,
+                rem,
+                domain_sign,
+                digit_hist[sh],
+            );
+
+            // The stored digit is relative to the numerator domain; the
+            // physical add/sub primitive needs the domain/divisor direction.
+            b.cx(domain_sign, digit_hist[sh]);
+            b.cx(divisor_sign, digit_hist[sh]);
+            emit_fused_sign_controlled_addsub_digit_for_centered_test(
+                b,
+                rem,
+                &shifted_v,
+                digit_hist[sh],
+            );
+            b.cx(divisor_sign, digit_hist[sh]);
+            b.cx(domain_sign, digit_hist[sh]);
+
+            if sh != 0 {
+                emit_arithmetic_shift_right_1_exact_for_centered_test(b, &shifted_v);
+            }
+        }
+
+        emit_signed_domain_relative_negative_for_centered_test(b, rem, domain_sign, final_negative);
+
+        let correction_sign = b.alloc_qubit();
+        b.x(correction_sign);
+        b.cx(domain_sign, correction_sign);
+        b.cx(divisor_sign, correction_sign);
+        emit_active_fused_sign_controlled_addsub_digit_for_centered_test(
+            b,
+            rem,
+            &shifted_v,
+            final_negative,
+            correction_sign,
+        );
+        b.cx(divisor_sign, correction_sign);
+        b.cx(domain_sign, correction_sign);
+        b.x(correction_sign);
+        b.free(correction_sign);
+
+        for q in shifted_v.iter().skip(divisor.len()).rev() {
+            b.cx(divisor_sign, *q);
+        }
+        for i in (0..divisor.len()).rev() {
+            b.cx(divisor[i], shifted_v[i]);
+        }
+        b.free_vec(&shifted_v);
+    }
+
+    fn emit_signed_domain_relative_negative_for_centered_test(
+        b: &mut super::super::B,
+        v: &[super::super::QubitId],
+        domain_sign: super::super::QubitId,
+        out: super::super::QubitId,
+    ) {
+        let sign_diff = b.alloc_qubit();
+        let nonzero = b.alloc_qubit();
+        b.cx(v[v.len() - 1], sign_diff);
+        b.cx(domain_sign, sign_diff);
+        super::super::cmp_neq_zero_into(b, v, nonzero);
+        b.ccx(sign_diff, nonzero, out);
+        super::super::cmp_neq_zero_into(b, v, nonzero);
+        b.cx(domain_sign, sign_diff);
+        b.cx(v[v.len() - 1], sign_diff);
+        b.free(nonzero);
+        b.free(sign_diff);
     }
 
     fn direct_centered_signnorm_det_low2_coeff_sign_stats(
