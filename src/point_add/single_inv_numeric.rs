@@ -24399,6 +24399,123 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_restoring_final_prefix_cursor_advance_toy_cleans() {
+        // Follow-up for the prefix reader toy: after decoding a variable-length
+        // codeword, the parser must advance a packed-stream cursor.  The cheap
+        // path is to copy `offset + len` into a fresh cursor output and clean
+        // the carry bits immediately, rather than enumerating every leaf/offset
+        // pair.
+        use sha3::digest::{ExtendableOutput, Update};
+
+        const OFFSET_W: usize = 2;
+        const LEN_W: usize = 3;
+        const NEXT_W: usize = 3;
+        const READER_TREE_ROUNDTRIP_CCX: usize = 52;
+        const PREFIX_TREE_INTERNAL_NODES: usize = 4;
+        const PREFIX_TREE_NODE_FLOOR_MEAN: f64 = 1_437.531;
+        const PREFIX_TREE_GAP_TO_2700K: f64 = -106_130.130;
+
+        let mut b = super::super::B::new();
+        let offset = b.alloc_qubits(OFFSET_W);
+        let len = b.alloc_qubits(LEN_W);
+        let next_offset = b.alloc_qubits(NEXT_W);
+        let carry0 = b.alloc_qubit();
+        let carry1 = b.alloc_qubit();
+        let xor1 = b.alloc_qubit();
+
+        let start = b.ops.len();
+        b.cx(offset[0], next_offset[0]);
+        b.cx(len[0], next_offset[0]);
+        b.ccx(offset[0], len[0], carry0);
+        b.cx(offset[1], next_offset[1]);
+        b.cx(len[1], next_offset[1]);
+        b.cx(carry0, next_offset[1]);
+        b.ccx(offset[1], len[1], carry1);
+        b.cx(offset[1], xor1);
+        b.cx(len[1], xor1);
+        b.ccx(carry0, xor1, carry1);
+        b.cx(len[1], xor1);
+        b.cx(offset[1], xor1);
+        b.cx(len[2], next_offset[2]);
+        b.cx(carry1, next_offset[2]);
+        b.cx(offset[1], xor1);
+        b.cx(len[1], xor1);
+        b.ccx(carry0, xor1, carry1);
+        b.cx(len[1], xor1);
+        b.cx(offset[1], xor1);
+        b.ccx(offset[1], len[1], carry1);
+        b.ccx(offset[0], len[0], carry0);
+
+        let ccx = local_count_ccx_for_plusminus_cost(&b.ops[start..]);
+        let peak = b.peak_qubits;
+        let combined_roundtrip_ccx = READER_TREE_ROUNDTRIP_CCX + ccx;
+        let node_roundtrip_floor = 2 * PREFIX_TREE_INTERNAL_NODES;
+        let combined_over_node_roundtrip =
+            combined_roundtrip_ccx as f64 / node_roundtrip_floor as f64;
+        let ratio_budget = 1.0
+            + (-PREFIX_TREE_GAP_TO_2700K) / (8.0 * PREFIX_TREE_NODE_FLOOR_MEAN);
+        let combined_scaled_gap = PREFIX_TREE_GAP_TO_2700K
+            + 8.0 * PREFIX_TREE_NODE_FLOOR_MEAN * (combined_over_node_roundtrip - 1.0);
+        let num_qubits = b.next_qubit as usize;
+        let num_bits = b.next_bit as usize;
+        let ops = b.ops;
+        let mut dirty_restore_cases = 0usize;
+        let mut dirty_history_cases = 0usize;
+        let mut dirty_phase_cases = 0usize;
+        for offset_value in 0u64..(1u64 << OFFSET_W) {
+            for len_value in [1u64, 2, 3, 4] {
+                let mut hasher = sha3::Shake128::default();
+                hasher.update(b"direct-centered-restoring-prefix-cursor-advance-toy-v1");
+                let mut xof = hasher.finalize_xof();
+                let mut sim = crate::sim::Simulator::new(num_qubits, num_bits, &mut xof);
+                set_slice_u512_pm(&mut sim, &offset, U512::from(offset_value));
+                set_slice_u512_pm(&mut sim, &len, U512::from(len_value));
+                sim.apply(&ops);
+
+                let offset_out = get_slice_u512_pm(&sim, &offset).as_limbs()[0]
+                    & ((1u64 << OFFSET_W) - 1);
+                let len_out = get_slice_u512_pm(&sim, &len).as_limbs()[0]
+                    & ((1u64 << LEN_W) - 1);
+                let next_out = get_slice_u512_pm(&sim, &next_offset).as_limbs()[0]
+                    & ((1u64 << NEXT_W) - 1);
+                let dirty_history = (sim.qubit(carry0) & 1) != 0
+                    || (sim.qubit(carry1) & 1) != 0
+                    || (sim.qubit(xor1) & 1) != 0;
+                dirty_restore_cases +=
+                    (offset_out != offset_value || len_out != len_value) as usize;
+                dirty_history_cases += dirty_history as usize;
+                dirty_phase_cases += ((sim.global_phase() & 1) != 0) as usize;
+                assert_eq!(
+                    next_out,
+                    offset_value + len_value,
+                    "next cursor mismatch offset={offset_value} len={len_value}"
+                );
+            }
+        }
+
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_ccx={ccx}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_peak_q={peak}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_combined_roundtrip_ccx={combined_roundtrip_ccx}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_combined_over_node_roundtrip={combined_over_node_roundtrip:.6}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_roundtrip_ratio_budget={ratio_budget:.6}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_combined_scaled_gap_to_2700k={combined_scaled_gap:.3}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_dirty_restore_cases={dirty_restore_cases}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_dirty_history_cases={dirty_history_cases}");
+        println!("METRIC centered_direct_restoring_final_prefix_cursor_advance_toy_dirty_phase_cases={dirty_phase_cases}");
+        eprintln!(
+            "Direct-centered prefix cursor advance toy: ccx={ccx}, peak={peak}, combined_roundtrip={combined_roundtrip_ccx}, combined/node={combined_over_node_roundtrip:.3}x, budget={ratio_budget:.3}x, scaled_gap={combined_scaled_gap:.1}, dirty_restore={dirty_restore_cases}, dirty_history={dirty_history_cases}, dirty_phase={dirty_phase_cases}"
+        );
+        assert_eq!(ccx, 6, "cursor advance adder cost drifted");
+        assert!(
+            combined_scaled_gap < -30_000.0 && combined_over_node_roundtrip < ratio_budget,
+            "reader plus cursor-advance toy no longer fits the prefix margin"
+        );
+        assert_eq!(dirty_restore_cases, 0, "cursor advance did not restore inputs");
+        assert_eq!(dirty_history_cases, 0, "cursor advance leaked carry history");
+        assert_eq!(dirty_phase_cases, 0, "cursor advance left phase garbage");
+    }
+
+    #[test]
     fn direct_centered_restoring_final_block_joint_rank_bits_are_dense() {
         // The mixed 4..8 block-joint binary-depth floor only helps if the block
         // pattern rank can be decoded phase-cleanly.  Treat the exact toy

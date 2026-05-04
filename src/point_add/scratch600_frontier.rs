@@ -163,7 +163,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_low_branch_align_only_prefix_tree_floor",
             scratch_bits: 580,
             charged_toffoli: None,
-            blocker: "branch-as-final-digit removes branch symbols from the parser stream; low-alignment block2 fits 580 scratch, binary lookup projects 2626705, prefix-tree node floor projects 2593870, and a four-cursor bit-reader toy stays phase-clean with scaled gap -42879, but production cursor/state update and full reverse-decoder integration remain uncharged",
+            blocker: "branch-as-final-digit removes branch symbols from the parser stream; low-alignment block2 fits 580 scratch, binary lookup projects 2626705, prefix-tree node floor projects 2593870, and four-cursor reader plus cursor-advance toys stay phase-clean with combined scaled gap -34254, but production block/reverse integration remains uncharged",
         },
         Candidate {
             name: "direct_centered_restoring_final_mixed4to8_joint_binary_floor",
@@ -578,6 +578,16 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_prefix_bit_reader_toy_dirty_restore_cases = 0usize;
     let direct_restoring_final_prefix_bit_reader_toy_dirty_history_cases = 0usize;
     let direct_restoring_final_prefix_bit_reader_toy_dirty_phase_cases = 0usize;
+    let direct_restoring_final_prefix_cursor_advance_toy_ccx = 6usize;
+    let direct_restoring_final_prefix_cursor_advance_toy_peak_q = 11usize;
+    let direct_restoring_final_prefix_cursor_advance_toy_combined_roundtrip_ccx = 58usize;
+    let direct_restoring_final_prefix_cursor_advance_toy_combined_over_node_roundtrip =
+        7.250_000f64;
+    let direct_restoring_final_prefix_cursor_advance_toy_roundtrip_ratio_budget = 10.228_508f64;
+    let direct_restoring_final_prefix_cursor_advance_toy_combined_scaled_gap = -34_253.580f64;
+    let direct_restoring_final_prefix_cursor_advance_toy_dirty_restore_cases = 0usize;
+    let direct_restoring_final_prefix_cursor_advance_toy_dirty_history_cases = 0usize;
+    let direct_restoring_final_prefix_cursor_advance_toy_dirty_phase_cases = 0usize;
     let direct_restoring_final_coeff_decoder_alignment_degree_n14 = 13usize;
     let direct_restoring_final_coeff_decoder_alignment_density_n14 = 8_278usize;
     let direct_restoring_final_coeff_decoder_alignment_max_n14 = 13usize;
@@ -1437,6 +1447,15 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_prefix_bit_reader_toy_dirty_restore_cases={direct_restoring_final_prefix_bit_reader_toy_dirty_restore_cases}");
     println!("METRIC scratch600_direct_restoring_final_prefix_bit_reader_toy_dirty_history_cases={direct_restoring_final_prefix_bit_reader_toy_dirty_history_cases}");
     println!("METRIC scratch600_direct_restoring_final_prefix_bit_reader_toy_dirty_phase_cases={direct_restoring_final_prefix_bit_reader_toy_dirty_phase_cases}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_ccx={direct_restoring_final_prefix_cursor_advance_toy_ccx}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_peak_q={direct_restoring_final_prefix_cursor_advance_toy_peak_q}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_combined_roundtrip_ccx={direct_restoring_final_prefix_cursor_advance_toy_combined_roundtrip_ccx}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_combined_over_node_roundtrip={direct_restoring_final_prefix_cursor_advance_toy_combined_over_node_roundtrip:.6}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_roundtrip_ratio_budget={direct_restoring_final_prefix_cursor_advance_toy_roundtrip_ratio_budget:.6}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_combined_scaled_gap_to_2700k={direct_restoring_final_prefix_cursor_advance_toy_combined_scaled_gap:.3}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_dirty_restore_cases={direct_restoring_final_prefix_cursor_advance_toy_dirty_restore_cases}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_dirty_history_cases={direct_restoring_final_prefix_cursor_advance_toy_dirty_history_cases}");
+    println!("METRIC scratch600_direct_restoring_final_prefix_cursor_advance_toy_dirty_phase_cases={direct_restoring_final_prefix_cursor_advance_toy_dirty_phase_cases}");
     println!("METRIC scratch600_direct_restoring_final_coeff_decoder_alignment_degree_n14={direct_restoring_final_coeff_decoder_alignment_degree_n14}");
     println!("METRIC scratch600_direct_restoring_final_coeff_decoder_alignment_density_n14={direct_restoring_final_coeff_decoder_alignment_density_n14}");
     println!("METRIC scratch600_direct_restoring_final_coeff_decoder_alignment_max_n14={direct_restoring_final_coeff_decoder_alignment_max_n14}");
@@ -2173,6 +2192,18 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_prefix_bit_reader_toy_dirty_history_cases == 0
             && direct_restoring_final_prefix_bit_reader_toy_dirty_phase_cases == 0,
         "prefix bit-reader toy changed; revisit low-branch cursor/parser integration"
+    );
+    assert!(
+        direct_restoring_final_prefix_cursor_advance_toy_ccx == 6
+            && direct_restoring_final_prefix_cursor_advance_toy_peak_q == 11
+            && direct_restoring_final_prefix_cursor_advance_toy_combined_roundtrip_ccx == 58
+            && direct_restoring_final_prefix_cursor_advance_toy_combined_over_node_roundtrip
+                < direct_restoring_final_prefix_cursor_advance_toy_roundtrip_ratio_budget
+            && direct_restoring_final_prefix_cursor_advance_toy_combined_scaled_gap < -30_000.0
+            && direct_restoring_final_prefix_cursor_advance_toy_dirty_restore_cases == 0
+            && direct_restoring_final_prefix_cursor_advance_toy_dirty_history_cases == 0
+            && direct_restoring_final_prefix_cursor_advance_toy_dirty_phase_cases == 0,
+        "prefix cursor advance toy changed; revisit low-branch parser cursor budget"
     );
     assert!(
         direct_restoring_final_coeff_decoder_alignment_degree_n14 + 1 >= 14
