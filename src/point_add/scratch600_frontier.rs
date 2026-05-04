@@ -151,7 +151,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_stored_alignment",
             scratch_bits: 662,
             charged_toffoli: Some(2_709_483),
-            blocker: "restoring-final select1 has phase-clean toy cleanup; 7-symbol branch-conditioned blocks fit 662 scratch and lower-bound to 2655117 average, but a 2x binary compare/subtract parser floor still pushes 9483 over with 52 non-contiguous alignment-support steps before rank mapping, renormalization, or cleanup",
+            blocker: "restoring-final select1 has phase-clean toy cleanup; 7-symbol branch-conditioned blocks fit 662 scratch and lower-bound to 2655117 average, but a 2x binary compare/subtract parser floor still pushes 9483 over with 52 non-contiguous alignment-support steps; ideal entropy metadata fits p99, but disjoint raw-escape holdout still has 163 alignment and 4 branch step misses with 623 p99 / 665 max scratch, and a range-parser one-state-touch floor misses by 229938 before table lookup, renormalization, or cleanup",
         },
         Candidate {
             name: "direct_centered_restoring_final_mixed67_parser",
@@ -1050,6 +1050,27 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_align_prefix_step_scratch_max = 771usize;
     let direct_restoring_final_align_entropy_branch_count_p99 = 117usize;
     let direct_restoring_final_align_entropy_branch_count_max = 125usize;
+    let direct_restoring_final_align_entropy_holdout_samples = 8_192usize;
+    let direct_restoring_final_align_entropy_holdout_raw_alignment_escape_bits = 10usize;
+    let direct_restoring_final_align_entropy_holdout_raw_branch_escape_bits = 2usize;
+    let direct_restoring_final_align_entropy_holdout_variable_scratch_p99 = 601usize;
+    let direct_restoring_final_align_entropy_holdout_variable_scratch_max = 622usize;
+    let direct_restoring_final_align_entropy_holdout_global_scratch_p99 = 627usize;
+    let direct_restoring_final_align_entropy_holdout_global_scratch_max = 645usize;
+    let direct_restoring_final_align_entropy_holdout_step_scratch_p99 = 623usize;
+    let direct_restoring_final_align_entropy_holdout_step_scratch_max = 665usize;
+    let direct_restoring_final_align_entropy_holdout_step_missing_align_symbols =
+        163usize;
+    let direct_restoring_final_align_entropy_holdout_step_missing_align_traces =
+        158usize;
+    let direct_restoring_final_align_entropy_holdout_step_missing_branch_symbols =
+        4usize;
+    let direct_restoring_final_align_entropy_holdout_step_missing_branch_traces =
+        2usize;
+    let direct_restoring_final_align_entropy_holdout_global_missing_align_symbols =
+        1usize;
+    let direct_restoring_final_align_entropy_holdout_global_missing_branch_symbols =
+        0usize;
     let direct_restoring_final_range_parser_model_precision_bits = 13usize;
     let direct_restoring_final_range_parser_state_bits_p99 = 366usize;
     let direct_restoring_final_range_parser_live_scratch_p99 = 648usize;
@@ -2261,6 +2282,21 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_align_prefix_step_scratch_max={direct_restoring_final_align_prefix_step_scratch_max}");
     println!("METRIC scratch600_direct_restoring_final_align_entropy_branch_count_p99={direct_restoring_final_align_entropy_branch_count_p99}");
     println!("METRIC scratch600_direct_restoring_final_align_entropy_branch_count_max={direct_restoring_final_align_entropy_branch_count_max}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_samples={direct_restoring_final_align_entropy_holdout_samples}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_raw_alignment_escape_bits={direct_restoring_final_align_entropy_holdout_raw_alignment_escape_bits}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_raw_branch_escape_bits={direct_restoring_final_align_entropy_holdout_raw_branch_escape_bits}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_variable_scratch_p99={direct_restoring_final_align_entropy_holdout_variable_scratch_p99}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_variable_scratch_max={direct_restoring_final_align_entropy_holdout_variable_scratch_max}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_global_scratch_p99={direct_restoring_final_align_entropy_holdout_global_scratch_p99}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_global_scratch_max={direct_restoring_final_align_entropy_holdout_global_scratch_max}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_step_scratch_p99={direct_restoring_final_align_entropy_holdout_step_scratch_p99}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_step_scratch_max={direct_restoring_final_align_entropy_holdout_step_scratch_max}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_step_missing_align_symbols={direct_restoring_final_align_entropy_holdout_step_missing_align_symbols}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_step_missing_align_traces={direct_restoring_final_align_entropy_holdout_step_missing_align_traces}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_step_missing_branch_symbols={direct_restoring_final_align_entropy_holdout_step_missing_branch_symbols}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_step_missing_branch_traces={direct_restoring_final_align_entropy_holdout_step_missing_branch_traces}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_global_missing_align_symbols={direct_restoring_final_align_entropy_holdout_global_missing_align_symbols}");
+    println!("METRIC scratch600_direct_restoring_final_align_entropy_holdout_global_missing_branch_symbols={direct_restoring_final_align_entropy_holdout_global_missing_branch_symbols}");
     println!("METRIC scratch600_direct_restoring_final_range_parser_model_precision_bits={direct_restoring_final_range_parser_model_precision_bits}");
     println!("METRIC scratch600_direct_restoring_final_range_parser_state_bits_p99={direct_restoring_final_range_parser_state_bits_p99}");
     println!("METRIC scratch600_direct_restoring_final_range_parser_live_scratch_p99={direct_restoring_final_range_parser_live_scratch_p99}");
@@ -3459,7 +3495,26 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_align_prefix_step_scratch_p99
                 > GOOGLE_LOW_QUBIT_SCRATCH
             && direct_restoring_final_align_entropy_branch_count_p99
-                == direct_restoring_final_stored_align_branch_count_p99,
+                == direct_restoring_final_stored_align_branch_count_p99
+            && direct_restoring_final_align_entropy_holdout_samples == 8_192
+            && direct_restoring_final_align_entropy_holdout_raw_alignment_escape_bits == 10
+            && direct_restoring_final_align_entropy_holdout_raw_branch_escape_bits == 2
+            && direct_restoring_final_align_entropy_holdout_variable_scratch_p99
+                <= GOOGLE_LOW_QUBIT_SCRATCH
+            && direct_restoring_final_align_entropy_holdout_step_scratch_p99
+                <= GOOGLE_LOW_QUBIT_SCRATCH
+            && direct_restoring_final_align_entropy_holdout_step_scratch_max
+                > GOOGLE_LOW_QUBIT_SCRATCH
+            && direct_restoring_final_align_entropy_holdout_step_missing_align_symbols
+                > 100
+            && direct_restoring_final_align_entropy_holdout_step_missing_align_traces
+                > 100
+            && direct_restoring_final_align_entropy_holdout_step_missing_branch_symbols
+                > 0
+            && direct_restoring_final_align_entropy_holdout_global_missing_align_symbols
+                > 0
+            && direct_restoring_final_align_entropy_holdout_global_missing_branch_symbols
+                == 0,
         "restoring-final metadata coding frontier changed; revisit parser route"
     );
     assert!(

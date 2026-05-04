@@ -22630,8 +22630,78 @@ mod tests {
         let global_prefix_max = *global_prefix_scratches.last().unwrap();
         let step_prefix_p99 = p99_usize(&mut step_prefix_scratches);
         let step_prefix_max = *step_prefix_scratches.last().unwrap();
+        const HOLDOUT_SAMPLES: usize = 8192;
+        let raw_alignment_escape_bits = usize_bit_len_for_payload_test(256) + 1;
+        let raw_branch_escape_bits = 2usize;
+        let mut holdout_rng = 0xd1ce_c0ef_a119_2002u64;
+        let mut holdout_variable_scratches = Vec::with_capacity(HOLDOUT_SAMPLES);
+        let mut holdout_global_entropy_scratches = Vec::with_capacity(HOLDOUT_SAMPLES);
+        let mut holdout_step_entropy_scratches = Vec::with_capacity(HOLDOUT_SAMPLES);
+        let mut holdout_step_missing_align_symbols = 0usize;
+        let mut holdout_step_missing_align_traces = 0usize;
+        let mut holdout_step_missing_branch_symbols = 0usize;
+        let mut holdout_step_missing_branch_traces = 0usize;
+        let mut holdout_global_missing_align_symbols = 0usize;
+        let mut holdout_global_missing_branch_symbols = 0usize;
+        for _ in 0..HOLDOUT_SAMPLES {
+            let (alignments, branches, variable_bits) =
+                trace_alignment_metadata(&mut holdout_rng);
+            assert!(
+                alignments.len() < MAX_STEPS,
+                "holdout trace exceeded alignment entropy table"
+            );
+            let mut global_bits = 0.0f64;
+            let mut step_bits = 0.0f64;
+            let mut trace_missing_align = false;
+            let mut trace_missing_branch = false;
+            for (step, &alignment) in alignments.iter().enumerate() {
+                if let Some(&global_freq) = align_global.get(&alignment) {
+                    global_bits += code_len(global_freq, align_global_total);
+                } else {
+                    holdout_global_missing_align_symbols += 1;
+                    global_bits += raw_alignment_escape_bits as f64;
+                }
+                let step_total = align_by_step[step].values().sum::<usize>();
+                if let Some(&step_freq) = align_by_step[step].get(&alignment) {
+                    step_bits += code_len(step_freq, step_total);
+                } else {
+                    holdout_step_missing_align_symbols += 1;
+                    trace_missing_align = true;
+                    step_bits += raw_alignment_escape_bits as f64;
+                }
+            }
+            let branch_total = branch_global.iter().sum::<usize>();
+            for &(step, branch) in &branches {
+                let bit = branch as usize;
+                if branch_global[bit] > 0 {
+                    global_bits += code_len(branch_global[bit], branch_total);
+                } else {
+                    holdout_global_missing_branch_symbols += 1;
+                    global_bits += raw_branch_escape_bits as f64;
+                }
+                let step_branch_total = branch_by_step[step].iter().sum::<usize>();
+                if step_branch_total > 0 && branch_by_step[step][bit] > 0 {
+                    step_bits += code_len(branch_by_step[step][bit], step_branch_total);
+                } else {
+                    holdout_step_missing_branch_symbols += 1;
+                    trace_missing_branch = true;
+                    step_bits += raw_branch_escape_bits as f64;
+                }
+            }
+            holdout_step_missing_align_traces += trace_missing_align as usize;
+            holdout_step_missing_branch_traces += trace_missing_branch as usize;
+            holdout_variable_scratches.push(256 + variable_bits + branches.len());
+            holdout_global_entropy_scratches.push(256.0 + global_bits.ceil());
+            holdout_step_entropy_scratches.push(256.0 + step_bits.ceil());
+        }
+        let holdout_variable_p99 = p99_usize(&mut holdout_variable_scratches);
+        let holdout_variable_max = *holdout_variable_scratches.last().unwrap();
+        let holdout_global_entropy_p99 = p99_f64(&mut holdout_global_entropy_scratches);
+        let holdout_global_entropy_max = *holdout_global_entropy_scratches.last().unwrap();
+        let holdout_step_entropy_p99 = p99_f64(&mut holdout_step_entropy_scratches);
+        let holdout_step_entropy_max = *holdout_step_entropy_scratches.last().unwrap();
         eprintln!(
-            "Direct-centered restoring-final alignment entropy code: variable_p99={variable_p99}, global_entropy_p99={global_entropy_p99:.1}, step_entropy_p99={step_entropy_p99:.1}, global_prefix_p99={global_prefix_p99}, step_prefix_p99={step_prefix_p99}, branch_count_p99={branch_count_p99}"
+            "Direct-centered restoring-final alignment entropy code: variable_p99={variable_p99}, global_entropy_p99={global_entropy_p99:.1}, step_entropy_p99={step_entropy_p99:.1}, global_prefix_p99={global_prefix_p99}, step_prefix_p99={step_prefix_p99}, branch_count_p99={branch_count_p99}, holdout_step_p99={holdout_step_entropy_p99:.1}, holdout_missing_align/branch={holdout_step_missing_align_symbols}/{holdout_step_missing_branch_symbols}"
         );
         println!("METRIC centered_direct_restoring_final_align_entropy_variable_scratch_p99={variable_p99}");
         println!("METRIC centered_direct_restoring_final_align_entropy_variable_scratch_max={variable_max}");
@@ -22645,6 +22715,21 @@ mod tests {
         println!("METRIC centered_direct_restoring_final_align_prefix_step_scratch_max={step_prefix_max}");
         println!("METRIC centered_direct_restoring_final_align_entropy_branch_count_p99={branch_count_p99}");
         println!("METRIC centered_direct_restoring_final_align_entropy_branch_count_max={branch_count_max}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_samples={HOLDOUT_SAMPLES}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_raw_alignment_escape_bits={raw_alignment_escape_bits}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_raw_branch_escape_bits={raw_branch_escape_bits}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_variable_scratch_p99={holdout_variable_p99}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_variable_scratch_max={holdout_variable_max}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_global_scratch_p99={holdout_global_entropy_p99:.3}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_global_scratch_max={holdout_global_entropy_max:.3}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_step_scratch_p99={holdout_step_entropy_p99:.3}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_step_scratch_max={holdout_step_entropy_max:.3}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_step_missing_align_symbols={holdout_step_missing_align_symbols}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_step_missing_align_traces={holdout_step_missing_align_traces}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_step_missing_branch_symbols={holdout_step_missing_branch_symbols}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_step_missing_branch_traces={holdout_step_missing_branch_traces}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_global_missing_align_symbols={holdout_global_missing_align_symbols}");
+        println!("METRIC centered_direct_restoring_final_align_entropy_holdout_global_missing_branch_symbols={holdout_global_missing_branch_symbols}");
         assert!(
             variable_p99 <= 663,
             "raw variable alignment metadata stopped fitting the Google scratch target"
@@ -22656,6 +22741,14 @@ mod tests {
         assert!(
             global_prefix_p99 as f64 > GOOGLE_SCRATCH && step_prefix_p99 as f64 > GOOGLE_SCRATCH,
             "a simple rounded prefix code now fits; build the prefix parser before attempting range coding"
+        );
+        assert!(
+            holdout_step_missing_align_symbols > 0 || holdout_step_missing_branch_symbols > 0,
+            "disjoint holdout has no unseen step symbols; revisit support proof priority"
+        );
+        assert!(
+            holdout_step_entropy_p99 <= GOOGLE_SCRATCH,
+            "raw-escape holdout entropy code no longer fits scratch; demote sampled entropy route"
         );
     }
 
