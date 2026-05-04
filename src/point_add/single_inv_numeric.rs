@@ -29015,6 +29015,175 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_low_branch_toy_exact_support_outgrows_sample_training() {
+        // The low-branch selective-prefix row only fits if its sampled support
+        // can be promoted to a non-sampled production support guarantee, or if
+        // a charged fallback can cover every missing symbol.  This exact toy
+        // train/exhaust check looks only at that support premise, separate from
+        // code-length scheduling: if the same sampling pattern misses support
+        // on toy fields, the secp row cannot be promoted by sample confidence.
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let bit_len_u128 = |x: u128| -> usize {
+            if x == 0 { 0 } else { 128 - x.leading_zeros() as usize }
+        };
+        let alignment_trace = |p: u16, x: u16| -> Vec<usize> {
+            let mut u = p as i128;
+            let mut v = x as i128;
+            let mut coeff_u = 0i128;
+            let mut coeff_v = 1i128;
+            let mut alignments = Vec::new();
+            while v != 0 {
+                let abs_u = u.unsigned_abs();
+                let abs_v = v.unsigned_abs();
+                let adjusted = abs_u + (abs_v >> 1usize);
+                let q_abs = (adjusted / abs_v) as i128;
+                let q_signed = if (u < 0) ^ (v < 0) { -q_abs } else { q_abs };
+                let next_v = u - q_signed * v;
+                let next_coeff_v = coeff_u - q_signed * coeff_v;
+
+                let denom = coeff_v.unsigned_abs();
+                assert!(denom > 0, "toy low-branch denominator vanished");
+                let low_numer = if coeff_u == 0 {
+                    next_coeff_v.unsigned_abs()
+                } else {
+                    next_coeff_v
+                        .unsigned_abs()
+                        .checked_sub(1)
+                        .expect("toy low-branch numerator underflow")
+                };
+                let alignment = bit_len_u128(low_numer).saturating_sub(bit_len_u128(denom));
+                alignments.push(alignment);
+
+                u = v;
+                v = next_v;
+                coeff_u = coeff_v;
+                coeff_v = next_coeff_v;
+            }
+            alignments
+        };
+        let collect_support = |traces: &[Vec<usize>], max_steps: usize| {
+            let mut support = vec![BTreeMap::<usize, usize>::new(); max_steps];
+            for trace in traces {
+                for (step, &symbol) in trace.iter().enumerate() {
+                    *support[step].entry(symbol).or_insert(0) += 1;
+                }
+            }
+            support
+        };
+        let support_stats = |support: &[BTreeMap<usize, usize>]| -> (usize, usize, usize, usize) {
+            let mut max_span = 0usize;
+            let mut max_symbols = 0usize;
+            let mut noncontig_steps = 0usize;
+            let mut total_symbols = 0usize;
+            for counts in support {
+                if counts.is_empty() {
+                    continue;
+                }
+                let min_symbol = *counts.keys().next().unwrap();
+                let max_symbol = *counts.keys().next_back().unwrap();
+                let span = max_symbol - min_symbol + 1;
+                max_span = max_span.max(span);
+                max_symbols = max_symbols.max(counts.len());
+                noncontig_steps += (span != counts.len()) as usize;
+                total_symbols += counts.len();
+            }
+            (max_span, max_symbols, noncontig_steps, total_symbols)
+        };
+
+        let cases = [
+            (10usize, 1021u16, 128usize),
+            (12usize, 4093u16, 256usize),
+            (14usize, 16381u16, 512usize),
+            (16usize, 65521u16, 1024usize),
+        ];
+        let mut cases_with_missing = 0usize;
+        let mut largest_missing_symbols = 0usize;
+        let mut largest_missing_steps = 0usize;
+        let mut largest_span_gap = 0usize;
+        let mut largest_exact_span = 0usize;
+        for &(n, p, train_target) in &cases {
+            let domain_traces = (1..p)
+                .map(|x| alignment_trace(p, x))
+                .collect::<Vec<_>>();
+            let max_steps = domain_traces.iter().map(Vec::len).max().unwrap_or(0);
+            let mut train_indices = BTreeSet::new();
+            let mut state = (p as u64) ^ 0x5eed_cafe_a119_0301u64;
+            while train_indices.len() < train_target.min(domain_traces.len()) {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                train_indices.insert((state as usize) % domain_traces.len());
+            }
+            let train_traces = train_indices
+                .iter()
+                .map(|&idx| domain_traces[idx].clone())
+                .collect::<Vec<_>>();
+            let train_support = collect_support(&train_traces, max_steps);
+            let exact_support = collect_support(&domain_traces, max_steps);
+            let (train_max_span, train_max_symbols, train_noncontig, train_total_symbols) =
+                support_stats(&train_support);
+            let (exact_max_span, exact_max_symbols, exact_noncontig, exact_total_symbols) =
+                support_stats(&exact_support);
+
+            let mut missing_symbols = 0usize;
+            let mut missing_steps = 0usize;
+            for step in 0..max_steps {
+                let mut step_missing = 0usize;
+                for symbol in exact_support[step].keys() {
+                    step_missing += (!train_support[step].contains_key(symbol)) as usize;
+                }
+                missing_symbols += step_missing;
+                missing_steps += (step_missing > 0) as usize;
+            }
+            let span_gap = exact_max_span.saturating_sub(train_max_span);
+            cases_with_missing += (missing_symbols > 0) as usize;
+            largest_missing_symbols = largest_missing_symbols.max(missing_symbols);
+            largest_missing_steps = largest_missing_steps.max(missing_steps);
+            largest_span_gap = largest_span_gap.max(span_gap);
+            largest_exact_span = largest_exact_span.max(exact_max_span);
+
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_train_samples={}", train_traces.len());
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_domain_samples={}", domain_traces.len());
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_train_max_span={train_max_span}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_exact_max_span={exact_max_span}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_train_max_symbols={train_max_symbols}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_exact_max_symbols={exact_max_symbols}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_train_noncontig_steps={train_noncontig}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_exact_noncontig_steps={exact_noncontig}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_train_total_symbols={train_total_symbols}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_exact_total_symbols={exact_total_symbols}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_missing_symbols={missing_symbols}");
+            println!("METRIC centered_direct_low_branch_support_toy_n{n}_missing_steps={missing_steps}");
+            eprintln!(
+                "Low-branch exact support toy n={n}: train={}/{}, max_span {train_max_span}->{exact_max_span}, max_symbols {train_max_symbols}->{exact_max_symbols}, total_symbols {train_total_symbols}->{exact_total_symbols}, missing={missing_symbols} across {missing_steps} steps, noncontig {train_noncontig}->{exact_noncontig}",
+                train_traces.len(),
+                domain_traces.len()
+            );
+        }
+        println!("METRIC centered_direct_low_branch_support_toy_cases_with_missing={cases_with_missing}");
+        println!("METRIC centered_direct_low_branch_support_toy_largest_missing_symbols={largest_missing_symbols}");
+        println!("METRIC centered_direct_low_branch_support_toy_largest_missing_steps={largest_missing_steps}");
+        println!("METRIC centered_direct_low_branch_support_toy_largest_span_gap={largest_span_gap}");
+        println!("METRIC centered_direct_low_branch_support_toy_largest_exact_span={largest_exact_span}");
+        assert_eq!(
+            cases_with_missing,
+            cases.len(),
+            "sample-trained low-branch support covered every toy domain; revisit secp support proof"
+        );
+        assert_eq!(
+            largest_missing_symbols, 26,
+            "toy low-branch missing support changed; refresh fallback/proof frontier"
+        );
+        assert_eq!(
+            largest_missing_steps, 11,
+            "toy low-branch missing-step count changed; refresh fallback/proof frontier"
+        );
+        assert_eq!(
+            largest_exact_span, 16,
+            "toy exact low-branch support stopped matching the full n-wide interval"
+        );
+    }
+
+    #[test]
     fn direct_centered_restoring_final_block_joint_rank_bits_are_dense() {
         // The mixed 4..8 block-joint binary-depth floor only helps if the block
         // pattern rank can be decoded phase-cleanly.  Treat the exact toy
