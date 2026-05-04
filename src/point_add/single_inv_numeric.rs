@@ -11310,6 +11310,218 @@ mod tests {
     }
 
     #[test]
+    fn half_gcd_endpoint_local_dp_cost_compare_floor_kills_generic_parser() {
+        // The endpoint-rank source channel clears 2.7M only before the parser
+        // is charged.  A direct reversible implementation of the local endpoint
+        // DP must at least examine the feasible signed-digit transitions for
+        // every state/offset in each active block, then compare cost words to
+        // maintain each minimum.  The raw one-CCX transition floor still fits,
+        // which is a useful positive lead.  Charging just one touch per cost
+        // bit for each transition kills the generic DP parser.
+        fn total_bits_for(
+            x0: SignedMagU512ForHalfGcdTest,
+            x1: SignedMagU512ForHalfGcdTest,
+        ) -> usize {
+            u512_bit_len_for_halfgcd_test(x0.mag)
+                .max(u512_bit_len_for_halfgcd_test(x1.mag))
+                .max(1)
+                + 3
+        }
+
+        fn transition_floor_for_block(
+            x0: SignedMagU512ForHalfGcdTest,
+            x1: SignedMagU512ForHalfGcdTest,
+            block_idx: usize,
+            block: usize,
+            total_bits: usize,
+        ) -> usize {
+            let base = block_idx * block;
+            let len = block.min(total_bits.saturating_sub(base));
+            if len == 0 {
+                return 0;
+            }
+            let bit_at = |x: U512, bit: usize| -> i8 {
+                if bit >= 512 {
+                    0
+                } else {
+                    ((x >> bit).as_limbs()[0] & 1) as i8
+                }
+            };
+            let mut transitions = 0usize;
+            for offset in 0..len {
+                let bit = base + offset;
+                let b0 = bit_at(x0.mag, bit);
+                let b1 = bit_at(x1.mag, bit);
+                for c0i in 0..3 {
+                    for c1i in 0..3 {
+                        for _seen_idx in 0..2 {
+                            let c0 = c0i as i8 - 1;
+                            let c1 = c1i as i8 - 1;
+                            for d0 in -1i8..=1 {
+                                let s0 = b0 + c0 - d0;
+                                if s0.rem_euclid(2) != 0 {
+                                    continue;
+                                }
+                                let nc0 = s0 / 2;
+                                if !(-1..=1).contains(&nc0) {
+                                    continue;
+                                }
+                                for d1 in -1i8..=1 {
+                                    let s1 = b1 + c1 - d1;
+                                    if s1.rem_euclid(2) != 0 {
+                                        continue;
+                                    }
+                                    let nc1 = s1 / 2;
+                                    if !(-1..=1).contains(&nc1) {
+                                        continue;
+                                    }
+                                    transitions += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            transitions
+        }
+
+        fn p99_usize(rows: &mut Vec<usize>) -> usize {
+            rows.sort_unstable();
+            rows[rows.len() * 99 / 100]
+        }
+
+        const DEPTH: usize = 64;
+        const BLOCK: usize = 32;
+        const SAMPLES: usize = 4096;
+        const TARGET: f64 = 2_700_000.0;
+        const ENDPOINT_RANK_PROJECTED: f64 = 2_659_620.0;
+        const FIELD_BITS: usize = 256;
+        const MAX_TRANSITION_COST: usize = 1024 + 2 * FIELD_BITS * 2 + 2 * FIELD_BITS;
+
+        let mut rng = 0x10ca_1dec_0de5_ec7u64;
+        let mut transition_rows = Vec::with_capacity(SAMPLES);
+        let mut active_block_rows = Vec::with_capacity(SAMPLES);
+        let mut total_transitions = 0usize;
+        let mut total_active_blocks = 0usize;
+        let mut max_block_floor = 0usize;
+        for _ in 0..SAMPLES {
+            let mut x = rand_u256(&mut rng);
+            if x.is_zero() {
+                x = U256::from(1u64);
+            }
+            let (b, d) =
+                halfgcd_second_column_after_fixed_depth_for_test(x, SECP256K1_P, DEPTH);
+            let (_, _, _, _, _, _, _, digit_patterns, _block_start_states) =
+                halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, BLOCK);
+            let total_bits = total_bits_for(b, d);
+            let mut row_transitions = 0usize;
+            let mut active_blocks = 0usize;
+            for (block_idx, &pattern) in digit_patterns.iter().enumerate() {
+                if pattern == 0 {
+                    continue;
+                }
+                let block_floor =
+                    transition_floor_for_block(b, d, block_idx, BLOCK, total_bits);
+                row_transitions += block_floor;
+                active_blocks += 1;
+                max_block_floor = max_block_floor.max(block_floor);
+            }
+            total_transitions += row_transitions;
+            total_active_blocks += active_blocks;
+            transition_rows.push(row_transitions);
+            active_block_rows.push(active_blocks);
+        }
+        let sample_transition_mean = total_transitions as f64 / SAMPLES as f64;
+        let sample_active_mean = total_active_blocks as f64 / SAMPLES as f64;
+        let sample_transition_p99 = p99_usize(&mut transition_rows);
+        let sample_active_p99 = p99_usize(&mut active_block_rows);
+        let one_roundtrip_gap = ENDPOINT_RANK_PROJECTED + 2.0 * sample_transition_mean - TARGET;
+        let two_app_gap = ENDPOINT_RANK_PROJECTED + 4.0 * sample_transition_mean - TARGET;
+        let transition_budget_two_app =
+            (TARGET - ENDPOINT_RANK_PROJECTED) / (4.0 * sample_transition_mean);
+        let cost_word_bits = usize_bit_len_for_payload_test(BLOCK * MAX_TRANSITION_COST);
+        let compare_floor_mean = sample_transition_mean * cost_word_bits as f64;
+        let compare_one_roundtrip_gap =
+            ENDPOINT_RANK_PROJECTED + 2.0 * compare_floor_mean - TARGET;
+        let compare_two_app_gap =
+            ENDPOINT_RANK_PROJECTED + 4.0 * compare_floor_mean - TARGET;
+        let compare_transition_budget_two_app =
+            transition_budget_two_app / cost_word_bits as f64;
+
+        let toy_n = 17usize;
+        let toy_p = 65_537u32;
+        let toy_block = 5usize;
+        let toy_depth = (toy_n / 4).max(1);
+        let mut toy_transition_rows = Vec::with_capacity(toy_p as usize - 1);
+        let mut toy_total_transitions = 0usize;
+        let mut toy_total_active_blocks = 0usize;
+        let mut toy_max_block_floor = 0usize;
+        for x in 1..toy_p {
+            let (b, d) = halfgcd_second_column_after_fixed_depth_for_test(
+                U256::from(x as u64),
+                U256::from(toy_p as u64),
+                toy_depth,
+            );
+            let (_, _, _, _, _, _, _, digit_patterns, _block_start_states) =
+                halfgcd_signed_two_coeff_apply_block_active_trace_for_test(b, d, toy_block);
+            let total_bits = total_bits_for(b, d);
+            let mut transitions = 0usize;
+            for (block_idx, &pattern) in digit_patterns.iter().enumerate() {
+                if pattern == 0 {
+                    continue;
+                }
+                let block_floor =
+                    transition_floor_for_block(b, d, block_idx, toy_block, total_bits);
+                transitions += block_floor;
+                toy_total_active_blocks += 1;
+                toy_max_block_floor = toy_max_block_floor.max(block_floor);
+            }
+            toy_total_transitions += transitions;
+            toy_transition_rows.push(transitions);
+        }
+        let toy_transition_mean = toy_total_transitions as f64 / (toy_p as f64 - 1.0);
+        let toy_active_mean = toy_total_active_blocks as f64 / (toy_p as f64 - 1.0);
+        let toy_transition_p99 = p99_usize(&mut toy_transition_rows);
+
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_sample_active_mean={sample_active_mean:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_sample_active_p99={sample_active_p99}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_sample_mean={sample_transition_mean:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_sample_p99={sample_transition_p99}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_sample_max_block={max_block_floor}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_one_roundtrip_gap={one_roundtrip_gap:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_two_app_gap={two_app_gap:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_two_app_transition_budget={transition_budget_two_app:.6}");
+        println!("METRIC halfgcd_endpoint_local_dp_compare_floor_cost_word_bits={cost_word_bits}");
+        println!("METRIC halfgcd_endpoint_local_dp_compare_floor_mean={compare_floor_mean:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_compare_floor_one_roundtrip_gap={compare_one_roundtrip_gap:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_compare_floor_two_app_gap={compare_two_app_gap:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_compare_floor_transition_budget={compare_transition_budget_two_app:.6}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_toy_n17_active_mean={toy_active_mean:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_toy_n17_mean={toy_transition_mean:.3}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_toy_n17_p99={toy_transition_p99}");
+        println!("METRIC halfgcd_endpoint_local_dp_transition_floor_toy_n17_max_block={toy_max_block_floor}");
+        eprintln!(
+            "half-GCD endpoint local-DP parser floor: sample_transitions={sample_transition_mean:.1}, p99={sample_transition_p99}, active_mean={sample_active_mean:.2}, one_ccx_gaps=({one_roundtrip_gap:.1},{two_app_gap:.1}), transition_budget_two_app={transition_budget_two_app:.3}, cost_bits={cost_word_bits}, compare_gaps=({compare_one_roundtrip_gap:.1},{compare_two_app_gap:.1}), compare_budget={compare_transition_budget_two_app:.3}, toy_n17_mean={toy_transition_mean:.1}, toy_p99={toy_transition_p99}"
+        );
+
+        assert!(
+            one_roundtrip_gap < 0.0 && two_app_gap < 0.0 && transition_budget_two_app > 2.0,
+            "one-CCX transition floor no longer fits both endpoint-rank uses; demote endpoint-rank parser further"
+        );
+        assert!(
+            cost_word_bits >= 16
+                && compare_one_roundtrip_gap > 0.0
+                && compare_two_app_gap > 0.0
+                && compare_transition_budget_two_app < 0.2,
+            "cost-word compare floor no longer kills the generic endpoint DP parser; revisit direct DP wiring"
+        );
+        assert!(
+            toy_transition_mean > 0.0 && toy_transition_p99 > 0,
+            "toy endpoint DP transition floor collapsed; update parser ledger"
+        );
+    }
+
+    #[test]
     fn half_gcd_full_block_endpoint_dp_choice_has_65k_lookahead12_horizon() {
         // The local endpoint DP is a useful structural decoder only if it can
         // be turned into a small phase-clean parser.  Test the optimistic
