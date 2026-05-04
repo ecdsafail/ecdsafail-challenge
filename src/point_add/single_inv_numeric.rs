@@ -32939,6 +32939,105 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_signnorm_logical_coeff_signs_low_det_residue_still_collides() {
+        // The logical-sign route is only metric-shaped if reverse cleanup can
+        // recover the hidden normalization sign without paying physical cnegs.
+        // Give the cleanup more than the det-low2 predicate: low determinant
+        // residues up to 8 bits, both live logical coefficient signs, and the
+        // reverse-visible step/remainder/quotient magnitudes.  Remaining exact
+        // toy collisions mean this is not a small local residue invariant.
+        use std::collections::BTreeMap;
+
+        let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
+        let residue_bits = [2usize, 4, 6, 8];
+        let mut largest_k8_collisions = 0usize;
+        let mut largest_k8_states = 0usize;
+        for &(n, p) in &cases {
+            for &k in &residue_bits {
+                let modulus = 1i128 << k;
+                let mut image: BTreeMap<(usize, i128, i128, i128, i128, bool, bool), u8> =
+                    BTreeMap::new();
+                let mut total_steps = 0usize;
+                for x in 1..p {
+                    let mut u = p as i128;
+                    let mut v = x as i128;
+                    let mut coeff_u = 0i128;
+                    let mut coeff_v = 1i128;
+                    let mut coeff_u_sign = false;
+                    let mut coeff_v_sign = false;
+                    let mut step = 0usize;
+                    while v != 0 {
+                        let adjusted = u + (v >> 1);
+                        let q = adjusted / v;
+                        let rem = u - q * v;
+                        let sign = rem < 0;
+                        let next_v = rem.abs();
+                        let next_coeff = if coeff_u_sign ^ coeff_v_sign {
+                            coeff_u + q * coeff_v
+                        } else {
+                            coeff_u - q * coeff_v
+                        };
+                        let next_coeff_sign = coeff_u_sign ^ sign;
+                        if next_v != 0 {
+                            let det = v * next_coeff - next_v * coeff_v;
+                            let det_residue = det.rem_euclid(modulus);
+                            *image
+                                .entry((
+                                    step,
+                                    v,
+                                    next_v,
+                                    q,
+                                    det_residue,
+                                    coeff_v_sign,
+                                    next_coeff_sign,
+                                ))
+                                .or_insert(0) |= 1u8 << (sign as u8);
+                            total_steps += 1;
+                        }
+                        let old_coeff_u_sign = coeff_u_sign;
+                        u = v;
+                        v = next_v;
+                        coeff_u = coeff_v;
+                        coeff_u_sign = coeff_v_sign;
+                        coeff_v = next_coeff;
+                        coeff_v_sign = old_coeff_u_sign ^ sign;
+                        assert_eq!(
+                            coeff_v_sign, next_coeff_sign,
+                            "logical coefficient-sign state update drifted"
+                        );
+                        step += 1;
+                    }
+                }
+                let collisions = image.values().filter(|&&mask| mask == 0b11).count();
+                let max_mult = image
+                    .values()
+                    .map(|mask| mask.count_ones() as usize)
+                    .max()
+                    .unwrap_or(0);
+                eprintln!(
+                    "direct-centered signnorm logical coeff signs low-det residue: n={n}, k={k}, collisions={collisions}, states={}, total_steps={total_steps}, max_mult={max_mult}",
+                    image.len()
+                );
+                if n == 14 {
+                    println!("METRIC centered_direct_logsign_det_low{k}_coeffsign_collisions_n14={collisions}");
+                    println!("METRIC centered_direct_logsign_det_low{k}_coeffsign_states_n14={}", image.len());
+                    println!("METRIC centered_direct_logsign_det_low{k}_coeffsign_max_mult_n14={max_mult}");
+                }
+                if k == 8 {
+                    largest_k8_collisions = largest_k8_collisions.max(collisions);
+                    largest_k8_states = largest_k8_states.max(image.len());
+                }
+            }
+        }
+        println!("METRIC centered_direct_logsign_det_low8_coeffsign_largest_collisions={largest_k8_collisions}");
+        println!("METRIC centered_direct_logsign_det_low8_coeffsign_largest_states={largest_k8_states}");
+        assert!(
+            largest_k8_collisions > 0,
+            "low 8 determinant bits plus both logical coefficient signs recover the normalization sign; price the cleanup predicate"
+        );
+    }
+
+    #[test]
     fn direct_centered_signnorm_det_low2_coeff_sign_predicate_toy_is_phase_clean() {
         // Circuit reality check for the recovery predicate above.  Under the
         // row invariant, det = v*next_coeff - next_v*coeff_v is +/-p, so its
