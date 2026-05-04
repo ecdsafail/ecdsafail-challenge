@@ -199,7 +199,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_mixed67_huffman_floor",
             scratch_bits: 663,
             charged_toffoli: Some(2_690_447),
-            blocker: "distribution-aware Huffman path floor would clear 2.7M by 9553 at 663 scratch, but coherent tree execution reverts to the full scan and misses by 105208 unless a phase-clean classical-path decoder is found",
+            blocker: "distribution-aware Huffman path floor would clear 2.7M by 9553 at 663 scratch, but coherent tree execution reverts to the full scan and misses by 105208; exact toy canonical path parity is dense (n14 degree 13, density 8248/16384, max code len 13), so promotion needs a different phase-clean classical-path decoder",
         },
         Candidate {
             name: "direct_centered_restoring_final_cond_block6_parser",
@@ -1298,6 +1298,13 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_huffman_tree_toy_dirty_restore_cases = 0usize;
     let direct_restoring_final_huffman_tree_toy_dirty_history_cases = 0usize;
     let direct_restoring_final_huffman_tree_toy_dirty_phase_cases = 0usize;
+    let direct_restoring_final_huffman_path_degree_n14 = 13usize;
+    let direct_restoring_final_huffman_path_density_n14 = 8_248usize;
+    let direct_restoring_final_huffman_path_max_bits_n14 = 30usize;
+    let direct_restoring_final_huffman_path_max_code_len_n14 = 13usize;
+    let direct_restoring_final_huffman_path_max_symbols_n14 = 21usize;
+    let direct_restoring_final_huffman_path_codebook_entries_n14 = 221usize;
+    let direct_restoring_final_huffman_path_max_support_n14 = 14usize;
     let direct_restoring_final_block_parser_align_support_noncontig_steps = 52usize;
     let direct_restoring_final_block_parser_align_support_offset_steps = 127usize;
     let direct_restoring_final_block_parser_align_support_max_span = 20usize;
@@ -2569,6 +2576,13 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_huffman_tree_toy_dirty_restore_cases={direct_restoring_final_huffman_tree_toy_dirty_restore_cases}");
     println!("METRIC scratch600_direct_restoring_final_huffman_tree_toy_dirty_history_cases={direct_restoring_final_huffman_tree_toy_dirty_history_cases}");
     println!("METRIC scratch600_direct_restoring_final_huffman_tree_toy_dirty_phase_cases={direct_restoring_final_huffman_tree_toy_dirty_phase_cases}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_degree_n14={direct_restoring_final_huffman_path_degree_n14}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_density_n14={direct_restoring_final_huffman_path_density_n14}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_max_bits_n14={direct_restoring_final_huffman_path_max_bits_n14}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_max_code_len_n14={direct_restoring_final_huffman_path_max_code_len_n14}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_max_symbols_n14={direct_restoring_final_huffman_path_max_symbols_n14}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_codebook_entries_n14={direct_restoring_final_huffman_path_codebook_entries_n14}");
+    println!("METRIC scratch600_direct_restoring_final_huffman_path_max_support_n14={direct_restoring_final_huffman_path_max_support_n14}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_align_support_noncontig_steps={direct_restoring_final_block_parser_align_support_noncontig_steps}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_align_support_offset_steps={direct_restoring_final_block_parser_align_support_offset_steps}");
     println!("METRIC scratch600_direct_restoring_final_block_parser_align_support_max_span={direct_restoring_final_block_parser_align_support_max_span}");
@@ -3799,6 +3813,13 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_huffman_tree_toy_dirty_history_cases == 0
             && direct_restoring_final_huffman_tree_toy_dirty_phase_cases == 0,
         "coherent restoring parser decision-tree blocker changed; revisit Huffman path floor"
+    );
+    assert!(
+        direct_restoring_final_huffman_path_degree_n14 + 1 >= 14
+            && direct_restoring_final_huffman_path_density_n14 > (1usize << 14) / 4
+            && direct_restoring_final_huffman_path_max_code_len_n14 >= 13
+            && direct_restoring_final_huffman_path_max_support_n14 >= 14,
+        "canonical Huffman path side channel became sparse enough to revisit the direct parser decoder"
     );
     assert!(
         direct_restoring_final_block_parser_best_qrom_row_floor as f64

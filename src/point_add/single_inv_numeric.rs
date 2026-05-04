@@ -30896,6 +30896,45 @@ mod tests {
     }
 
     #[test]
+    fn direct_centered_restoring_final_huffman_path_bits_are_dense() {
+        // The mixed 6/7 Huffman floor only clears if the distribution-aware
+        // path can be produced and cleaned as cheap classical metadata.  Build
+        // exact toy codebooks for the same restoring-final alignment/branch
+        // stream and treat a canonical Huffman path-bit parity as the hidden
+        // side channel.  The parity is already dense and growing-degree, so
+        // this is a parser breakthrough requirement rather than a wire-in.
+        let path_bit_mask = 0b1011usize;
+        let cases = [(8usize, 251u16), (10, 1021), (12, 4093), (14, 16381)];
+        for &(n, p) in &cases {
+            let (
+                degree,
+                density,
+                max_path_bits,
+                max_code_len,
+                max_symbols,
+                codebook_entries,
+                max_support,
+            ) = direct_centered_restoring_final_huffman_path_anf_stats(n, p, path_bit_mask);
+            let table = 1usize << n;
+            eprintln!(
+                "direct-centered restoring-final Huffman path ANF: n={n}, degree={degree}, density={density}/{table}, max_path_bits={max_path_bits}, max_code_len={max_code_len}, max_symbols={max_symbols}, codebook_entries={codebook_entries}, max_support={max_support}"
+            );
+            if n == 14 {
+                println!("METRIC centered_direct_restoring_final_huffman_path_degree_n14={degree}");
+                println!("METRIC centered_direct_restoring_final_huffman_path_density_n14={density}");
+                println!("METRIC centered_direct_restoring_final_huffman_path_max_bits_n14={max_path_bits}");
+                println!("METRIC centered_direct_restoring_final_huffman_path_max_code_len_n14={max_code_len}");
+                println!("METRIC centered_direct_restoring_final_huffman_path_max_symbols_n14={max_symbols}");
+                println!("METRIC centered_direct_restoring_final_huffman_path_codebook_entries_n14={codebook_entries}");
+                println!("METRIC centered_direct_restoring_final_huffman_path_max_support_n14={max_support}");
+            }
+            assert!(max_path_bits > 0, "toy Huffman path collapsed");
+            assert!(degree + 1 >= n, "Huffman path parity unexpectedly low degree");
+            assert!(density > table / 4, "Huffman path parity unexpectedly sparse");
+        }
+    }
+
+    #[test]
     fn direct_centered_signnorm_normalization_sign_mbu_is_dense_too() {
         // The sign-normalized direct-centered route keeps quotient signs on the
         // phase-clean q_neg=false path by recording when the centered remainder
@@ -32534,6 +32573,242 @@ mod tests {
             max_patterns,
             total_support_rows,
             max_blocks,
+        )
+    }
+
+    fn direct_centered_restoring_final_huffman_path_anf_stats(
+        n: usize,
+        p: u16,
+        path_bit_mask: usize,
+    ) -> (usize, usize, usize, usize, usize, usize, usize) {
+        use std::collections::BTreeMap;
+
+        assert!(path_bit_mask != 0, "path-bit mask must select at least one bit");
+        let size = 1usize << n;
+        let bit_len = |z: u128| -> usize {
+            if z == 0 {
+                0
+            } else {
+                128usize - z.leading_zeros() as usize
+            }
+        };
+        let trace_symbols = |x: u16| -> (Vec<usize>, Vec<(usize, bool)>) {
+            let mut u = p as i128;
+            let mut v = x as i128;
+            let mut coeff_u = 0i128;
+            let mut coeff_v = 1i128;
+            let mut alignments = Vec::new();
+            let mut branches = Vec::new();
+            while v != 0 {
+                let abs_u = u.unsigned_abs();
+                let abs_v = v.unsigned_abs();
+                let adjusted = abs_u + (abs_v >> 1);
+                let q_abs = adjusted / abs_v;
+                let q_signed = if (u < 0) ^ (v < 0) {
+                    -(q_abs as i128)
+                } else {
+                    q_abs as i128
+                };
+                let next_v = u - q_signed * v;
+                let next_coeff_v = coeff_u - q_signed * coeff_v;
+                let denom = coeff_v.unsigned_abs();
+                assert!(denom > 0, "coefficient decoder denominator vanished");
+                let next_abs = next_coeff_v.unsigned_abs();
+                let low_numer = if coeff_u == 0 {
+                    next_abs
+                } else {
+                    assert!(next_abs > 0, "coefficient decoder numerator underflowed");
+                    next_abs - 1
+                };
+                let high_numer = if coeff_u == 0 {
+                    low_numer
+                } else {
+                    next_abs + denom - 1
+                };
+                let low_q = low_numer / denom;
+                let high_q = high_numer / denom;
+                let high_branch = q_abs != low_q;
+                let numer = if high_branch {
+                    assert_eq!(q_abs, high_q, "coefficient decoder q escaped candidates");
+                    high_numer
+                } else {
+                    low_numer
+                };
+                if low_q != high_q {
+                    branches.push((alignments.len(), high_branch));
+                }
+                alignments.push(bit_len(numer).saturating_sub(bit_len(denom)));
+                u = v;
+                v = next_v;
+                coeff_u = coeff_v;
+                coeff_v = next_coeff_v;
+            }
+            (alignments, branches)
+        };
+
+        let mut traces = Vec::<(usize, Vec<usize>, Vec<(usize, bool)>)>::new();
+        let mut max_steps = 0usize;
+        for x in 1..p {
+            let (alignments, branches) = trace_symbols(x);
+            max_steps = max_steps.max(alignments.len());
+            traces.push((x as usize, alignments, branches));
+        }
+
+        let mut align_counts = vec![BTreeMap::<usize, usize>::new(); max_steps];
+        let mut branch_counts = vec![BTreeMap::<usize, [usize; 2]>::new(); max_steps];
+        for (_, alignments, branches) in &traces {
+            for (step, &alignment) in alignments.iter().enumerate() {
+                *align_counts[step].entry(alignment).or_insert(0) += 1;
+            }
+            for &(step, branch) in branches {
+                branch_counts[step]
+                    .entry(alignments[step])
+                    .or_insert([0usize; 2])[branch as usize] += 1;
+            }
+        }
+
+        let huffman_depths = |counts: &BTreeMap<usize, usize>| -> BTreeMap<usize, usize> {
+            let mut depths = BTreeMap::<usize, usize>::new();
+            let mut nodes = Vec::<(usize, Vec<usize>)>::new();
+            for (&symbol, &count) in counts {
+                if count > 0 {
+                    depths.insert(symbol, 0);
+                    nodes.push((count, vec![symbol]));
+                }
+            }
+            while nodes.len() > 1 {
+                nodes.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                let (left_count, left_symbols) = nodes.remove(0);
+                let (right_count, right_symbols) = nodes.remove(0);
+                let mut merged = left_symbols;
+                for symbol in &merged {
+                    *depths.get_mut(symbol).unwrap() += 1;
+                }
+                for symbol in &right_symbols {
+                    *depths.get_mut(symbol).unwrap() += 1;
+                }
+                merged.extend(right_symbols);
+                merged.sort_unstable();
+                nodes.push((left_count + right_count, merged));
+            }
+            depths
+        };
+        let canonical_codes =
+            |counts: &BTreeMap<usize, usize>| -> BTreeMap<usize, (usize, usize)> {
+                let depths = huffman_depths(counts);
+                let mut symbols = depths
+                    .into_iter()
+                    .filter(|&(_, len)| len > 0)
+                    .collect::<Vec<_>>();
+                symbols.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+                let mut codes = BTreeMap::<usize, (usize, usize)>::new();
+                let mut code = 0usize;
+                let mut previous_len = 0usize;
+                for (symbol, len) in symbols {
+                    code <<= len - previous_len;
+                    codes.insert(symbol, (code, len));
+                    code += 1;
+                    previous_len = len;
+                }
+                codes
+            };
+
+        let align_codebooks = align_counts
+            .iter()
+            .map(|counts| canonical_codes(counts))
+            .collect::<Vec<_>>();
+        let mut branch_codebooks =
+            Vec::<BTreeMap<usize, BTreeMap<usize, (usize, usize)>>>::new();
+        for counts_by_alignment in &branch_counts {
+            let mut by_alignment = BTreeMap::new();
+            for (&alignment, counts) in counts_by_alignment {
+                let mut freq = BTreeMap::new();
+                if counts[0] > 0 {
+                    freq.insert(0usize, counts[0]);
+                }
+                if counts[1] > 0 {
+                    freq.insert(1usize, counts[1]);
+                }
+                by_alignment.insert(alignment, canonical_codes(&freq));
+            }
+            branch_codebooks.push(by_alignment);
+        }
+
+        let mut codebook_entries = 0usize;
+        let mut max_support = 0usize;
+        let mut max_code_len = 0usize;
+        for book in &align_codebooks {
+            codebook_entries += book.len();
+            max_support = max_support.max(book.len());
+            for &(_, len) in book.values() {
+                max_code_len = max_code_len.max(len);
+            }
+        }
+        for by_alignment in &branch_codebooks {
+            for book in by_alignment.values() {
+                codebook_entries += book.len();
+                max_support = max_support.max(book.len());
+                for &(_, len) in book.values() {
+                    max_code_len = max_code_len.max(len);
+                }
+            }
+        }
+
+        let mut anf = vec![0u8; size];
+        let mut max_path_bits = 0usize;
+        let mut max_symbols = 0usize;
+        for (x, alignments, branches) in traces {
+            let mut branch_at_step = vec![None; alignments.len()];
+            for (step, branch) in branches {
+                branch_at_step[step] = Some(branch);
+            }
+            let mut parity = 0u8;
+            let mut path_bits = 0usize;
+            let mut symbol_count = 0usize;
+            for (step, &alignment) in alignments.iter().enumerate() {
+                if let Some(&(code, len)) = align_codebooks[step].get(&alignment) {
+                    parity ^= ((code & path_bit_mask).count_ones() as u8) & 1;
+                    path_bits += len;
+                }
+                symbol_count += 1;
+                if let Some(branch) = branch_at_step[step] {
+                    let branch_idx = branch as usize;
+                    if let Some(&(code, len)) = branch_codebooks[step]
+                        .get(&alignment)
+                        .and_then(|book| book.get(&branch_idx))
+                    {
+                        parity ^= ((code & path_bit_mask).count_ones() as u8) & 1;
+                        path_bits += len;
+                    }
+                    symbol_count += 1;
+                }
+            }
+            max_path_bits = max_path_bits.max(path_bits);
+            max_symbols = max_symbols.max(symbol_count);
+            anf[x] = parity;
+        }
+        for bit in 0..n {
+            for idx in 0..size {
+                if (idx & (1usize << bit)) != 0 {
+                    anf[idx] ^= anf[idx ^ (1usize << bit)];
+                }
+            }
+        }
+        let density = anf.iter().filter(|&&c| c != 0).count();
+        let degree = anf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &c)| if c != 0 { Some(i.count_ones() as usize) } else { None })
+            .max()
+            .unwrap_or(0);
+        (
+            degree,
+            density,
+            max_path_bits,
+            max_code_len,
+            max_symbols,
+            codebook_entries,
+            max_support,
         )
     }
 
