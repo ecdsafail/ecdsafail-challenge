@@ -5985,10 +5985,10 @@ mod tests {
         // 560 odd bits and stream only one A control at a time.  The scratch
         // arithmetic is tempting, but the delta transition for an odd step is
         // not injective without an A/history bit: delta=1 and delta=-1 both map
-        // to delta'=0.  Adding even one 10-bit checkpoint breaks the 663-bit
-        // Google scratch model, and the current exact clean pattern decoder
-        // already consumes the whole two-fast-replay margin before any
-        // compressed-ID expansion.
+        // to delta'=0.  A separate checkpoint-width probe finds that even the
+        // sampled 5-bit delta checkpoint breaks the 663-bit Google scratch
+        // model, and the current exact clean pattern decoder already consumes
+        // the whole two-fast-replay margin before any compressed-ID expansion.
         use std::collections::BTreeMap;
 
         let mut images: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
@@ -6060,6 +6060,83 @@ mod tests {
         assert!(
             exact_two_decoder_projected > 2_700_000,
             "current exact pattern decoder now leaves compressed-ID margin"
+        );
+    }
+
+    #[test]
+    fn raw_pattern_delta_checkpoint_exceeds_google_scratch_slack() {
+        // The single-A raw-pattern schedule has only two scratch bits left
+        // under the 663-bit Google model.  A reversible streaming parser needs
+        // either enough old-delta checkpoint state to reverse a window, or it
+        // must retain the ambiguous A decisions.  Sample the actual 35-window
+        // BY trajectories: the window-start delta alphabet is already wider
+        // than two bits, and the per-step A ambiguity is far larger still.
+        use std::collections::HashMap;
+
+        const W: usize = 16;
+        const WINDOWS: usize = 35;
+        const GOOGLE_LOW_QUBIT_SCRATCH: usize = 663;
+        const RAW_SINGLE_A_SCRATCH: usize = 661;
+        let samples = 10_000usize;
+        let mut sampler = Sampler::new(b"by-raw-pattern-delta-checkpoint-v1", SECP256K1_P);
+        let mut window_delta_counts: Vec<HashMap<i64, usize>> =
+            (0..WINDOWS).map(|_| HashMap::new()).collect();
+        let mut ambiguous_a_counts = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let x = sampler.next();
+            let mut delta = 1i64;
+            let mut f = SInt::from_u(SECP256K1_P);
+            let mut g = SInt::from_u(x);
+            let mut ambiguous = 0usize;
+            for counts in &mut window_delta_counts {
+                *counts.entry(delta).or_insert(0) += 1;
+                for _ in 0..W {
+                    let old_delta = delta;
+                    let odd = g.bit0();
+                    divstep_sint_state(&mut delta, &mut f, &mut g);
+                    if odd && delta <= 0 && old_delta != 0 {
+                        ambiguous += 1;
+                    }
+                }
+            }
+            ambiguous_a_counts.push(ambiguous);
+        }
+        ambiguous_a_counts.sort_unstable();
+        let max_window_delta_rows = window_delta_counts
+            .iter()
+            .map(HashMap::len)
+            .max()
+            .unwrap_or(0);
+        let checkpoint_bits =
+            usize::BITS as usize - max_window_delta_rows.saturating_sub(1).leading_zeros() as usize;
+        let checkpoint_scratch = RAW_SINGLE_A_SCRATCH + checkpoint_bits;
+        let scratch_slack = GOOGLE_LOW_QUBIT_SCRATCH - RAW_SINGLE_A_SCRATCH;
+        let ambiguous_mean =
+            ambiguous_a_counts.iter().sum::<usize>() as f64 / ambiguous_a_counts.len() as f64;
+        let ambiguous_p99 = ambiguous_a_counts[ambiguous_a_counts.len() * 99 / 100];
+        let ambiguous_max = *ambiguous_a_counts.last().unwrap();
+        println!("METRIC by_raw_pattern_delta_checkpoint_samples={samples}");
+        println!("METRIC by_raw_pattern_delta_checkpoint_max_rows={max_window_delta_rows}");
+        println!("METRIC by_raw_pattern_delta_checkpoint_bits={checkpoint_bits}");
+        println!("METRIC by_raw_pattern_delta_checkpoint_scratch={checkpoint_scratch}");
+        println!("METRIC by_raw_pattern_delta_checkpoint_scratch_slack={scratch_slack}");
+        println!("METRIC by_raw_pattern_ambiguous_a_bits_mean={ambiguous_mean:.3}");
+        println!("METRIC by_raw_pattern_ambiguous_a_bits_p99={ambiguous_p99}");
+        println!("METRIC by_raw_pattern_ambiguous_a_bits_max={ambiguous_max}");
+        eprintln!(
+            "BY raw-pattern delta checkpoint: max_rows={max_window_delta_rows}, bits={checkpoint_bits}, scratch={checkpoint_scratch}, slack={scratch_slack}, ambiguous_a_mean={ambiguous_mean:.1}, p99={ambiguous_p99}, max={ambiguous_max}"
+        );
+        assert!(
+            checkpoint_bits > scratch_slack,
+            "delta checkpoint now fits the raw-pattern scratch slack; revisit streaming parser"
+        );
+        assert!(
+            checkpoint_scratch > GOOGLE_LOW_QUBIT_SCRATCH,
+            "raw-pattern delta checkpoint now fits Google scratch"
+        );
+        assert!(
+            ambiguous_p99 > 32,
+            "ambiguous A history became sparse enough to revisit retained-A cleanup"
         );
     }
 

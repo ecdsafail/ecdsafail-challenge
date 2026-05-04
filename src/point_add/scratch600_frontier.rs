@@ -79,7 +79,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "scaled_by_raw_pattern_streaming_parser",
             scratch_bits: 671,
             charged_toffoli: Some(2_701_606),
-            blocker: "raw 560-bit pattern plus single A only fits 663 scratch if the delta parser is non-reversible; one 10-bit checkpoint breaks scratch, and two exact clean pattern decoders miss by 1606 before compressed expansion",
+            blocker: "raw 560-bit pattern plus single A only fits 663 scratch if the delta parser is non-reversible; sampled reversible delta checkpoint needs 5 bits and 666 scratch, retained A history is p99 218 bits, and two exact clean pattern decoders miss by 1606 before compressed expansion",
         },
         Candidate {
             name: "streamed_mask_qoffset_replay_body_only",
@@ -265,6 +265,13 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let scaled_by_raw_pattern_single_a_scratch = 661usize;
     let scaled_by_raw_pattern_one_checkpoint_scratch = 671usize;
     let scaled_by_raw_pattern_window_a_scratch = 676usize;
+    let scaled_by_raw_pattern_delta_checkpoint_max_rows = 25usize;
+    let scaled_by_raw_pattern_delta_checkpoint_bits = 5usize;
+    let scaled_by_raw_pattern_delta_checkpoint_scratch = 666usize;
+    let scaled_by_raw_pattern_delta_checkpoint_scratch_slack = 2usize;
+    let scaled_by_raw_pattern_ambiguous_a_bits_mean_milli = 199_653usize;
+    let scaled_by_raw_pattern_ambiguous_a_bits_p99 = 218usize;
+    let scaled_by_raw_pattern_ambiguous_a_bits_max = 232usize;
     let scaled_by_raw_pattern_two_replay_before_branch_decode = 2_577_286usize;
     let scaled_by_raw_pattern_exact_decoder_per_replay = 62_160usize;
     let scaled_by_raw_pattern_exact_two_decoder_projection =
@@ -989,6 +996,13 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_scaled_by_raw_pattern_single_a_scratch={scaled_by_raw_pattern_single_a_scratch}");
     println!("METRIC scratch600_scaled_by_raw_pattern_one_checkpoint_scratch={scaled_by_raw_pattern_one_checkpoint_scratch}");
     println!("METRIC scratch600_scaled_by_raw_pattern_window_a_scratch={scaled_by_raw_pattern_window_a_scratch}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_delta_checkpoint_max_rows={scaled_by_raw_pattern_delta_checkpoint_max_rows}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_delta_checkpoint_bits={scaled_by_raw_pattern_delta_checkpoint_bits}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_delta_checkpoint_scratch={scaled_by_raw_pattern_delta_checkpoint_scratch}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_delta_checkpoint_scratch_slack={scaled_by_raw_pattern_delta_checkpoint_scratch_slack}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_ambiguous_a_bits_mean_milli={scaled_by_raw_pattern_ambiguous_a_bits_mean_milli}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_ambiguous_a_bits_p99={scaled_by_raw_pattern_ambiguous_a_bits_p99}");
+    println!("METRIC scratch600_scaled_by_raw_pattern_ambiguous_a_bits_max={scaled_by_raw_pattern_ambiguous_a_bits_max}");
     println!("METRIC scratch600_scaled_by_raw_pattern_two_replay_before_branch_decode={scaled_by_raw_pattern_two_replay_before_branch_decode}");
     println!("METRIC scratch600_scaled_by_raw_pattern_exact_decoder_per_replay={scaled_by_raw_pattern_exact_decoder_per_replay}");
     println!("METRIC scratch600_scaled_by_raw_pattern_exact_two_decoder_projection={scaled_by_raw_pattern_exact_two_decoder_projection}");
@@ -1584,6 +1598,10 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
         scaled_by_raw_pattern_single_a_scratch <= GOOGLE_LOW_QUBIT_SCRATCH
             && scaled_by_raw_pattern_one_checkpoint_scratch > GOOGLE_LOW_QUBIT_SCRATCH
             && scaled_by_raw_pattern_window_a_scratch > GOOGLE_LOW_QUBIT_SCRATCH
+            && scaled_by_raw_pattern_delta_checkpoint_bits
+                > scaled_by_raw_pattern_delta_checkpoint_scratch_slack
+            && scaled_by_raw_pattern_delta_checkpoint_scratch > GOOGLE_LOW_QUBIT_SCRATCH
+            && scaled_by_raw_pattern_ambiguous_a_bits_p99 > 200
             && scaled_by_raw_pattern_exact_two_decoder_gap > 0,
         "raw-pattern scaled-BY streaming now has reversible scratch/decode margin; revisit raw history"
     );
