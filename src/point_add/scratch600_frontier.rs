@@ -187,7 +187,7 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             name: "direct_centered_restoring_final_low_branch_selective_prefix_flatten_floor",
             scratch_bits: 663,
             charged_toffoli: None,
-            blocker: "p99-only selective length-flattening has 394 sampled max prefix bits and would need 676 scratch; trimming 9 balanced steps gives a 381-bit sampled max, fits 663 scratch, and projects 2661534 with 38466 margin; support-2..18 generated balanced block2 selected-add/sub roundtrip family is phase-clean across 289 pairs with max 804 CCX, and peak-fit mixed schedule codebooks decode 856854 sampled symbols with no collisions or mismatches; disjoint 8192 secp holdout already has 182 missing symbols, 170 missing traces, 7 over-budget rows, and 391 seen bits; a parity scaling probe at 65536 training / 32768 holdout still leaves 105 missing symbols and only about 631 Toffoli margin; toy exact-domain train/exhaust probes miss symbols in all 4 cases, and a support-only toy check finds modest but real misses (n16: 26 symbols over 11 steps, exact contiguous span 16), so promotion still needs full production circuit insertion plus a non-sampled support proof or a charged interval/fallback encoder",
+            blocker: "p99-only selective length-flattening has 394 sampled max prefix bits and would need 676 scratch; trimming 9 balanced steps gives a 381-bit sampled max, fits 663 scratch, and projects 2661534 with 38466 margin; support-2..18 generated balanced block2 selected-add/sub roundtrip family is phase-clean across 289 pairs with max 804 CCX, and peak-fit mixed schedule codebooks decode 856854 sampled symbols with no collisions or mismatches; disjoint 8192 secp holdout already has 182 missing symbols, 170 missing traces, 7 over-budget rows, and 391 seen bits; a parity scaling probe at 65536 training / 32768 holdout still leaves 105 missing symbols and only about 631 Toffoli margin; toy exact-domain train/exhaust probes miss symbols in all 4 cases, support-only toys find modest but real misses (n16: 26 symbols over 11 steps, exact contiguous span 16), and charged interval probes do not rescue it: guard4 covers 0/4 toy domains while a full 0..n per-step envelope covers 4/4 but fits 0/4 and reaches 4268 over-budget traces / 37 bits vs n16 budget 24; promotion now needs a non-sampled support proof or a different decoder, not the simple interval fallback",
         },
         Candidate {
             name: "direct_centered_restoring_final_mixed4to8_joint_binary_floor",
@@ -928,6 +928,17 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     let direct_restoring_final_low_branch_support_toy_largest_missing_steps = 11usize;
     let direct_restoring_final_low_branch_support_toy_largest_span_gap = 4usize;
     let direct_restoring_final_low_branch_support_toy_largest_exact_span = 16usize;
+    let direct_restoring_final_low_branch_interval_toy_guard4_cover_cases = 0usize;
+    let direct_restoring_final_low_branch_interval_toy_guard4_largest_missing_symbols =
+        25usize;
+    let direct_restoring_final_low_branch_interval_toy_guard4_largest_over_budget_traces =
+        4_090usize;
+    let direct_restoring_final_low_branch_interval_toy_guard4_largest_max_bits = 37usize;
+    let direct_restoring_final_low_branch_interval_toy_full_cover_cases = 4usize;
+    let direct_restoring_final_low_branch_interval_toy_full_fit_cases = 0usize;
+    let direct_restoring_final_low_branch_interval_toy_full_largest_over_budget_traces =
+        4_268usize;
+    let direct_restoring_final_low_branch_interval_toy_full_largest_max_bits = 37usize;
     let direct_restoring_final_peakfit_holdout_missing_symbols = 182usize;
     let direct_restoring_final_peakfit_holdout_missing_traces = 170usize;
     let direct_restoring_final_peakfit_holdout_over_budget_rows = 7usize;
@@ -2085,6 +2096,19 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
     println!("METRIC scratch600_direct_restoring_final_peakfit_toy_largest_missing_symbols={direct_restoring_final_peakfit_toy_largest_missing_symbols}");
     println!("METRIC scratch600_direct_restoring_final_peakfit_toy_largest_sample_over_budget_traces={direct_restoring_final_peakfit_toy_largest_sample_over_budget_traces}");
     println!("METRIC scratch600_direct_restoring_final_peakfit_toy_largest_exact_over_budget_traces={direct_restoring_final_peakfit_toy_largest_exact_over_budget_traces}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_support_toy_cases_with_missing={direct_restoring_final_low_branch_support_toy_cases_with_missing}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_support_toy_largest_missing_symbols={direct_restoring_final_low_branch_support_toy_largest_missing_symbols}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_support_toy_largest_missing_steps={direct_restoring_final_low_branch_support_toy_largest_missing_steps}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_support_toy_largest_span_gap={direct_restoring_final_low_branch_support_toy_largest_span_gap}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_support_toy_largest_exact_span={direct_restoring_final_low_branch_support_toy_largest_exact_span}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_guard4_cover_cases={direct_restoring_final_low_branch_interval_toy_guard4_cover_cases}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_guard4_largest_missing_symbols={direct_restoring_final_low_branch_interval_toy_guard4_largest_missing_symbols}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_guard4_largest_over_budget_traces={direct_restoring_final_low_branch_interval_toy_guard4_largest_over_budget_traces}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_guard4_largest_max_bits={direct_restoring_final_low_branch_interval_toy_guard4_largest_max_bits}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_full_cover_cases={direct_restoring_final_low_branch_interval_toy_full_cover_cases}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_full_fit_cases={direct_restoring_final_low_branch_interval_toy_full_fit_cases}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_full_largest_over_budget_traces={direct_restoring_final_low_branch_interval_toy_full_largest_over_budget_traces}");
+    println!("METRIC scratch600_direct_restoring_final_low_branch_interval_toy_full_largest_max_bits={direct_restoring_final_low_branch_interval_toy_full_largest_max_bits}");
     println!("METRIC scratch600_direct_restoring_final_peakfit_holdout_missing_symbols={direct_restoring_final_peakfit_holdout_missing_symbols}");
     println!("METRIC scratch600_direct_restoring_final_peakfit_holdout_missing_traces={direct_restoring_final_peakfit_holdout_missing_traces}");
     println!("METRIC scratch600_direct_restoring_final_peakfit_holdout_over_budget_rows={direct_restoring_final_peakfit_holdout_over_budget_rows}");
@@ -3188,6 +3212,17 @@ fn scratch600_frontier_requires_selector_or_parser_breakthrough() {
             && direct_restoring_final_low_branch_support_toy_largest_missing_steps == 11
             && direct_restoring_final_low_branch_support_toy_largest_span_gap == 4
             && direct_restoring_final_low_branch_support_toy_largest_exact_span == 16
+            && direct_restoring_final_low_branch_interval_toy_guard4_cover_cases == 0
+            && direct_restoring_final_low_branch_interval_toy_guard4_largest_missing_symbols
+                == 25
+            && direct_restoring_final_low_branch_interval_toy_guard4_largest_over_budget_traces
+                > 4_000
+            && direct_restoring_final_low_branch_interval_toy_guard4_largest_max_bits == 37
+            && direct_restoring_final_low_branch_interval_toy_full_cover_cases == 4
+            && direct_restoring_final_low_branch_interval_toy_full_fit_cases == 0
+            && direct_restoring_final_low_branch_interval_toy_full_largest_over_budget_traces
+                > 4_000
+            && direct_restoring_final_low_branch_interval_toy_full_largest_max_bits == 37
             && direct_restoring_final_peakfit_holdout_missing_symbols == 182
             && direct_restoring_final_peakfit_holdout_missing_traces == 170
             && direct_restoring_final_peakfit_holdout_over_budget_rows == 7
