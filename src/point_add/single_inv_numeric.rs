@@ -20172,7 +20172,15 @@ mod tests {
         let mut norm_rem_costs = Vec::with_capacity(samples);
         let mut exact_norm_rem_costs = Vec::with_capacity(samples);
         let mut coeff_width_costs = Vec::with_capacity(samples);
-        for _ in 0..samples {
+        let mut logical_once_sum = 0i128;
+        let mut logical_split_sum = 0i128;
+        let mut exact_logical_once_sum = 0i128;
+        let mut exact_logical_split_sum = 0i128;
+        let mut logical_once_first64_sum = 0i128;
+        let mut logical_split_first64_sum = 0i128;
+        let mut exact_logical_once_first64_sum = 0i128;
+        let mut exact_logical_split_first64_sum = 0i128;
+        for sample_idx in 0..samples {
             let mut x = rand_u256(&mut rng);
             if x.is_zero() {
                 x = U256::from(1u64);
@@ -20294,6 +20302,16 @@ mod tests {
                 + 2 * (3 * coeff_width_cost + exact_norm_rem_cost + 2 * extraction_oneway) as isize;
             let exact_logical_split = 642_716isize
                 + 2 * (3 * coeff_width_cost + 2 * (extraction_oneway + exact_norm_rem_cost)) as isize;
+            logical_once_sum += logical_once as i128;
+            logical_split_sum += logical_split as i128;
+            exact_logical_once_sum += exact_logical_once as i128;
+            exact_logical_split_sum += exact_logical_split as i128;
+            if sample_idx < 64 {
+                logical_once_first64_sum += logical_once as i128;
+                logical_split_first64_sum += logical_split as i128;
+                exact_logical_once_first64_sum += exact_logical_once as i128;
+                exact_logical_split_first64_sum += exact_logical_split as i128;
+            }
             logical_once_static.push(logical_once);
             logical_split_static.push(logical_split);
             exact_logical_once_static.push(exact_logical_once);
@@ -20321,10 +20339,26 @@ mod tests {
         let norm_rem_p99 = norm_rem_costs[p99];
         let exact_norm_rem_p99 = exact_norm_rem_costs[p99];
         let coeff_width_p99 = coeff_width_costs[p99];
+        let logical_once_mean = logical_once_sum as f64 / samples as f64;
+        let logical_split_mean = logical_split_sum as f64 / samples as f64;
+        let exact_logical_once_mean = exact_logical_once_sum as f64 / samples as f64;
+        let exact_logical_split_mean = exact_logical_split_sum as f64 / samples as f64;
+        let logical_once_first64 = logical_once_first64_sum as f64 / 64.0;
+        let logical_split_first64 = logical_split_first64_sum as f64 / 64.0;
+        let exact_logical_once_first64 = exact_logical_once_first64_sum as f64 / 64.0;
+        let exact_logical_split_first64 = exact_logical_split_first64_sum as f64 / 64.0;
         let logical_once_gap = logical_once_p99 - 2_700_000isize;
         let logical_split_gap = logical_split_p99 - 2_700_000isize;
         let exact_logical_once_gap = exact_logical_once_p99 - 2_700_000isize;
         let exact_logical_split_gap = exact_logical_split_p99 - 2_700_000isize;
+        let logical_once_mean_gap = logical_once_mean - 2_700_000.0;
+        let logical_split_mean_gap = logical_split_mean - 2_700_000.0;
+        let exact_logical_once_mean_gap = exact_logical_once_mean - 2_700_000.0;
+        let exact_logical_split_mean_gap = exact_logical_split_mean - 2_700_000.0;
+        let logical_once_first64_gap = logical_once_first64 - 2_700_000.0;
+        let logical_split_first64_gap = logical_split_first64 - 2_700_000.0;
+        let exact_logical_once_first64_gap = exact_logical_once_first64 - 2_700_000.0;
+        let exact_logical_split_first64_gap = exact_logical_split_first64 - 2_700_000.0;
         println!("METRIC centered_direct_logsign_cneg257={cneg257}");
         println!("METRIC centered_direct_logsign_exact_cneg257={exact_cneg257}");
         println!("METRIC centered_direct_logsign_coeff_width_p99={coeff_width_p99}");
@@ -20332,18 +20366,38 @@ mod tests {
         println!("METRIC centered_direct_logsign_norm_count_max={norm_count_max}");
         println!("METRIC centered_direct_logsign_rem_cost_p99={norm_rem_p99}");
         println!("METRIC centered_direct_logsign_exact_rem_cost_p99={exact_norm_rem_p99}");
+        println!("METRIC centered_direct_logsign_once_mean={logical_once_mean:.3}");
+        println!("METRIC centered_direct_logsign_split_mean={logical_split_mean:.3}");
+        println!("METRIC centered_direct_logsign_once_first64={logical_once_first64:.3}");
+        println!("METRIC centered_direct_logsign_split_first64={logical_split_first64:.3}");
         println!("METRIC centered_direct_logsign_once_p99={logical_once_p99}");
         println!("METRIC centered_direct_logsign_split_p99={logical_split_p99}");
+        println!("METRIC centered_direct_logsign_once_mean_gap_to_2700k={logical_once_mean_gap:.3}");
+        println!("METRIC centered_direct_logsign_split_mean_gap_to_2700k={logical_split_mean_gap:.3}");
+        println!("METRIC centered_direct_logsign_once_first64_gap_to_2700k={logical_once_first64_gap:.3}");
+        println!("METRIC centered_direct_logsign_split_first64_gap_to_2700k={logical_split_first64_gap:.3}");
         println!("METRIC centered_direct_logsign_once_gap_to_2700k={logical_once_gap}");
         println!("METRIC centered_direct_logsign_split_gap_to_2700k={logical_split_gap}");
+        println!("METRIC centered_direct_logsign_exact_once_mean={exact_logical_once_mean:.3}");
+        println!("METRIC centered_direct_logsign_exact_split_mean={exact_logical_split_mean:.3}");
+        println!("METRIC centered_direct_logsign_exact_once_first64={exact_logical_once_first64:.3}");
+        println!("METRIC centered_direct_logsign_exact_split_first64={exact_logical_split_first64:.3}");
         println!("METRIC centered_direct_logsign_exact_once_p99={exact_logical_once_p99}");
         println!("METRIC centered_direct_logsign_exact_split_p99={exact_logical_split_p99}");
+        println!("METRIC centered_direct_logsign_exact_once_mean_gap_to_2700k={exact_logical_once_mean_gap:.3}");
+        println!("METRIC centered_direct_logsign_exact_split_mean_gap_to_2700k={exact_logical_split_mean_gap:.3}");
+        println!("METRIC centered_direct_logsign_exact_once_first64_gap_to_2700k={exact_logical_once_first64_gap:.3}");
+        println!("METRIC centered_direct_logsign_exact_split_first64_gap_to_2700k={exact_logical_split_first64_gap:.3}");
         println!("METRIC centered_direct_logsign_exact_once_gap_to_2700k={exact_logical_once_gap}");
         println!("METRIC centered_direct_logsign_exact_split_gap_to_2700k={exact_logical_split_gap}");
         eprintln!(
-            "Direct-centered logical coeff-sign budget: cneg257={cneg257}, exact_cneg257={exact_cneg257}, coeff_width_p99={coeff_width_p99}, norm_count_p99={norm_count_p99}, norm_count_max={norm_count_max}, rem_p99={norm_rem_p99}, exact_rem_p99={exact_norm_rem_p99}, once_p99={logical_once_p99}, split_p99={logical_split_p99}, once_gap={logical_once_gap}, split_gap={logical_split_gap}, exact_once_p99={exact_logical_once_p99}, exact_split_p99={exact_logical_split_p99}, exact_once_gap={exact_logical_once_gap}, exact_split_gap={exact_logical_split_gap}"
+            "Direct-centered logical coeff-sign budget: cneg257={cneg257}, exact_cneg257={exact_cneg257}, coeff_width_p99={coeff_width_p99}, norm_count_p99={norm_count_p99}, norm_count_max={norm_count_max}, rem_p99={norm_rem_p99}, exact_rem_p99={exact_norm_rem_p99}, once_mean={logical_once_mean:.1}, first64={logical_once_first64:.1}, once_p99={logical_once_p99}, split_p99={logical_split_p99}, once_gap={logical_once_gap}, split_gap={logical_split_gap}, exact_once_mean={exact_logical_once_mean:.1}, exact_first64={exact_logical_once_first64:.1}, exact_once_p99={exact_logical_once_p99}, exact_split_p99={exact_logical_split_p99}, exact_once_gap={exact_logical_once_gap}, exact_split_gap={exact_logical_split_gap}"
         );
         assert!(norm_count_p99 > 0, "logical-sign normalization never fired");
+        assert!(
+            exact_logical_once_mean < 2_700_000.0 && exact_logical_once_first64 < 2_700_000.0,
+            "exact-rem logical-sign average stopped fitting the harness objective"
+        );
         assert!(
             logical_once_gap > 0 && logical_split_gap > 0,
             "logical coefficient signs reach the low-qubit target; promote to implementation"
