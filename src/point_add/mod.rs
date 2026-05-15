@@ -9320,8 +9320,8 @@ fn build_standard_point_add(
         b.set_phase("pair1_kaliski_forward");
         with_kal_inv_raw(b, &tx, p, pair1_iters, |b, inv_raw| {
             let lam_inner = b.alloc_qubits(N);
-            b.set_phase("pair1_mul1");
-            mod_mul_write_into_zero_acc_schoolbook(b, &lam_inner, &ty, inv_raw, p);
+            b.set_phase("pair1_mul1_kara1");
+            mod_mul_write_into_zero_acc_karatsuba(b, &lam_inner, &ty, inv_raw, p);
             b.set_phase("pair1_halve");
             for _ in 0..pair1_iters {
                 mod_halve_inplace_fast(b, &lam_inner, p);

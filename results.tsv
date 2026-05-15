@@ -1336,3 +1336,5 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1778800452	dc66d10	4064576.000	24101576.769	2713	30335494	OK	autoresearch-checks
 1778800728	cface7a	4050056.000	24072530.308	2713	30291934	OK	truncate bulk backward step4 transform width 
 1778800757	cface7a	4050056.000	24072530.308	2713	30291934	OK	autoresearch-checks
+1778824939	60337b5	4022168.000	23768247.769	2736	29945816	OK	try one-level Karatsuba at pair1_mul1 after Kaliski reverse savings 
+1778824968	60337b5	4022168.000	23768247.769	2736	29945816	OK	autoresearch-checks
