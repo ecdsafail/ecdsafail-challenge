@@ -9039,16 +9039,32 @@ fn kaliski_xor_inv_raw_into_keep_alias_vw(
     };
     let bulk_caps = cleanup_bulk_prefix_caps(pair);
 
-    // H194: mirror with_kal_inv_raw_coeff_caps's keep_u/keep_v/keep_f/free_s
+    // H194/H199: mirror with_kal_inv_raw_coeff_caps's keep_u/keep_v/keep_f/free_s
     // envelope inside the cleanup helper so the forward Kaliski round-trip is
     // structurally identical to the production primary-helper round-trip.
-    // The defaults match the production envelope (free u/f/s, keep v because
-    // it aliases the caller's register) so the cleanup picks up the same
-    // phase invariants as the first Kaliski; user can flip each component to
-    // bisect.
     //
-    // env_keep_u/f/s default to "free" (false); env_keep_v always true
-    // because v_w aliases the caller-provided `ty`.
+    // H199 bisect (attempt-198, this branch's 8-cell sweep) located the unique
+    // envelope axis that closes the cleanup phase batches at both iters=0
+    // (locator) and iters=374 (strict bulk-prefix3): `keep_u=false,
+    // keep_f=true, free_s=false`.  Truth table (altseed_phase_batches_total):
+    //
+    //   (U,F,S)   iters=0   iters=374
+    //   (0,0,0)     0          2
+    //   (0,0,1)     0          1
+    //   (0,1,0)     0          0   ← LOCKED DEFAULT
+    //   (0,1,1)     0          0
+    //   (1,0,0)     1          0
+    //   (1,0,1)     0          1
+    //   (1,1,0)     1          0
+    //   (1,1,1)     0          2
+    //
+    // (0,1,0) and (0,1,1) are the only cells altseed-clean at BOTH iters=0
+    // and iters=374; we pick (0,1,0) as the minimal-axis change (only
+    // keep_f flips from the production-mirror default).  free_s is left
+    // false (no `s` mutation in cleanup) and keep_u false (free `u` like
+    // production).  caller_owns_v_w forces keep_v=true.
+    //
+    // env_keep_v always true because v_w aliases the caller-provided `ty`.
     let env_keep_u = std::env::var("KAL_PAIR1_INVKEEP_CLEANUP_ENV_KEEP_U")
         .ok()
         .as_deref()
@@ -9057,14 +9073,21 @@ fn kaliski_xor_inv_raw_into_keep_alias_vw(
         .ok()
         .as_deref()
         != Some("0");
+    // H199: default keep_f=true (the unique iters=374 closer); env override
+    // wins so the bisect harness can still flip this.
     let env_keep_f = std::env::var("KAL_PAIR1_INVKEEP_CLEANUP_ENV_KEEP_F")
         .ok()
         .as_deref()
-        == Some("1");
+        .map(|s| s == "1")
+        .unwrap_or(true);
+    // H199: default free_s=false (no `s` mutation in cleanup); env override
+    // wins.  (free_s=true is equivalent at iters=374 but adds 2n X-gates
+    // around an alloc/realloc on `s`, so the minimal lock is false.)
     let env_free_s = std::env::var("KAL_PAIR1_INVKEEP_CLEANUP_ENV_FREE_S")
         .ok()
         .as_deref()
-        != Some("0");
+        .map(|s| s == "1")
+        .unwrap_or(false);
     // When the helper uses emit_inverse_hmr_safe(forward) for the reverse
     // pass, forward and backward must see the SAME qubit ids; an envelope
     // that frees+reallocates would break this.  Disable when the user
