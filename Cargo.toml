@@ -3,9 +3,16 @@ name = "quantum_ecc"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
-name = "experiment"
-path = "src/main.rs"
+name = "build_circuit"
+path = "src/bin/build_circuit.rs"
+
+[[bin]]
+name = "eval_circuit"
+path = "src/bin/eval_circuit.rs"
 
 [profile.release]
 opt-level = 3
@@ -15,5 +22,5 @@ debug = false
 
 [dependencies]
 alloy-primitives = "1.5"
-rkyv = "0.8"
+ruint = "1.12"
 sha3 = "0.10"

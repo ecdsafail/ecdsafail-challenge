@@ -2,10 +2,17 @@ Third-party attribution for files reused under CC BY 4.0
 =========================================================
 
 This project reuses the following files verbatim (unmodified) from the
-`zkp_ecc` project published on Zenodo:
+`zkp_ecc` upstream maintained by Tanuj Khattar et al.:
 
-    src/circuit.rs                     (from lib/src/circuit.rs)
-    src/sim.rs                         (from lib/src/sim.rs)
+    src/circuit.rs   (from lib/src/circuit.rs in tanujkhattar/zkp_ecc)
+    src/sim.rs       (from lib/src/sim.rs   in tanujkhattar/zkp_ecc)
+
+These versions include the post-incident hardening that closes the
+Trail-of-Bits 2026 attacks (operand aliasing, conditional R/Hmr).
+
+The following file is reused verbatim from the original `zkp_ecc` Zenodo
+project:
+
     src/weierstrass_elliptic_curve.rs  (from lib/src/weierstrass_elliptic_curve.rs)
 
 Upstream project:
@@ -13,6 +20,7 @@ Upstream project:
     Published on Zenodo.
     DOI: 10.5281/zenodo.19196956
     https://doi.org/10.5281/zenodo.19196956
+    GitHub mirror with patches: https://github.com/tanujkhattar/zkp_ecc
 
 License:
     Creative Commons Attribution 4.0 International (CC BY 4.0)

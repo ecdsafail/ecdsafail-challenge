@@ -57,12 +57,15 @@
 //! reduces them.
 
 use alloy_primitives::U256;
+#[allow(unused_imports)]
 use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
     Shake256,
 };
 
+#[allow(unused_imports)]
 use crate::circuit::{analyze_ops, BitId, Op, OperationType, QubitId, QubitOrBit, RegisterId};
+#[allow(unused_imports)]
 use crate::sim::Simulator;
 use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
@@ -71,10 +74,10 @@ mod venting;
 
 struct B {
     pub ops: Vec<Op>,
-    pub next_qubit: u32,
-    pub next_bit: u32,
-    pub next_register: u32,
-    pub free_qubits: Vec<u32>,
+    pub next_qubit: u64,
+    pub next_bit: u64,
+    pub next_register: u64,
+    pub free_qubits: Vec<u64>,
     pub active_qubits: u32,
     pub peak_qubits: u32,
     pub peak_ops_idx: usize,
@@ -93,7 +96,7 @@ struct B {
     // filters them against the final peak and prints aggregates.
     pub owner_enabled: bool,
     pub owner_stack: Vec<&'static str>,
-    pub owner_at_alloc: std::collections::BTreeMap<u32, &'static str>,
+    pub owner_at_alloc: std::collections::BTreeMap<u64, &'static str>,
     // (active_count, phase_at_snapshot, ops_idx, owner_counts_grouped)
     pub owner_snapshots: Vec<(u32, &'static str, usize, std::collections::BTreeMap<&'static str, u32>)>,
 }
@@ -4028,11 +4031,6 @@ fn bulk_prefix_enabled() -> bool {
         Err(_) => true,
     }
 }
-
-const ALT_SEED_COUNT: usize = 5;
-const ALT_SEED_COMMIT: usize = 24;
-const ALT_SEED_SHOTS: usize = 4096;
-const ALT_SEED_CLASSICAL_LIMIT: usize = 2;
 
 /// Optional side-channel coefficient transform used by the tagged-DIV probe.
 /// It applies the same linear Kaliski coefficient update to an external
@@ -9368,180 +9366,6 @@ fn alt_seed_xof(ops: &[Op], tag: u64) -> sha3::Shake256Reader {
     hasher.finalize_xof()
 }
 
-fn run_alt_seed_checks(ops: &[Op]) {
-    let n_seeds = if std::env::var("ALT_SEED_COMMIT").is_ok() {
-        ALT_SEED_COMMIT
-    } else {
-        ALT_SEED_COUNT
-    };
-
-    let curve = secp256k1_curve();
-    let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter().copied());
-    assert!(regs.len() == 4);
-    for (i, r) in regs.iter().enumerate() {
-        assert_eq!(r.len(), 256, "register {i} should be 256 wide");
-    }
-    for q in &regs[0] {
-        assert!(matches!(q, QubitOrBit::Qubit(_)));
-    }
-    for q in &regs[1] {
-        assert!(matches!(q, QubitOrBit::Qubit(_)));
-    }
-    for q in &regs[2] {
-        assert!(matches!(q, QubitOrBit::Bit(_)));
-    }
-    for q in &regs[3] {
-        assert!(matches!(q, QubitOrBit::Bit(_)));
-    }
-
-    eprintln!(
-        "=== alternate-seed diagnostic ({} seeds × {} shots, classical_limit={}, parallel) ===",
-        n_seeds, ALT_SEED_SHOTS, ALT_SEED_CLASSICAL_LIMIT,
-    );
-
-    let results: Vec<(u64, usize, usize, usize)> = std::thread::scope(|scope| {
-        let curve = &curve;
-        let regs = &regs;
-        let mut handles = Vec::with_capacity(n_seeds);
-        for tag_idx in 0..n_seeds {
-            let tag = (tag_idx as u64) + 1;
-            let handle = scope.spawn(move || {
-                const BATCH: usize = 64;
-                let mut xof = alt_seed_xof(ops, tag);
-                let mut targets = Vec::with_capacity(ALT_SEED_SHOTS);
-                let mut offsets = Vec::with_capacity(ALT_SEED_SHOTS);
-                let mut expected = Vec::with_capacity(ALT_SEED_SHOTS);
-                while targets.len() < ALT_SEED_SHOTS {
-                    let mut rb = [[0u8; 32]; 2];
-                    xof.read(&mut rb[0]);
-                    xof.read(&mut rb[1]);
-                    let k1 = U256::from_le_bytes(rb[0]);
-                    let k2 = U256::from_le_bytes(rb[1]);
-                    let t = curve.mul(curve.gx, curve.gy, k1);
-                    let o = curve.mul(curve.gx, curve.gy, k2);
-                    if t.0 == o.0 {
-                        continue;
-                    }
-                    if t.0.is_zero() && t.1.is_zero() {
-                        continue;
-                    }
-                    if o.0.is_zero() && o.1.is_zero() {
-                        continue;
-                    }
-                    let e = curve.add(t.0, t.1, o.0, o.1);
-                    targets.push(t);
-                    offsets.push(o);
-                    expected.push(e);
-                }
-
-                let mut sim = Simulator::new(total_qubits as usize, num_bits as usize, &mut xof);
-                let mut classical_failures = 0usize;
-                let mut phase_garbage_batches = 0usize;
-                let mut ancilla_garbage_batches = 0usize;
-                let num_batches = (ALT_SEED_SHOTS + BATCH - 1) / BATCH;
-                for batch in 0..num_batches {
-                    let bs = BATCH.min(ALT_SEED_SHOTS - batch * BATCH);
-                    let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
-                    sim.clear_for_shot();
-                    for shot in 0..bs {
-                        let i = batch * BATCH + shot;
-                        sim.set_register(&regs[0], targets[i].0, shot);
-                        sim.set_register(&regs[1], targets[i].1, shot);
-                        sim.set_register(&regs[2], offsets[i].0, shot);
-                        sim.set_register(&regs[3], offsets[i].1, shot);
-                    }
-                    sim.apply(ops);
-                    for shot in 0..bs {
-                        let i = batch * BATCH + shot;
-                        let gx = sim.get_register(&regs[0], shot);
-                        let gy = sim.get_register(&regs[1], shot);
-                        if gx != expected[i].0 || gy != expected[i].1 {
-                            classical_failures += 1;
-                        }
-                    }
-                    let phase = sim.global_phase() & cond_mask;
-                    if phase != 0 {
-                        phase_garbage_batches += 1;
-                    }
-                    for register in regs {
-                        for qb in register {
-                            if let QubitOrBit::Qubit(q) = *qb {
-                                *sim.qubit_mut(q) = 0;
-                            }
-                        }
-                    }
-                    let mut garbage = false;
-                    for q in 0..total_qubits {
-                        if (sim.qubit(QubitId(q)) & cond_mask) != 0 {
-                            garbage = true;
-                            break;
-                        }
-                    }
-                    if garbage {
-                        ancilla_garbage_batches += 1;
-                    }
-                }
-                (
-                    tag,
-                    classical_failures,
-                    phase_garbage_batches,
-                    ancilla_garbage_batches,
-                )
-            });
-            handles.push(handle);
-        }
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-
-    let mut total_classical = 0usize;
-    let mut total_phase_batches = 0usize;
-    let mut total_ancilla_batches = 0usize;
-    for (tag, classical_failures, phase_garbage_batches, ancilla_garbage_batches) in &results {
-        total_classical += classical_failures;
-        total_phase_batches += phase_garbage_batches;
-        total_ancilla_batches += ancilla_garbage_batches;
-        eprintln!(
-            "ALT-SEED tag={} classical_mismatches={} phase_batches={} ancilla_batches={}",
-            tag, classical_failures, phase_garbage_batches, ancilla_garbage_batches,
-        );
-    }
-
-    println!("METRIC altseed_classical_total={}", total_classical);
-    println!("METRIC altseed_phase_batches_total={}", total_phase_batches);
-    println!(
-        "METRIC altseed_ancilla_batches_total={}",
-        total_ancilla_batches
-    );
-
-    let phase_limit: usize = std::env::var("ALT_SEED_PHASE_LIMIT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    assert!(
-        total_phase_batches <= phase_limit,
-        "ALT-SEED PHASE FAILURE: {} phase-garbage batches (limit {}) across {} seeds × {} shots",
-        total_phase_batches,
-        phase_limit,
-        n_seeds,
-        ALT_SEED_SHOTS,
-    );
-    assert!(
-        total_ancilla_batches == 0,
-        "ALT-SEED ANCILLA FAILURE: {} ancilla-garbage batches across {} seeds × {} shots",
-        total_ancilla_batches,
-        n_seeds,
-        ALT_SEED_SHOTS,
-    );
-    assert!(
-        total_classical <= ALT_SEED_CLASSICAL_LIMIT,
-        "ALT-SEED CLASSICAL FAILURE: {} classical mismatches exceeds limit {} across {} seeds × {} shots",
-        total_classical,
-        ALT_SEED_CLASSICAL_LIMIT,
-        n_seeds,
-        ALT_SEED_SHOTS,
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 //  Top-level point addition
 // ═══════════════════════════════════════════════════════════════════════════
@@ -10241,8 +10065,6 @@ pub fn build() -> Vec<Op> {
         }
     }
 
-    run_alt_seed_checks(&b.ops);
-
     if std::env::var("TRACE_PEAK").is_ok() {
         eprintln!(
             "DEBUG peak_qubits={} at phase='{}' ops_idx={} total_ops={}",
@@ -10429,99 +10251,4 @@ pub fn build() -> Vec<Op> {
     }
 
     b.ops.clone()
-}
-
-#[cfg(test)]
-mod direct_const_tests {
-    use super::*;
-    use sha3::{
-        digest::{ExtendableOutput, Update, XofReader},
-        Shake128,
-    };
-
-    fn set_reg<R: XofReader>(sim: &mut Simulator<'_, R>, qs: &[QubitId], val: u64, shot: usize) {
-        for (i, &q) in qs.iter().enumerate() {
-            if ((val >> i) & 1) != 0 {
-                *sim.qubit_mut(q) |= 1u64 << shot;
-            } else {
-                *sim.qubit_mut(q) &= !(1u64 << shot);
-            }
-        }
-    }
-
-    fn get_reg<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
-        let mut out = 0u64;
-        for (i, &q) in qs.iter().enumerate() {
-            out |= ((sim.qubit(q) >> shot) & 1) << i;
-        }
-        out
-    }
-
-    #[test]
-    fn direct_controlled_const_sub_small_basis_is_phase_clean() {
-        const N: usize = 8;
-        let c = U256::from(0b1011_0111u64);
-        let mut b = B::new();
-        let acc = b.alloc_qubits(N);
-        let ctrl = b.alloc_qubit();
-        csub_nbit_const_direct_fast(&mut b, &acc, c, ctrl);
-        let nq = b.next_qubit as usize;
-        let nb = b.next_bit as usize;
-
-        let mut seed = Shake128::default();
-        seed.update(b"direct-csub-small");
-        let mut xof = seed.finalize_xof();
-        let mut sim = Simulator::new(nq, nb, &mut xof);
-        for shot in 0..64usize {
-            let x = ((shot * 37 + 11) & 0xff) as u64;
-            let ctrl_v = (shot & 1) as u64;
-            set_reg(&mut sim, &acc, x, shot);
-            if ctrl_v != 0 {
-                *sim.qubit_mut(ctrl) |= 1u64 << shot;
-            }
-        }
-        sim.apply(&b.ops);
-        assert_eq!(sim.global_phase(), 0, "direct csub left phase garbage");
-        for shot in 0..64usize {
-            let x = ((shot * 37 + 11) & 0xff) as u64;
-            let ctrl_v = (shot & 1) as u64;
-            let expect = x.wrapping_sub(ctrl_v * 0b1011_0111) & 0xff;
-            assert_eq!(get_reg(&sim, &acc, shot), expect, "shot {shot}");
-            assert_eq!((sim.qubit(ctrl) >> shot) & 1, ctrl_v, "ctrl shot {shot}");
-        }
-    }
-
-    #[test]
-    fn direct_controlled_const_add_small_basis_is_phase_clean() {
-        const N: usize = 8;
-        let c = U256::from(0b1011_0111u64);
-        let mut b = B::new();
-        let acc = b.alloc_qubits(N);
-        let ctrl = b.alloc_qubit();
-        cadd_nbit_const_direct_fast(&mut b, &acc, c, ctrl);
-        let nq = b.next_qubit as usize;
-        let nb = b.next_bit as usize;
-
-        let mut seed = Shake128::default();
-        seed.update(b"direct-cadd-small");
-        let mut xof = seed.finalize_xof();
-        let mut sim = Simulator::new(nq, nb, &mut xof);
-        for shot in 0..64usize {
-            let x = ((shot * 37 + 11) & 0xff) as u64;
-            let ctrl_v = (shot & 1) as u64;
-            set_reg(&mut sim, &acc, x, shot);
-            if ctrl_v != 0 {
-                *sim.qubit_mut(ctrl) |= 1u64 << shot;
-            }
-        }
-        sim.apply(&b.ops);
-        assert_eq!(sim.global_phase(), 0, "direct cadd left phase garbage");
-        for shot in 0..64usize {
-            let x = ((shot * 37 + 11) & 0xff) as u64;
-            let ctrl_v = (shot & 1) as u64;
-            let expect = x.wrapping_add(ctrl_v * 0b1011_0111) & 0xff;
-            assert_eq!(get_reg(&sim, &acc, shot), expect, "shot {shot}");
-            assert_eq!((sim.qubit(ctrl) >> shot) & 1, ctrl_v, "ctrl shot {shot}");
-        }
-    }
 }

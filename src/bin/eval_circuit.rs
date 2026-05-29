@@ -1,35 +1,150 @@
-//! Experiment harness: builds the point-addition circuit defined in
-//! the `point_add/` module, runs it against the zenodo `Simulator` with
-//! random test shots, and reports Toffoli / Clifford / qubit counts.
+//! TRUSTED stage of the challenge harness.
 //!
-//! Research-loop contract: ONLY files under `src/point_add/` are edited
-//! by the loop. This file, `circuit.rs`, `sim.rs`, and
-//! `weierstrass_elliptic_curve.rs` are harness and must not be touched.
+//! Reads the op stream produced by `build_circuit` from `ops.bin`,
+//! re-simulates the circuit against the secp256k1 reference adder,
+//! enforces the four validity checks (correctness, reversibility, phase,
+//! ancilla cleanup), counts gates, writes `score.json`, and appends one
+//! row to `results.tsv`.
 //!
-//! Attribution: `circuit.rs`, `sim.rs`, and `weierstrass_elliptic_curve.rs`
-//! are reused verbatim from the `zkp_ecc` Zenodo project under CC BY 4.0.
-//! See `NOTICE` at the repository root for details.
-
-#[allow(dead_code)]
-mod circuit;
-mod point_add;
-#[allow(dead_code)]
-mod sim;
-#[allow(dead_code)]
-mod weierstrass_elliptic_curve;
+//! This binary deliberately does NOT import `quantum_ecc::point_add` —
+//! contestant code never executes inside the trusted process. `ops.bin`
+//! is treated as fully untrusted input and is bounds-checked before use.
 
 use alloy_primitives::U256;
-use circuit::{analyze_ops, Op, QubitOrBit};
+use quantum_ecc::circuit::{
+    analyze_ops, BitId, Op, OperationType, QubitId, QubitOrBit, RegisterId,
+};
+use quantum_ecc::sim::Simulator;
+use quantum_ecc::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
     Shake256,
 };
-use sim::Simulator;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-use weierstrass_elliptic_curve::WeierstrassEllipticCurve;
+
+const OPS_PATH: &str = "ops.bin";
+const MAGIC: &[u8; 8] = b"QECCOPS1";
+const FIELD_BYTES: usize = 8;
+const OP_FIELDS: usize = 7;
+const OP_BYTES: usize = OP_FIELDS * FIELD_BYTES;
+// Resource caps. These are sanity limits to prevent a malicious ops.bin
+// from OOM'ing the simulator (each qubit/bit costs 8 bytes in `Simulator::new`).
+// Real circuits sit ~3k qubits and a few hundred million ops; caps are
+// generous compared to that.
+const MAX_OPS: u64 = 4_000_000_000;
+const NUM_TESTS: usize = 9024;
+
+// ─── Bounded ops.bin loader ────────────────────────────────────────────────
+//
+// Hand-rolled fixed-width LE framing. Per-op layout:
+//   u32 kind (must be 0..=17 — rejects the rkyv jump-table-confusion attack
+//             that bypassed the Toffoli counter in the Google challenge)
+//   u32 _pad
+//   u64 q_control2  (NO_QUBIT = u64::MAX = unused)
+//   u64 q_control1
+//   u64 q_target
+//   u64 c_target    (NO_BIT = u64::MAX)
+//   u64 c_condition
+//   u64 r_target    (NO_REG = u64::MAX)
+//
+// After reassembly, each Op is fed to Op::validate() (upstream zkp_ecc
+// post-incident hardening). validate() panics on:
+//   - operand aliasing (CCX q q q etc. — would yield free non-reversible
+//     resets, the ToB "strictly better exploit primitive")
+//   - per-kind field-shape violations (e.g. R/Hmr with c_condition,
+//     which would suppress phase randomization on dirty frees)
+// We catch_unwind so a forged ops.bin produces an error, not a crash.
+
+fn op_kind_from_u32(v: u32) -> Option<OperationType> {
+    Some(match v {
+        0 => OperationType::Neg,
+        1 => OperationType::Register,
+        2 => OperationType::AppendToRegister,
+        3 => OperationType::BitInvert,
+        4 => OperationType::BitStore0,
+        5 => OperationType::BitStore1,
+        6 => OperationType::X,
+        7 => OperationType::Z,
+        8 => OperationType::CX,
+        9 => OperationType::CZ,
+        10 => OperationType::Swap,
+        11 => OperationType::R,
+        12 => OperationType::Hmr,
+        13 => OperationType::CCX,
+        14 => OperationType::CCZ,
+        15 => OperationType::PushCondition,
+        16 => OperationType::PopCondition,
+        17 => OperationType::DebugPrint,
+        _ => return None,
+    })
+}
+
+fn read_u64(bytes: &[u8], off: usize) -> u64 {
+    u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
+}
+
+fn load_ops(path: &str) -> Result<Vec<Op>, String> {
+    let bytes = fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
+    if bytes.len() < MAGIC.len() + 8 {
+        return Err(format!("{path}: too short ({} bytes)", bytes.len()));
+    }
+    if &bytes[..MAGIC.len()] != MAGIC {
+        return Err(format!("{path}: bad magic"));
+    }
+    let n = u64::from_le_bytes(bytes[MAGIC.len()..MAGIC.len() + 8].try_into().unwrap());
+    if n > MAX_OPS {
+        return Err(format!("{path}: op count {n} exceeds cap {MAX_OPS}"));
+    }
+    let n = n as usize;
+    let need = MAGIC.len() + 8 + n.saturating_mul(OP_BYTES);
+    if bytes.len() != need {
+        return Err(format!(
+            "{path}: length mismatch: got {} expected {need} for {n} ops",
+            bytes.len()
+        ));
+    }
+    let mut ops = Vec::with_capacity(n);
+    let mut off = MAGIC.len() + 8;
+    for i in 0..n {
+        let kind_raw = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let kind = op_kind_from_u32(kind_raw)
+            .ok_or_else(|| format!("op {i}: unknown kind {kind_raw}"))?;
+        // bytes[off+4..off+8] are reserved padding for 8-byte alignment.
+        let q_control2 = QubitId(read_u64(&bytes, off + 8));
+        let q_control1 = QubitId(read_u64(&bytes, off + 16));
+        let q_target = QubitId(read_u64(&bytes, off + 24));
+        let c_target = BitId(read_u64(&bytes, off + 32));
+        let c_condition = BitId(read_u64(&bytes, off + 40));
+        let r_target = RegisterId(read_u64(&bytes, off + 48));
+
+        let op = Op {
+            kind,
+            q_control2,
+            q_control1,
+            q_target,
+            c_target,
+            c_condition,
+            r_target,
+        };
+        // Op::validate() panics on aliasing or per-kind field-shape errors.
+        // Catch the unwind to convert into a clean rejection.
+        let validated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| op.validate()));
+        if let Err(e) = validated {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&'static str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "validation panic".to_string());
+            return Err(format!("op {i}: {msg}"));
+        }
+        ops.push(op);
+        off += OP_BYTES;
+    }
+    Ok(ops)
+}
 
 // ─── secp256k1 parameters ──────────────────────────────────────────────────
 
@@ -60,47 +175,38 @@ fn secp256k1() -> WeierstrassEllipticCurve {
     }
 }
 
-// ─── Test runner ───────────────────────────────────────────────────────────
+// ─── Fiat-Shamir seed (matches old main.rs verbatim) ──────────────────────
 
-const NUM_TESTS: usize = 9024;
-
-/// Hash the circuit's op stream into the seed XOF (Fiat-Shamir).
-///
-/// Mirrors upstream zenodo's protocol: test inputs are derived from
-/// `Shake256(circuit_bytes)`, which makes them deterministic per circuit
-/// and impossible to "tune" the circuit against. We don't have rkyv-
-/// archived bytes handy here, so we feed each `Op`'s fields into the
-/// hasher directly. Any two distinct op streams produce distinct seeds
-/// (we hash the count + every field of every op).
 fn fiat_shamir_seed(ops: &[Op]) -> sha3::Shake256Reader {
+    // Hash low 4 bytes of each ID — matches the pre-upstream-import seed so
+    // the XOF stream is stable across the u32→u64 ID migration. Real circuits
+    // never use IDs above ~10M; this is purely a hash-stability measure.
     let mut hasher = Shake256::default();
     hasher.update(b"quantum_ecc-fiat-shamir-v1");
     hasher.update(&(ops.len() as u64).to_le_bytes());
     for op in ops {
         hasher.update(&[op.kind as u8]);
-        hasher.update(&op.q_control2.0.to_le_bytes());
-        hasher.update(&op.q_control1.0.to_le_bytes());
-        hasher.update(&op.q_target.0.to_le_bytes());
-        hasher.update(&op.c_target.0.to_le_bytes());
-        hasher.update(&op.c_condition.0.to_le_bytes());
-        hasher.update(&op.r_target.0.to_le_bytes());
+        hasher.update(&(op.q_control2.0 as u32).to_le_bytes());
+        hasher.update(&(op.q_control1.0 as u32).to_le_bytes());
+        hasher.update(&(op.q_target.0 as u32).to_le_bytes());
+        hasher.update(&(op.c_target.0 as u32).to_le_bytes());
+        hasher.update(&(op.c_condition.0 as u32).to_le_bytes());
+        hasher.update(&(op.r_target.0 as u32).to_le_bytes());
     }
     hasher.finalize_xof()
 }
 
+// ─── Test runner (verbatim from old main.rs) ───────────────────────────────
+
 fn run_tests(
     ops: &[Op],
     layout_regs: &[Vec<QubitOrBit>],
-    total_qubits: u32,
-    num_bits: u32,
+    total_qubits: u64,
+    num_bits: u64,
 ) -> (bool, f64, f64, u64, u64, usize, Option<String>) {
     let curve = secp256k1();
-    // Fiat-Shamir: a single XOF seeded from the circuit op stream feeds
-    // both test-input generation AND the simulator's RNG, exactly as
-    // upstream zenodo's program does.
     let mut xof = fiat_shamir_seed(ops);
 
-    // Generate random target/offset points as k*G.
     let mut targets = Vec::with_capacity(NUM_TESTS);
     let mut offsets = Vec::with_capacity(NUM_TESTS);
     let mut expected = Vec::with_capacity(NUM_TESTS);
@@ -112,7 +218,6 @@ fn run_tests(
         let k2 = U256::from_le_bytes(rb[1]);
         let t = curve.mul(curve.gx, curve.gy, k1);
         let o = curve.mul(curve.gx, curve.gy, k2);
-        // Avoid the doubling / inverse-pair cases the baseline doesn't handle.
         if t.0 == o.0 {
             continue;
         }
@@ -140,8 +245,6 @@ fn run_tests(
     let num_batches = (n + BATCH - 1) / BATCH;
     for batch in 0..num_batches {
         let bs = BATCH.min(n - batch * BATCH);
-        // `cond_mask`: bit i is 1 iff shot i is "live" in this batch.
-        // Used for the phase + end-state garbage checks below.
         let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
 
         sim.clear_for_shot();
@@ -153,12 +256,8 @@ fn run_tests(
             sim.set_register(&layout_regs[3], offsets[i].1, shot);
         }
 
-        // ─── Forward pass ────────────────────────────────────────────────
-        // sim.rs is upstream verbatim. R randomizes the phase on dirty
-        // frees; the phase check below catches it probabilistically.
-        sim.apply(ops);
+        sim.apply_iter(ops.iter());
 
-        // ─── Correctness check ──────────────────────────────────────────
         for shot in 0..bs {
             let i = batch * BATCH + shot;
             let gx = sim.get_register(&layout_regs[0], shot);
@@ -175,11 +274,7 @@ fn run_tests(
             }
         }
 
-        // ─── Phase garbage check ────────────────────────────────────────
-        // Upstream zenodo's protocol: after forward, the global phase must
-        // be 0 across all live shots. Catches misuses of phase-flipping
-        // gates (Z/CZ/CCZ) or bad Hmr uncomputation.
-        let phase = sim.global_phase() & cond_mask;
+        let phase = sim.phase & cond_mask;
         if phase != 0 {
             phase_garbage_batches += 1;
             let msg = format!(
@@ -192,10 +287,6 @@ fn run_tests(
             ok = false;
         }
 
-        // ─── End-state ancillary garbage check ──────────────────────────
-        // Upstream zenodo's reversibility contract: at end of forward, every
-        // qubit OUTSIDE the declared output registers must be |0⟩ on every
-        // live shot. We zero the register qubits first, then sweep.
         for register in layout_regs {
             for qb in register {
                 if let QubitOrBit::Qubit(q) = *qb {
@@ -203,9 +294,9 @@ fn run_tests(
                 }
             }
         }
-        let mut garbage_q: Option<u32> = None;
+        let mut garbage_q: Option<u64> = None;
         for q in 0..total_qubits {
-            let v = sim.qubit(circuit::QubitId(q)) & cond_mask;
+            let v = sim.qubit(QubitId(q)) & cond_mask;
             if v != 0 {
                 garbage_q = Some(q);
                 break;
@@ -213,7 +304,7 @@ fn run_tests(
         }
         if let Some(q) = garbage_q {
             ancilla_garbage_batches += 1;
-            let v = sim.qubit(circuit::QubitId(q)) & cond_mask;
+            let v = sim.qubit(QubitId(q)) & cond_mask;
             let msg = format!(
                 "ANCILLA GARBAGE: qubit {} = {:#018x} (live shots) at end of forward; \
                  every non-register qubit must be |0⟩ on every live shot",
@@ -230,6 +321,7 @@ fn run_tests(
     println!("  classical mismatches    : {}", classical_failures);
     println!("  phase-garbage batches   : {}", phase_garbage_batches);
     println!("  ancilla-garbage batches : {}", ancilla_garbage_batches);
+    let _ = num_bits;
 
     let denom = n.max(1) as f64;
     let avg_cliff = sim.stats.clifford_gates as f64 / denom;
@@ -244,6 +336,8 @@ fn run_tests(
         fail_reason,
     )
 }
+
+// ─── Output bookkeeping ────────────────────────────────────────────────────
 
 fn parse_note() -> String {
     let mut args = std::env::args().skip(1);
@@ -279,7 +373,7 @@ fn append_results_row(
     correct: &str,
     avg_tof: f64,
     avg_cliff: f64,
-    qubits: u32,
+    qubits: u64,
     ops_len: usize,
     note: &str,
 ) {
@@ -303,10 +397,10 @@ fn append_results_row(
     }
 }
 
-fn write_score(avg_tof: f64, qubits: u32) {
+fn write_score(avg_tof: f64, qubits: u64) {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/score.json");
     let toffoli = avg_tof.round() as u64;
-    let score = toffoli * u64::from(qubits);
+    let score = toffoli.saturating_mul(qubits);
     let body = format!(
         "{{\n  \"score\": {score},\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"qubits\": {qubits}\n  }}\n}}\n"
     );
@@ -315,53 +409,74 @@ fn write_score(avg_tof: f64, qubits: u32) {
     }
 }
 
+fn fail_and_exit(reason: &str, note: &str, ops_len: usize, total_qubits: u64) -> ! {
+    eprintln!("\n!! eval FAILED: {reason}");
+    let fail_note = if note.is_empty() {
+        reason.to_string()
+    } else {
+        format!("{note} | {reason}")
+    };
+    append_results_row("FAIL", 0.0, 0.0, total_qubits, ops_len, &fail_note);
+    std::process::exit(1);
+}
+
 fn main() {
     let note = parse_note();
-    println!("=== quantum_ecc: secp256k1 point addition baseline ===\n");
+    println!("=== quantum_ecc: eval_circuit (trusted stage) ===\n");
 
-    println!("-- building circuit --");
-    let ops = point_add::build();
+    let ops = match load_ops(OPS_PATH) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("!! could not load {OPS_PATH}: {e}");
+            append_results_row("FAIL", 0.0, 0.0, 0, 0, &format!("{note} | load: {e}"));
+            std::process::exit(1);
+        }
+    };
+    println!("  loaded ops  : {}", ops.len());
 
-    let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter().copied());
+    let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter());
 
-    // Sanity-check layout matches zenodo's program interface.
-    // The 4 registers and their widths/types are the only contract `build`
-    // must satisfy with the harness.
-    assert!(
-        regs.len() == 4,
-        "expected 4 registers (target_x, target_y, offset_x, offset_y); got {}",
-        regs.len()
-    );
-    for (i, r) in regs.iter().enumerate() {
-        assert_eq!(
-            r.len(),
-            256,
-            "register {i} should be 256 wide, got {}",
-            r.len()
+    if regs.len() != 4 {
+        fail_and_exit(
+            &format!("expected 4 registers, got {}", regs.len()),
+            &note,
+            ops.len(),
+            total_qubits,
         );
+    }
+    for (i, r) in regs.iter().enumerate() {
+        if r.len() != 256 {
+            fail_and_exit(
+                &format!("register {i} should be 256 wide, got {}", r.len()),
+                &note,
+                ops.len(),
+                total_qubits,
+            );
+        }
     }
     for q in &regs[0] {
-        assert!(
-            matches!(q, QubitOrBit::Qubit(_)),
-            "register 0 must be qubits"
-        );
+        if !matches!(q, QubitOrBit::Qubit(_)) {
+            fail_and_exit("register 0 must be qubits", &note, ops.len(), total_qubits);
+        }
     }
     for q in &regs[1] {
-        assert!(
-            matches!(q, QubitOrBit::Qubit(_)),
-            "register 1 must be qubits"
-        );
+        if !matches!(q, QubitOrBit::Qubit(_)) {
+            fail_and_exit("register 1 must be qubits", &note, ops.len(), total_qubits);
+        }
     }
     for q in &regs[2] {
-        assert!(matches!(q, QubitOrBit::Bit(_)), "register 2 must be bits");
+        if !matches!(q, QubitOrBit::Bit(_)) {
+            fail_and_exit("register 2 must be bits", &note, ops.len(), total_qubits);
+        }
     }
     for q in &regs[3] {
-        assert!(matches!(q, QubitOrBit::Bit(_)), "register 3 must be bits");
+        if !matches!(q, QubitOrBit::Bit(_)) {
+            fail_and_exit("register 3 must be bits", &note, ops.len(), total_qubits);
+        }
     }
 
-    println!("  total ops : {}", ops.len());
-    println!("  qubits    : {}", total_qubits);
-    println!("  bits      : {}", num_bits);
+    println!("  qubits      : {}", total_qubits);
+    println!("  bits        : {}", num_bits);
 
     println!("\n-- running correctness tests --");
     let (ok, avg_cliff, avg_tof, tot_tof, tot_cliff, n_shots, fail_reason) =

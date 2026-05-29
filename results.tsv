@@ -1350,3 +1350,50 @@ timestamp	commit	toffoli	clifford	qubits	ops	correct	notes
 1779344500	af23b95	3942753.000	22627103.228	2715	28677221	OK	
 1779344796	af23b95	3942753.000	22627103.228	2715	28677221	OK	
 1780002781	a820d95	3942753.000	22627103.228	2715	28677221	OK	
+1780006495	74c9558	3942753.000	22627103.228	2715	28677221	OK	peak_owners_no_vent
+1780006582	74c9558	4347722.000	20226570.101	2710	26950140	OK	mul1_schoolbook_vent_metrics
+1780006877	74c9558	3942753.000	22627103.228	2715	28677221	OK	peak_owners_delta0
+1780013692	74c9558	0.000	0.000	0	0	FAIL	harness-split smoke test | load: op 12535752: bit id exceeds cap 1000000
+1780013788	74c9558	3942753.000	22627103.228	2715	28677221	OK	harness-split smoke
+1780013892	74c9558	3942753.000	22627103.228	2715	28677221	OK	split-harness scripts e2e
+1780014199	74c9558	3942753.000	22627103.228	2715	28677221	OK	post-hardening baseline
+1780014221	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: operand aliasing in CCX (q=0,0,0) — non-unitary
+1780014221	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: operand aliasing in CX (q=5,5) — non-unitary
+1780014221	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: operand aliasing in Swap (q=2,2) — non-unitary
+1780014221	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: operand aliasing in CCZ (q=0,0,1) — non-unitary
+1780014221	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: conditional R forbidden — would suppress phase randomization on dirty frees
+1780014221	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: conditional Hmr forbidden — would suppress phase randomization on dirty frees
+1780014222	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: unknown kind 99
+1780014222	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: bad magic
+1780014222	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: length mismatch: got 16 expected 28016 for 1000 ops
+1780014222	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: op count 5000000000 exceeds cap 4000000000
+1780014254	74c9558	3942753.000	22627103.228	2715	28677221	OK	post-hardening final
+1780015036	74c9558	3942753.000	22627103.228	2715	28677221	OK	
+1780016242	74c9558	3942753.000	22627131.493	2715	28677221	FAIL	post-upstream-import baseline | PHASE GARBAGE: global_phase = 0x0000000000200000 across 64 live shots (must be 0)
+1780016469	74c9558	3942753.000	22627103.228	2715	28677221	OK	u32-truncated FS seed
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CCX and q_target==q_control1==q0
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CX and q_target==q_control1==q5
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=Swap and q_target==q_control1==q2
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CCZ and q_control1==q_control2==q0
+1780016500	74c9558	0.000	0.000	1	1	FAIL	expected 4 registers, got 0
+1780016500	74c9558	0.000	0.000	1	1	FAIL	expected 4 registers, got 0
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: unknown kind 99
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: bad magic
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: length mismatch: got 16 expected 56016 for 1000 ops
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: op count 5000000000 exceeds cap 4000000000
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CCX but q_control2 == NO_QUBIT
+1780016500	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=BitInvert but q_target != NO_QUBIT
+1780016536	74c9558	3942753.000	22627103.228	2715	28677221	OK	post-upstream-import final
+1780016614	74c9558	3942753.000	22627103.228	2715	28677221	OK	
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CCX and q_target==q_control1==q0
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CX and q_target==q_control1==q5
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=Swap and q_target==q_control1==q2
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CCZ and q_control1==q_control2==q0
+1780016615	74c9558	0.000	0.000	1	1	FAIL	expected 4 registers, got 0
+1780016615	74c9558	0.000	0.000	1	1	FAIL	expected 4 registers, got 0
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: unknown kind 99
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: bad magic
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: length mismatch: got 16 expected 56016 for 1000 ops
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: ops.bin: op count 5000000000 exceeds cap 4000000000
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=CCX but q_control2 == NO_QUBIT
+1780016615	74c9558	0.000	0.000	0	0	FAIL	 | load: op 0: kind=BitInvert but q_target != NO_QUBIT

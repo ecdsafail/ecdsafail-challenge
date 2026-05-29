@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "name": "quantum-ec-add",
+  "name": "ecdsafail",
   "description": "Optimize the qubit-toffoli product for a reversible circuit that adds a quantum elliptic curve point to a classical elliptic curve point.",
   "category": "rust",
   "direction": "-",
   "editablePaths": ["src/point_add"],
-  "setupCommand": ["bash", "-lc", "dnf install -y gcc gcc-c++ make cmake pkg-config || sudo dnf install -y gcc gcc-c++ make cmake pkg-config; command -v cargo >/dev/null || curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal; . \"$HOME/.cargo/env\"; cargo fetch; RUSTFLAGS='-C linker=gcc' cargo build --release --bin experiment"],
-  "benchmarkCommand": ["bash", "-lc", ". \"$HOME/.cargo/env\"; RUSTFLAGS='-C linker=gcc' cargo run --release --bin experiment"],
+  "setupCommand": ["bash", "-lc", "./setup.sh"],
+  "benchmarkCommand": ["bash", "-lc", "./benchmark.sh"],
   "scorePath": "score.json"
 }
