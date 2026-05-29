@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ensure Rust + a working C linker are installed. Idempotent: no-op if
-# `cargo`, `curl`, and a supported C compiler/linker are already on PATH.
+# `cargo` and a supported C compiler/linker are already on PATH.
 set -euo pipefail
 
 SUDO=""
@@ -29,17 +29,17 @@ install_system_deps() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     ${SUDO} apt-get update
-    ${SUDO} apt-get install -y --no-install-recommends gcc libc6-dev curl ca-certificates
+    ${SUDO} apt-get install -y --no-install-recommends gcc libc6-dev ca-certificates
   elif command -v dnf >/dev/null 2>&1; then
-    ${SUDO} dnf install -y gcc glibc-devel curl ca-certificates
+    ${SUDO} dnf install -y gcc glibc-devel ca-certificates
   elif command -v yum >/dev/null 2>&1; then
-    ${SUDO} yum install -y gcc glibc-devel curl ca-certificates
+    ${SUDO} yum install -y gcc glibc-devel ca-certificates
   elif command -v apk >/dev/null 2>&1; then
-    ${SUDO} apk add --no-cache gcc musl-dev curl ca-certificates
+    ${SUDO} apk add --no-cache gcc musl-dev ca-certificates
   elif command -v pacman >/dev/null 2>&1; then
-    ${SUDO} pacman -Sy --noconfirm gcc curl ca-certificates
+    ${SUDO} pacman -Sy --noconfirm gcc ca-certificates
   elif command -v zypper >/dev/null 2>&1; then
-    ${SUDO} zypper --non-interactive install gcc glibc-devel curl ca-certificates
+    ${SUDO} zypper --non-interactive install gcc glibc-devel ca-certificates
   elif command -v brew >/dev/null 2>&1; then
     : # macOS: cc comes from Xcode CLT, which `xcode-select --install` handles.
   else
@@ -47,17 +47,17 @@ install_system_deps() {
   fi
 }
 
-# 1. System deps: a C compiler/linker, plus curl for the rustup bootstrap.
+# 1. System deps: a C compiler/linker.
 #    Cargo needs a linker, and some crates may shell out through the `cc` crate.
-if ! find_c_compiler >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+if ! find_c_compiler >/dev/null 2>&1; then
   if ! install_system_deps; then
     cat >&2 <<'EOF'
 setup.sh: failed to install system dependencies.
 
-This environment needs a C compiler/linker plus curl before Rust can build this
+This environment needs a C compiler/linker before Rust can build this
 repo. If package metadata cannot be downloaded, enable network/DNS for the
 sandbox or use an image that already includes gcc (or clang), glibc-devel,
-curl, and ca-certificates.
+and ca-certificates.
 EOF
     exit 1
   fi
@@ -71,11 +71,6 @@ if [[ -z "${compiler}" ]]; then
   exit 1
 fi
 export CC="${compiler}"
-
-if ! command -v curl >/dev/null 2>&1; then
-  echo "setup.sh: curl is required to install Rust" >&2
-  exit 1
-fi
 
 # 2. Rust toolchain.
 if ! command -v cargo >/dev/null 2>&1; then
