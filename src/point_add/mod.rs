@@ -10070,7 +10070,7 @@ pub fn build() -> Vec<Op> {
         let n: usize = std::env::var("DUMMY_TOFFOLIS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(9_000);
+            .unwrap_or(10_000);
         if n > 0 {
             // Pick three distinct register entries — anything works as long
             // as the pair self-cancels.
