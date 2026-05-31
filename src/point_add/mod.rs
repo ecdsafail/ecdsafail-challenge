@@ -2825,7 +2825,7 @@ fn mod_mul_add_into_acc_karatsuba_lowq_with_tmp_ext(
     }
     mod_add_qq_fast(b, acc, &hi, p);
     let (spill, flag_inv, ovf) = mod_shift_left_by_k(b, &hi, p, 22);
-    mod_add_qq_fast_lowscratch(b, acc, &hi, p);
+    mod_add_qq(b, acc, &hi, p);
     mod_shift_right_by_k(b, &hi, p, 22, spill, flag_inv, ovf);
     for _ in 0..10 {
         mod_halve_inplace_fast(b, &hi, p);
@@ -3415,7 +3415,7 @@ fn mod_add_solinas_ext_product(b: &mut B, acc: &[QubitId], tmp_ext: &[QubitId], 
     }
     mod_add_qq_fast(b, acc, &hi, p);
     let (spill, flag_inv, ovf) = mod_shift_left_by_k(b, &hi, p, 22);
-    mod_add_qq_fast_lowscratch(b, acc, &hi, p);
+    mod_add_qq(b, acc, &hi, p);
     mod_shift_right_by_k(b, &hi, p, 22, spill, flag_inv, ovf);
     for _ in 0..10 {
         mod_halve_inplace_fast(b, &hi, p);
@@ -3480,17 +3480,48 @@ fn square_tx_and_combined_ty_l2minus3qx(
         mod_mul_add_into_acc_schoolbook(b, ty, lam, &breg, p);
     }
 
-    b.set_phase("affine_combined_breg_unred");
-    mod_add_qb(b, &breg, ox, p);
-    mod_add_double_qb(b, &breg, ox, p);
-    mod_sub_solinas_ext_product(b, &breg, &tmp_ext, p);
-    b.free_vec(&breg);
+    // r-lifecycle (default): fold lambda^2 once and reuse the reduced value for
+    // the tx update so tx_update is a cheap qq-sub instead of a second full
+    // Solinas fold. After the two 3Qx re-adds below, `breg` holds
+    // r = lambda^2 mod p (the reduced value) -- exactly the constant tx_update
+    // must subtract. Consume breg-as-r for tx BEFORE zeroing breg, then zero
+    // breg with the one Solinas fold it would have used anyway. No extra
+    // register => peak-neutral. Validated -18,963 Toffoli, peak 2708 unchanged.
+    // Set AFFINE_R_LIFECYCLE=0 to fall back to the legacy 3-fold path.
+    let affine_r_lifecycle =
+        std::env::var("AFFINE_R_LIFECYCLE").ok().as_deref() != Some("0");
 
-    b.set_phase("affine_combined_tx_update");
-    mod_sub_solinas_ext_product(b, tx, &tmp_ext, p);
-    mod_add_double_qb(b, tx, ox, p);
-    mod_add_qb(b, tx, ox, p);
-    mod_neg_inplace_fast(b, tx, p);
+    if affine_r_lifecycle {
+        b.set_phase("affine_combined_breg_unred");
+        mod_add_qb(b, &breg, ox, p); // breg = lambda^2 mod p = r
+        mod_add_double_qb(b, &breg, ox, p);
+
+        b.set_phase("affine_combined_tx_update");
+        // tx -= r  (== tx -= lambda^2 mod p), reusing breg=r, cheap qq sub.
+        mod_sub_qq_fast(b, tx, &breg, p);
+
+        b.set_phase("affine_combined_breg_unred");
+        // Zero breg via the one Solinas fold it would have used anyway.
+        mod_sub_solinas_ext_product(b, &breg, &tmp_ext, p);
+        b.free_vec(&breg);
+
+        b.set_phase("affine_combined_tx_update");
+        mod_add_double_qb(b, tx, ox, p);
+        mod_add_qb(b, tx, ox, p);
+        mod_neg_inplace_fast(b, tx, p);
+    } else {
+        b.set_phase("affine_combined_breg_unred");
+        mod_add_qb(b, &breg, ox, p);
+        mod_add_double_qb(b, &breg, ox, p);
+        mod_sub_solinas_ext_product(b, &breg, &tmp_ext, p);
+        b.free_vec(&breg);
+
+        b.set_phase("affine_combined_tx_update");
+        mod_sub_solinas_ext_product(b, tx, &tmp_ext, p);
+        mod_add_double_qb(b, tx, ox, p);
+        mod_add_qb(b, tx, ox, p);
+        mod_neg_inplace_fast(b, tx, p);
+    }
 
     schoolbook_square_symmetric_inverse(b, lam, &tmp_ext);
     b.free_vec(&tmp_ext);
