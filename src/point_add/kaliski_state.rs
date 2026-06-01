@@ -38,7 +38,7 @@ use super::*;
 // cswap-base a25248f margin=0 island (with K0=26/R=326 only W=26 is clean at
 // 2,574,129; dropping to K0=25 needs the R=325 re-roll → 2,570,415). R=324/326/327
 // reject at this depth. Stacks: margin=0 + K0=25 + R=325 + W=26 = 5,935,088,235.
-pub(crate) const R_SMALL_THRESHOLD: usize = 323;
+pub(crate) const R_SMALL_THRESHOLD: usize = 321;
 
 pub(crate) fn r_small_threshold() -> usize {
     std::env::var("KAL_R_SMALL_THRESHOLD")
@@ -77,7 +77,7 @@ pub(crate) fn kal_wtrunc_enabled() -> bool {
 pub(crate) fn kal_wtrunc_k0() -> usize {
     // T-squeeze: K0=25 (was 26) — envelope decay starts 1 iter earlier. Validates on
     // the cswap-base margin=0 island only with the R=325 re-roll (K0=24 rejects).
-    env_usize("KAL_WTRUNC_K0").unwrap_or(24)
+    env_usize("KAL_WTRUNC_K0").unwrap_or(22)
 }
 
 pub(crate) fn kal_wtrunc_margin() -> usize {
@@ -255,7 +255,7 @@ pub(crate) fn kal_carrytail_w() -> usize {
     // the island so W=36 lands clean — W∈{32,33,34,35,37,40,44} reject with DOUBLE on).
     // DOUBLE + W=36 = 2,462,914 × 2309 = 5,686,868,426 (9024-clean, flat peak 2309).
     let default = if kal_carrytail_add_enabled() {
-        22
+        20
     } else if kal_cswap_wtrunc_enabled() {
         26
     } else {
