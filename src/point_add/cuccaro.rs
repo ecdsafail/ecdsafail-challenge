@@ -794,14 +794,26 @@ pub(crate) fn cadd_nbit_const_direct_fast(b: &mut B, acc: &[QubitId], c: U256, c
     let carries = b.alloc_qubits(cut);
 
     // Forward carry sweep. carry_{i+1} = majority(acc_i, k_i, carry_i).
+    let majfold = majfold_add_enabled();
     for i in 0..cut {
         let target = carries[i];
         let carry_in = if i == 0 { None } else { Some(carries[i - 1]) };
         if bit(c, i) {
             if let Some(ci) = carry_in {
-                b.ccx(acc[i], ci, target);
-                b.ccx(ctrl, acc[i], target);
-                b.ccx(ctrl, ci, target);
+                // MAJ(acc[i], ctrl, ci) -> fold to 1 CCX + free CX (ci pivot):
+                // maj(a,b,d)=d^(a^d)&(b^d). Value identical -> backward Hmr unchanged.
+                if majfold {
+                    b.cx(ci, acc[i]);
+                    b.cx(ci, ctrl);
+                    b.ccx(acc[i], ctrl, target);
+                    b.cx(ci, target);
+                    b.cx(ci, ctrl);
+                    b.cx(ci, acc[i]);
+                } else {
+                    b.ccx(acc[i], ci, target);
+                    b.ccx(ctrl, acc[i], target);
+                    b.ccx(ctrl, ci, target);
+                }
             } else {
                 b.ccx(acc[i], ctrl, target);
             }

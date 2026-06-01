@@ -34,11 +34,7 @@ use super::*;
 /// a plain shift (0 Toffoli) for ~255 CCX savings per iter.
 // bxue-l2 island (peak 2310 after reverting the f1-drop): R_SMALL=326,
 // BULK_PREFIX_SAFE_ITERS=400, pair1=399, pair2=397.
-// T-squeeze: bumped 326->327 on the a97b4e9 (K0=26) base. One extra free-halve
-// iter (-~742 CCX), and the op-count re-roll lands the Fiat-Shamir inputs on an
-// island where margin=2 (below) ALSO validates clean — R=327 + margin=2 stack to
-// 2,813,485 × 2309 = 6,496,336,865. R in {328,329} reject (overflow/island).
-pub(crate) const R_SMALL_THRESHOLD: usize = 327;
+pub(crate) const R_SMALL_THRESHOLD: usize = 326;
 
 pub(crate) fn r_small_threshold() -> usize {
     std::env::var("KAL_R_SMALL_THRESHOLD")
@@ -79,14 +75,15 @@ pub(crate) fn kal_wtrunc_k0() -> usize {
 }
 
 pub(crate) fn kal_wtrunc_margin() -> usize {
-    // Banked: margin=2 — on the a97b4e9 (K0=26) base PAIRED with R_SMALL=327.
-    // margin=2 alone on this base FAILs (1 straggler); bumping R_SMALL 326->327
-    // re-rolls the Fiat-Shamir inputs onto an island where margin=2 is CLEAN
-    // (9024-shot 0/0/0, peak-neutral 2309). margin=1 and R in {328,329} still
-    // reject here. R=327 + margin=2 together = 2,813,485 avg-exec Toffoli × 2309 =
-    // 6,496,336,865 (validated clean), -5,076 T vs the K0=26/m=3/R=326 base.
-    // KAL_WTRUNC_MARGIN env override remains available.
-    env_usize("KAL_WTRUNC_MARGIN").unwrap_or(2)
+    // Banked: margin=3 — re-tightened from 4 on the CARRY-TAIL SUB W=96 island.
+    // The carry-tail op-count change re-rolled the Fiat-Shamir inputs; a full
+    // 9024-shot screen on this island maps the validity cliff at margin: 3=clean
+    // (0/0/0), 2=FAIL (2 mismatch / 1 phase), 1=FAIL (2 mismatch). So margin=3 is
+    // the validating floor for the combined (carry-tail + GCD W-TRUNC) circuit —
+    // -4,380 avg-exec Toffoli vs margin=4, peak-neutral 2309. Validated clean;
+    // score 6,616,811,249. (Carry-tail base had margin=4; pre-carry-tail it was
+    // 0.) KAL_WTRUNC_MARGIN env override remains available.
+    env_usize("KAL_WTRUNC_MARGIN").unwrap_or(3)
 }
 
 /// Empirical-bound truncation width for a CCX-bearing Kaliski width loop at
@@ -164,6 +161,18 @@ pub(crate) fn kal_carrytail_sub_enabled() -> bool {
 /// 9024-clean (also clean with truncations off). KAL_MAJFOLD_SUB=0 disables.
 pub(crate) fn majfold_sub_enabled() -> bool {
     std::env::var("KAL_MAJFOLD_SUB").ok().as_deref() != Some("0")
+}
+
+/// MAJ-FOLD (ADD path, default-ON): the const-ADD twin of `majfold_sub_enabled`.
+/// Folds the 3-CCX direct const-ADD carry MAJ (maj(acc, ctrl, ci)) into 1 CCX +
+/// free CX using the carry-in `ci` as the pivot (maj(a,b,d)=d^(a^d)&(b^d)). The
+/// computed carry value is identical, so the backward Hmr cz_if measurement-
+/// uncompute is byte-unchanged. Same proven technique as the banked SUB fold;
+/// this is the unfolded sibling (cadd_nbit_const_direct_fast drives every
+/// mod_double, i.e. the pair2_double / Solinas-fold doubling phases).
+/// KAL_MAJFOLD_ADD=0 disables.
+pub(crate) fn majfold_add_enabled() -> bool {
+    std::env::var("KAL_MAJFOLD_ADD").ok().as_deref() != Some("0")
 }
 
 pub(crate) fn kal_carrytail_w() -> usize {
