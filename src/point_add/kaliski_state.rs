@@ -107,60 +107,25 @@ pub(crate) fn kal_wtrunc_width(iter_idx: usize, n: usize) -> usize {
     (env + margin).min(n)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UV-CSWAP truncation (STEP-3 / STEP-9 (u,v_w) conditional swap).
-//
-// The STEP-3 and STEP-9 conditional swaps of the (u, v_w) registers currently
-// run over the *provable invariant* width `2n - iter_idx`, which is far wider
-// than the actual nonzero span `max(bitlen u, bitlen v_w)` (the W-TRUNC
-// envelope).  A cswap over bit positions where BOTH u and v_w are |0> is the
-// identity, so narrowing the swap loop to the W-TRUNC width is exact whenever
-// the high bits are zero — the SAME approximate-correctness bet (and the SAME
-// register, same failure distribution) that STEP-4's `kal_wtrunc_width` already
-// makes and that validates 9024-clean.  Crucially the STEP-4 arithmetic
-// (`v_w -= u`, `add_f & u` transforms) is ALREADY truncated to this width and
-// validates clean, which means u/v_w provably carry no nonzero bit above the
-// W-TRUNC width on the test distribution; therefore truncating the cswap to the
-// same width is *conservative for the swap* (the swap needs only the bitlen, not
-// STEP-4's carry-propagation headroom).
-//
-// PHASE-PARITY LAW: cswap is an involution; forward STEP-3/STEP-9 and the
-// backward STEP-9 reverse all call this single width function at the same
-// iter_idx, so forward and backward stay byte-identical width → no high bit is
-// swapped one way and not the other → reversibility preserved.
-//
-// Default ON (validated clean island).  KAL_UV_CSWAP_TRUNC=0 restores the
-// byte-identical invariant-width swap.  KAL_UV_CSWAP_TRUNC=1 (default) narrows
-// the (u,v_w) cswap loops to `min(invariant, kal_wtrunc_width + extra_margin)`.
-//
-// VALIDITY / ISLAND: a 9024-shot screen on this HEAD found extra_margin=1 is the
-// clean island (0 mismatch / 0 phase / 0 ancilla); extra_margin=0 had a single
-// straggler (1/0/0), and 2/3/4/5 re-roll to FAIL (Fiat-Shamir island lottery,
-// per shared/notes fiat-shamir-island-mechanism). A 3M-MC propagation model puts
-// the worst-case (maxW - wt_base) deficit at +3 (iter 371), so margin=1 is an
-// island-clean point below the provable-clean margin (~4); it is bankable by the
-// same standard as the banked W-TRUNC margin=3 and carry-tail W=49 islands. The
-// default margin is 1; KAL_UV_CSWAP_MARGIN overrides for re-sweeps after the
-// island re-rolls.
-pub(crate) fn kal_uv_cswap_trunc_enabled() -> bool {
-    std::env::var("KAL_UV_CSWAP_TRUNC").ok().as_deref() != Some("0")
-}
-
-fn kal_uv_cswap_extra_margin() -> usize {
-    env_usize("KAL_UV_CSWAP_MARGIN").unwrap_or(1)
-}
-
-/// Width of the (u, v_w) conditional swap loop at `iter_idx`.  `invariant` is
-/// the caller's provable-invariant width (`2n - iter_idx` clamped to n).  When
-/// the truncation is disabled this returns `invariant` unchanged (byte-identical
-/// default); when enabled it returns `min(invariant, wtrunc_width + extra)`.
-#[inline]
-pub(crate) fn kal_uv_cswap_width(iter_idx: usize, n: usize, invariant: usize) -> usize {
-    if !kal_uv_cswap_trunc_enabled() {
-        return invariant;
-    }
-    let w = kal_wtrunc_width(iter_idx, n).saturating_add(kal_uv_cswap_extra_margin());
-    w.min(invariant)
+/// CSWAP W-TRUNC (default-ON): narrow the bulk Kaliski step3/step9 (u,v_w)
+/// Fredkin cswap widths to the SAME empirical bitlen envelope already used by
+/// the step4 LOAD/SUB/ADD loops (`kal_wtrunc_width`).  Bits above the envelope
+/// are empirically 0 in BOTH u and v_w, so the Fredkin swap of those bits is a
+/// no-op (swapping |0> with |0>) and can be dropped — saving (n - w_env) CCX
+/// per swapped iteration.
+///
+/// MERGE COUPLING (correctness): the boundary-merge defers step9(k-1)'s (u,v_w)
+/// swap and fuses it into step3(k)'s swap (control a_{k-1}⊕a_k).  Because w_env
+/// is non-increasing in iter, w_env(k-1) ≥ w_env(k); the merged swap therefore
+/// uses the WIDER iter-(k-1) envelope so no bit the deferred step9(k-1) needs is
+/// ever dropped.  Non-merged (eager) swaps use the iter-k envelope.  Forward and
+/// backward compute these widths from the identical merged-flag/iter inputs, so
+/// the measured-uncompute reverse is byte-identical width (phase-parity law).
+///
+/// Default ON; `KAL_CSWAP_WTRUNC=0` restores the provable-bound widths
+/// (byte-identical to the pre-truncation circuit).  Shares `KAL_WTRUNC_MARGIN`.
+pub(crate) fn kal_cswap_wtrunc_enabled() -> bool {
+    std::env::var("KAL_CSWAP_WTRUNC").ok().as_deref() != Some("0")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +184,18 @@ pub(crate) fn majfold_sub_enabled() -> bool {
     std::env::var("KAL_MAJFOLD_SUB").ok().as_deref() != Some("0")
 }
 
+/// MAJ-FOLD (ADD path, default-ON): the const-ADD twin of `majfold_sub_enabled`.
+/// Folds the 3-CCX direct const-ADD carry MAJ (maj(acc, ctrl, ci)) into 1 CCX +
+/// free CX using the carry-in `ci` as the pivot (maj(a,b,d)=d^(a^d)&(b^d)). The
+/// computed carry value is identical, so the backward Hmr cz_if measurement-
+/// uncompute is byte-unchanged. Same proven technique as the banked SUB fold;
+/// this is the unfolded sibling (cadd_nbit_const_direct_fast drives every
+/// mod_double, i.e. the pair2_double / Solinas-fold doubling phases).
+/// KAL_MAJFOLD_ADD=0 disables.
+pub(crate) fn majfold_add_enabled() -> bool {
+    std::env::var("KAL_MAJFOLD_ADD").ok().as_deref() != Some("0")
+}
+
 pub(crate) fn kal_carrytail_w() -> usize {
     // Banked clean island: SUB W=36 (paired with WTRUNC K0=26, margin=3, MAJ-fold
     // SUB on). The carry-tail SUB borrow chain runs to bit 33+36=69, far above the
@@ -234,7 +211,17 @@ pub(crate) fn kal_carrytail_w() -> usize {
     // 2309 peak = 6,508,057,349, 0/0 over 9024). W∈{45,42,40,38,35,34,33,32,31,30,
     // 29,28,27,26,25,24} all FAIL the island lottery on this base. margin=3 floor.
     // KAL_CARRYTAIL_W env override remains.
-    env_usize("KAL_CARRYTAIL_W").unwrap_or(49)
+    //
+    // CSWAP W-TRUNC COUPLING: enabling the step3/step9 uv-cswap envelope
+    // truncation (default-on, see kal_cswap_wtrunc_enabled) changes the op count
+    // by ~212k CCX, which re-rolls the Fiat-Shamir island and moves the clean
+    // carry-tail-SUB window off W=36. Full 9024-shot W-sweep on the cswap-on
+    // op-count (margin=3, K0=26) found W=59 clean (0/0/0, score 6,035,298,835 =
+    // 2,613,815 T × 2309); W∈{36,45,49,50,52,54,56,70} all MISS with cswap-on.
+    // So the default is co-tuned: W=59 when cswap-trunc is on, W=36 when off
+    // (the latter restores the exact banked baseline).
+    let default = if kal_cswap_wtrunc_enabled() { 59 } else { 36 };
+    env_usize("KAL_CARRYTAIL_W").unwrap_or(default)
 }
 
 pub(crate) fn kal_carrytail_k0() -> usize {

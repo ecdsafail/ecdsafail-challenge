@@ -114,14 +114,25 @@ pub(crate) fn kaliski_iteration_bulk_prefix3(
     b.set_phase("kal_bulk_step3_cswap");
     // Late-iter truncation: bitlen(u)+bitlen(v_w) ≤ 2n-iter_idx (Kaliski invariant).
     let uv_width_step3 = {
-        let invariant = if iter_idx < u.len() {
+        let base = if iter_idx < u.len() {
             u.len()
         } else {
             2 * u.len() - iter_idx
         };
-        // UV-CSWAP truncation: bits above the W-TRUNC bitlen envelope are |0> on
-        // both u and v_w, so swapping them is identity → narrow the loop.
-        kal_uv_cswap_width(iter_idx, u.len(), invariant)
+        if kal_cswap_wtrunc_enabled() {
+            // CSWAP W-TRUNC: bits above the empirical envelope are 0 in both u
+            // and v_w, so the Fredkin swap there is a no-op. A MERGED step3 swap
+            // (uv_frame_in present) also performs iter (k-1)'s deferred step9, so
+            // it must use the WIDER iter-(k-1) envelope (w_env non-increasing).
+            let env_iter = if uv_frame_in.is_some() {
+                iter_idx.saturating_sub(1)
+            } else {
+                iter_idx
+            };
+            base.min(kal_wtrunc_width(env_iter, u.len()))
+        } else {
+            base
+        }
     };
     if let Some(frame_in) = uv_frame_in {
         // Merge previous STEP-9 uv swap with this STEP-3 uv swap. Control is
@@ -161,8 +172,11 @@ pub(crate) fn kaliski_iteration_bulk_prefix3(
         // frame_in ^= NOT(a_f ? r[0] : s[0]):
         b.cx(s[0], frame_in);
         b.x(frame_in); // frame_in ^= NOT s[0]
+        // CCX-ELIM: frame_in ^= a_f&(r[0]^s[0]) — fold 2 CCX -> 1 CCX + free CX
+        // (distribute the AND over the XOR using s[0] as a transient pivot on r[0]).
+        b.cx(s[0], r[0]);
         b.ccx(a_f, r[0], frame_in);
-        b.ccx(a_f, s[0], frame_in); // frame_in ^= a_f & (r[0] ^ s[0])
+        b.cx(s[0], r[0]);
         b.free(frame_in); // frame_in now |0⟩
         *frame = None;
     } else {
@@ -287,12 +301,19 @@ pub(crate) fn kaliski_iteration_bulk_prefix3(
     b.set_phase("kal_bulk_step9_cswap");
     // Late-iter truncation: same uv-width bound as step3.
     let uv_width_step9 = {
-        let invariant = if iter_idx < u.len() {
+        let base = if iter_idx < u.len() {
             u.len()
         } else {
             2 * u.len() - iter_idx
         };
-        kal_uv_cswap_width(iter_idx, u.len(), invariant)
+        if kal_cswap_wtrunc_enabled() {
+            // Eager step9 is always non-merged (only emitted when !uv_merge_out),
+            // so it uses the iter-k envelope. Byte-identical to the backward
+            // eager-step9 width below (phase-parity law).
+            base.min(kal_wtrunc_width(iter_idx, u.len()))
+        } else {
+            base
+        }
     };
     if !uv_merge_out {
         for j in 0..uv_width_step9 {
@@ -452,8 +473,10 @@ pub(crate) fn kaliski_iteration(
         // a_k (= a_f) as select: frame_in ^= NOT(a_f ? r[0] : s[0]).
         b.cx(s[0], frame_in);
         b.x(frame_in);
+        // CCX-ELIM: frame_in ^= a_f&(r[0]^s[0]) — fold 2 CCX -> 1 CCX + free CX.
+        b.cx(s[0], r[0]);
         b.ccx(a_f, r[0], frame_in);
-        b.ccx(a_f, s[0], frame_in);
+        b.cx(s[0], r[0]);
         b.free(frame_in);
         *frame = None;
     } else {
@@ -738,9 +761,14 @@ pub(crate) fn kaliski_iteration_bulk_prefix3_backward(
     }
     // Reverse STEP 9 (u,v) — always eager.
     b.set_phase("bk_bulk_step9_cswap");
+    // CSWAP W-TRUNC: byte-identical to forward eager step9 (iter-k envelope).
     let uv_width_step9 = {
-        let invariant = if iter_idx < n { n } else { 2 * n - iter_idx };
-        kal_uv_cswap_width(iter_idx, n, invariant)
+        let base = if iter_idx < n { n } else { 2 * n - iter_idx };
+        if kal_cswap_wtrunc_enabled() {
+            base.min(kal_wtrunc_width(iter_idx, n))
+        } else {
+            base
+        }
     };
     if !uv_merge_out {
         for j in (0..uv_width_step9).rev() {
@@ -849,9 +877,23 @@ pub(crate) fn kaliski_iteration_bulk_prefix3_backward(
     b.set_phase("bk_bulk_step3_cswap");
     let rs_width_step3 = if iter_idx + 1 < n { iter_idx + 1 } else { n };
     // Late-iter truncation mirrors forward step3.
+    // CSWAP W-TRUNC: the MERGED reverse step3 (uv_merge_in && merge_rs &&
+    // iter_idx != 0) also reverses the deferred step9(k-1) — identical condition
+    // to the forward `uv_frame_in.is_some()` branch — so it uses the WIDER
+    // iter-(k-1) envelope; non-merged uses iter-k. Byte-identical to forward.
     let uv_width_step3 = {
-        let invariant = if iter_idx < n { n } else { 2 * n - iter_idx };
-        kal_uv_cswap_width(iter_idx, n, invariant)
+        let base = if iter_idx < n { n } else { 2 * n - iter_idx };
+        if kal_cswap_wtrunc_enabled() {
+            let merged = uv_merge_in && merge_rs && iter_idx != 0;
+            let env_iter = if merged {
+                iter_idx.saturating_sub(1)
+            } else {
+                iter_idx
+            };
+            base.min(kal_wtrunc_width(env_iter, n))
+        } else {
+            base
+        }
     };
     // Reverse of the forward (r,s) STEP 3. When merged, recreate the outgoing
     // frame parity (= a_{k-1}) and hand it to the previous (backward-later) iter.
@@ -860,8 +902,10 @@ pub(crate) fn kaliski_iteration_bulk_prefix3_backward(
     if merge_rs && iter_idx != 0 {
         let frame_out = b.alloc_qubit();
         // Reverse reroute (recreate frame_out = a_{k-1}), a_f = a_k as select.
-        b.ccx(a_f, s[0], frame_out);
+        // CCX-ELIM: frame_out ^= a_f&(r[0]^s[0]) — fold 2 CCX -> 1 CCX + free CX.
+        b.cx(s[0], r[0]);
         b.ccx(a_f, r[0], frame_out);
+        b.cx(s[0], r[0]);
         b.x(frame_out);
         b.cx(s[0], frame_out);
         // Reverse the merged cswap: control a_{k-1} ⊕ a_k.
@@ -1118,8 +1162,10 @@ pub(crate) fn kaliski_iteration_backward(
     if merge_rs && iter_idx != 0 {
         let frame_out = b.alloc_qubit();
         // Reverse reroute (recreate frame_out = a_{k-1}), a_f = a_k as select.
-        b.ccx(a_f, s[0], frame_out);
+        // CCX-ELIM: frame_out ^= a_f&(r[0]^s[0]) — fold 2 CCX -> 1 CCX + free CX.
+        b.cx(s[0], r[0]);
         b.ccx(a_f, r[0], frame_out);
+        b.cx(s[0], r[0]);
         b.x(frame_out);
         b.cx(s[0], frame_out);
         b.cx(frame_out, a_f); // a_f = a_{k-1} ⊕ a_k
