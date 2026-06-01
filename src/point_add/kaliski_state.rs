@@ -77,7 +77,7 @@ pub(crate) fn kal_wtrunc_enabled() -> bool {
 pub(crate) fn kal_wtrunc_k0() -> usize {
     // T-squeeze: K0=25 (was 26) — envelope decay starts 1 iter earlier. Validates on
     // the cswap-base margin=0 island only with the R=325 re-roll (K0=24 rejects).
-    env_usize("KAL_WTRUNC_K0").unwrap_or(25)
+    env_usize("KAL_WTRUNC_K0").unwrap_or(24)
 }
 
 pub(crate) fn kal_wtrunc_margin() -> usize {
