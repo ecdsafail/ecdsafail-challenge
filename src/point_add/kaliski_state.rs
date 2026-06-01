@@ -77,7 +77,12 @@ pub(crate) fn kal_wtrunc_enabled() -> bool {
 }
 
 pub(crate) fn kal_wtrunc_k0() -> usize {
-    env_usize("KAL_WTRUNC_K0").unwrap_or(26)
+    // T-squeeze: K0=25 (was 26) — paired with margin=0, R_SMALL=325, carry-tail W=23.
+    // On the margin=0/R=325 island, K0=25 alone is 1 straggler short; dropping the
+    // carry-tail W 24->23 re-rolls the inputs and K0=25 then validates CLEAN. Starts
+    // the W-TRUNC envelope decay 1 iter earlier (fewer CCX). K0=25+W=23 = 2,794,983
+    // × 2309 = 6,453,615,747 (validated clean). K0=24, and W∈{20,21,22} reject here.
+    env_usize("KAL_WTRUNC_K0").unwrap_or(25)
 }
 
 pub(crate) fn kal_wtrunc_margin() -> usize {
@@ -189,8 +194,11 @@ pub(crate) fn kal_carrytail_w() -> usize {
     // chain to bit 33+24=57, still 5 bits above the 19-bit MC max → arithmetically
     // exact). W∈{20,21,22,23,25,26,27,29..} reject the lottery on this island.
     // margin=0 + R=325 + W=24 = 2,798,569 × 2309 = 6,461,895,821 (validated clean).
+    // T-squeeze cont.: W=23 (was 24), paired with K0=25 — the W 24->23 re-roll is
+    // what makes K0=25 clean (and saves carry-tail CCX). borrow chain to bit 56,
+    // still 4 bits above the 19-bit MC max. K0=25+W=23 = 2,794,983 (validated clean).
     // KAL_CARRYTAIL_W env override remains.
-    env_usize("KAL_CARRYTAIL_W").unwrap_or(24)
+    env_usize("KAL_CARRYTAIL_W").unwrap_or(23)
 }
 
 pub(crate) fn kal_carrytail_k0() -> usize {
