@@ -29555,7 +29555,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_COMPARE_BITS", "59");
     set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_RAW_PA", "1");
-    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "399");
+    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "398");
     set_default_env("DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE", "1");
     set_default_env("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
     set_default_env("DIALOG_GCD_RAW_QUOTIENT_TERMINAL_REUSE", "1");
@@ -29639,11 +29639,12 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("KARA_Z02_LOWQ", "1");
     set_default_env("KARA_SOL_MOD_VENT", "1");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "99");
-    // The lowq/hosted/vented squares + F_CUT=99 op-stream re-rolls the Fiat-Shamir
-    // island. 2-D (DIALOG_REROLL x DIALOG_POST_SUB_REROLL) search lands 15/25 clean
-    // 0/0/0 over 9024 at 1500q and 1,718,717 avg executed Toffoli.
-    set_default_env("DIALOG_REROLL", "15");
-    set_default_env("DIALOG_POST_SUB_REROLL", "25");
+    // The lowq/hosted/vented squares + F_CUT=99 + 398 active iterations op-stream
+    // re-rolls the Fiat-Shamir island. 2-D (DIALOG_REROLL x
+    // DIALOG_POST_SUB_REROLL) search lands 14/2 clean 0/0/0 over 9024 at 1500q and
+    // 1,716,661 avg executed Toffoli.
+    set_default_env("DIALOG_REROLL", "14");
+    set_default_env("DIALOG_POST_SUB_REROLL", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
