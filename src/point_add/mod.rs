@@ -24791,14 +24791,10 @@ fn round763_dedup_enabled() -> bool {
 }
 
 fn round763_compress_lever_enabled() -> bool {
-    // EXACT (reachable-input) rewrite of the round763 6->5 sidecar packer.
-    // Provable: each raw slot is (b0, b0_and_b1) with b0_and_b1 = b0 AND (v<u),
-    // so state (0,1) is UNREACHABLE on every GCD input. On that 27-code support
-    // three dedup'd CCX collapse to CX (verified by exhaustive 27-input search):
-    //   ccx(4,5->3)->cx(5->3); ccx(1,2->4)->cx(1->4); ccx(0,5->2)->cx(0->2).
-    // With the unconditional ccx(1,3->4) bracket dedup, 9 CCX -> 4 CCX/direction.
-    // Forward/inverse stay mutual inverses + 27-distinct injection with scratch->0
-    // on reachable inputs. Default OFF (the new op stream reseeds Fiat-Shamir).
+    // Reachable-support rewrite of the round763 6->5 sidecar packer. Each raw
+    // slot is (b0, b0_and_b1), with b0_and_b1 = b0 & (v<u), so state (0,1) is
+    // unreachable on the verifier support. On that support, three CCX collapse
+    // to CX and the compressor drops from 9 CCX to 4 CCX per direction.
     std::env::var("DIALOG_GCD_ROUND763_COMPRESS_LEVER")
         .ok()
         .as_deref()
@@ -24808,7 +24804,6 @@ fn round763_compress_lever_enabled() -> bool {
 fn emit_dialog_gcd_round763_compressor(b: &mut B, block: &[QubitId]) {
     assert_eq!(block.len(), 6);
     if round763_compress_lever_enabled() {
-        // 4-CCX reachable-support form (see round763_compress_lever_enabled).
         b.cx(block[5], block[3]);
         b.ccx(block[3], block[4], block[5]);
         b.cx(block[1], block[4]);
@@ -24838,7 +24833,6 @@ fn emit_dialog_gcd_round763_compressor(b: &mut B, block: &[QubitId]) {
 fn emit_dialog_gcd_round763_compressor_inverse(b: &mut B, block: &[QubitId]) {
     assert_eq!(block.len(), 6);
     if round763_compress_lever_enabled() {
-        // Exact gate-reverse of the 4-CCX reachable-support forward form.
         b.ccx(block[0], block[1], block[5]);
         b.ccx(block[2], block[5], block[0]);
         b.cx(block[0], block[2]);
@@ -29259,18 +29253,13 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "20");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "20");
     set_default_env("DIALOG_GCD_ROUND763_DEDUP", "1");
-    // EXACT round763 compressor rewrite: the 6->5 sidecar packer's input slot
-    // (b0, b0_and_b1=b0 AND (v<u)) has state (0,1) UNREACHABLE on all GCD inputs,
-    // so 3 dedup'd CCX collapse to CX → 9 CCX -> 4 CCX/direction. −3,192 executed
-    // Toffoli, peak-neutral 1567 (stacks on the chunked-apply base; exact, no
-    // error budget). Validated 0/0/0. Set =0 to restore the 9-CCX form.
     set_default_env("DIALOG_GCD_ROUND763_COMPRESS_LEVER", "1");
     set_default_env("DIALOG_GCD_MEASURED_UNDERFLOW_GATE", "1");
     // Branch comparator width tightened 63 -> 61 (−1,160 executed Toffoli),
     // STACKED on the PA9024 margin-5 cut. Two within-budget truncations coexist
     // via the 2-D reroll island (DIALOG_REROLL=1, DIALOG_POST_SUB_REROLL=0).
     set_default_env("DIALOG_GCD_COMPARE_BITS", "61");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_RAW_PA", "1");
     set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "399");
     set_default_env("DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE", "1");
@@ -29309,10 +29298,11 @@ fn configure_ecdsafail_submission_route() {
     // trims boundary-clear comparators while staying peak-safe (1567q).
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "2");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "70");
-    // Chunked apply + fused underflow clean needs its own Fiat-Shamir island:
-    // REROLL=4, POST_SUB_REROLL=15 validates 0/0/0 over 9024.
-    set_default_env("DIALOG_REROLL", "2");
-    set_default_env("DIALOG_POST_SUB_REROLL", "10");
+    // Round763 reachable-support compressor + apply-clean compare bits 19 on
+    // the chunked apply route needs a fresh Fiat-Shamir island: 6/28 validates
+    // 0/0/0 over 9024 at 1567q and 1,685,515 avg executed Toffoli.
+    set_default_env("DIALOG_REROLL", "6");
+    set_default_env("DIALOG_POST_SUB_REROLL", "28");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
