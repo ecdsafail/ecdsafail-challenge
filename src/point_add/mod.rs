@@ -28497,7 +28497,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_COMPRESSED_SIDECAR_LOG", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "1");
-    set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "5");
+    set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "6");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "20");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "20");
     set_default_env("DIALOG_GCD_ROUND763_DEDUP", "1");
@@ -28516,11 +28516,13 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_RAW_TOBITVECTOR_VARIABLE_WIDTH", "1");
     set_default_env("DIALOG_GCD_RAW_TOBITVECTOR_BORROW_FUTURE_LOG_CARRIES", "1");
     set_default_env("ROUND84_XTAIL_SCHOOLBOOK", "1");
-    // W-TRUNC tightening: lower the GCD-body width envelope margin 37 -> 28 and
-    // co-tune the Fiat-Shamir reroll to land a clean 9024-shot island. Pure
-    // Toffoli reduction (2447846 -> 2396158), peak-neutral at 1698.
-    // (Validated 0/0/0 over 9024 via eval_circuit.)
-    set_default_env("DIALOG_GCD_WIDTH_MARGIN", "28");
+    // W-TRUNC tightening: lower the GCD-body width envelope margin 37 -> 28 ->
+    // 27 and co-tune the Fiat-Shamir reroll to land a clean 9024-shot island.
+    // Pure Toffoli reduction; margin 28 -> 27 saves -4,636 (1,667,601 ->
+    // 1,662,965), peak-neutral at 1698, paired with REROLL=2 below.
+    // (Validated 0/0/0 over 9024 via eval_circuit; reroll island re-scanned for
+    // the current baked default stack — margin=27 needs REROLL=2, not 29.)
+    set_default_env("DIALOG_GCD_WIDTH_MARGIN", "27");
     // Measured (Gidney) uncompute for the apply-phase modular subtract's raw
     // difference, mirroring the already-measured apply ADD. ~n Toffoli instead
     // of ~2n per call; peak-neutral (same carry lane the ADD already uses).
@@ -28528,8 +28530,9 @@ fn configure_ecdsafail_submission_route() {
     // Apply-clean comparator fast path: keep the truncation window but uncompute
     // the materialized add/sub clean predicates with the measured comparator.
     // Pure Toffoli reduction (1697569 -> 1673629), peak-neutral at 1698.
-    // (Validated 0/0/0 over 9024 via eval_circuit.)
-    set_default_env("DIALOG_REROLL", "27");
+    // REROLL re-scanned for the WIDTH_MARGIN=27 island: REROLL=2 lands 0/0/0
+    // over 9024 (29 was the margin=28 island). Score 2,823,714,570.
+    set_default_env("DIALOG_REROLL", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
