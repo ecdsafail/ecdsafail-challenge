@@ -28760,7 +28760,7 @@ fn configure_ecdsafail_submission_route() {
     // co-tune the Fiat-Shamir reroll to land a clean 9024-shot island. Pure
     // Toffoli reduction (2447846 -> 2396158), peak-neutral at 1698.
     // (Validated 0/0/0 over 9024 via eval_circuit.)
-    set_default_env("DIALOG_GCD_WIDTH_MARGIN", "28");
+    set_default_env("DIALOG_GCD_WIDTH_MARGIN", "26");
     // Measured (Gidney) uncompute for the apply-phase modular subtract's raw
     // difference, mirroring the already-measured apply ADD. ~n Toffoli instead
     // of ~2n per call; peak-neutral (same carry lane the ADD already uses).
@@ -28773,7 +28773,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_HOST_GATED", "1");
     set_default_env("DIALOG_GCD_APPLY_WINDOW_BLOCKS", "2");
     // New op stream (windowed apply) needs its own clean Fiat-Shamir island.
-    set_default_env("DIALOG_REROLL", "41");
+    set_default_env("DIALOG_REROLL", "20");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
