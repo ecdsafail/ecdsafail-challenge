@@ -29310,7 +29310,11 @@ fn configure_ecdsafail_submission_route() {
     // Branch comparator width tightened 61 -> 59 (−1,600 executed Toffoli),
     // stacked on the chunked-apply + round763 + acc=19 base via the 2-D reroll
     // island (DIALOG_REROLL=0, DIALOG_POST_SUB_REROLL=10). Validated 0/0/0 @ 1567.
-    set_default_env("DIALOG_GCD_COMPARE_BITS", "59");
+    // Comparator width 59 -> 58 trims another comparator bit on the current
+    // 1542q top-bit-free route. The op stream re-rolls the Fiat-Shamir island;
+    // REROLL=14/POST_SUB=4 below validates 0/0/0 over 9024 at
+    // 1542q x 1,681,207 T = 2,592,421,194.
+    set_default_env("DIALOG_GCD_COMPARE_BITS", "58");
     set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_RAW_PA", "1");
     set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "399");
@@ -29343,9 +29347,9 @@ fn configure_ecdsafail_submission_route() {
     // Solinas-reduction peak window (z1_reg == 2*lo*hi < 2^257 there), so that
     // qubit is freed for the window and re-grabbed (fresh zero) before the inverse
     // combine restores z1=(lo+hi)^2. Bennett-clean, 0 added Toffoli. Stacks on
-    // KARA_SOL_DBL_FAST; the combined op stream re-rolls the island, re-tuned to
-    // REROLL=17/POST_SUB=56 below (MARGIN stays 5 — no give-back). Validated 0/0/0
-    // over 9024: 1542q x 1,682,159 T = 2,593,889,178.
+    // KARA_SOL_DBL_FAST. The cb58 update below re-rolls the combined island again;
+    // MARGIN stays 5 — no give-back. Validated 0/0/0 over 9024 at the prior cb59
+    // point: 1542q x 1,682,159 T = 2,593,889,178.
     set_default_env("KARA_FREE_Z1_TOPBIT", "1");
     // W-TRUNC tightening: GCD-body width envelope margin. Re-scanned for the
     // Karatsuba x-tail op stream: margin=27 + REROLL=0 lands a clean 9024-shot
@@ -29382,11 +29386,11 @@ fn configure_ecdsafail_submission_route() {
     // avg-executed Toffoli, 1,688,703 -> 1,695,087); peak-neutral for any cut>=78.
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "2");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "78");
-    // The ROUND84 doublings + F_CUT=78 op-stream re-rolls the Fiat-Shamir island.
-    // 2-D (DIALOG_REROLL x DIALOG_POST_SUB_REROLL) search lands 28/5 clean 0/0/0
-    // over 9024 at 1543q and 1,695,087 avg executed Toffoli (score 2,615,519,241).
-    set_default_env("DIALOG_REROLL", "17");
-    set_default_env("DIALOG_POST_SUB_REROLL", "56");
+    // The cb58 + top-bit-free + fast-doubling op stream re-rolls the island.
+    // 2-D (DIALOG_REROLL x DIALOG_POST_SUB_REROLL) search lands 14/4 clean 0/0/0
+    // over 9024 at 1542q and 1,681,207 avg executed Toffoli.
+    set_default_env("DIALOG_REROLL", "14");
+    set_default_env("DIALOG_POST_SUB_REROLL", "4");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
