@@ -22947,13 +22947,6 @@ fn dialog_gcd_fused_branch_bits_enabled() -> bool {
         == Some("1")
 }
 
-fn dialog_gcd_odd_u_lowbit_fastpath_enabled() -> bool {
-    std::env::var("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH")
-        .ok()
-        .as_deref()
-        == Some("1")
-}
-
 fn dialog_gcd_cmp_gt_truncated_into_width(
     b: &mut B,
     u: &[QubitId],
@@ -23284,11 +23277,7 @@ fn dialog_gcd_controlled_sub_selected(
         let body_w = dialog_gcd_body_carry_trunc_width(n);
         b.set_phase("dialog_gcd_raw_tobitvector_materialized_sub_load");
         for i in 0..body_w {
-            if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                b.cx(ctrl, gated[i]);
-            } else {
-                b.ccx(ctrl, subtrahend[i], gated[i]);
-            }
+            b.ccx(ctrl, subtrahend[i], gated[i]);
         }
         b.set_phase("dialog_gcd_raw_tobitvector_materialized_sub_body");
         if let Some(carries) =
@@ -23350,11 +23339,7 @@ fn dialog_gcd_controlled_add_selected(
         let body_w = dialog_gcd_body_carry_trunc_width(n);
         b.set_phase("dialog_gcd_raw_tobitvector_materialized_add_load");
         for i in 0..body_w {
-            if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                b.cx(ctrl, gated[i]);
-            } else {
-                b.ccx(ctrl, addend[i], gated[i]);
-            }
+            b.ccx(ctrl, addend[i], gated[i]);
         }
         b.set_phase("dialog_gcd_raw_tobitvector_materialized_add_body");
         if let Some(carries) =
@@ -23442,10 +23427,7 @@ fn emit_dialog_gcd_raw_tobitvector_steps(
         b.free(cmp);
 
         b.set_phase("dialog_gcd_raw_tobitvector_cswap");
-        for (i, (&ui, &vi)) in u_active.iter().zip(v_active.iter()).enumerate() {
-            if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                continue;
-            }
+        for (&ui, &vi) in u_active.iter().zip(v_active.iter()) {
             cswap(b, b0_and_b1, ui, vi);
         }
 
@@ -23485,10 +23467,7 @@ fn emit_dialog_gcd_raw_tobitvector_steps_reverse(
         dialog_gcd_controlled_add_selected(b, u_active, v_active, b0, borrowed_carries);
 
         b.set_phase("dialog_gcd_raw_tobitvector_reverse_cswap");
-        for (i, (&ui, &vi)) in u_active.iter().zip(v_active.iter()).enumerate() {
-            if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                continue;
-            }
+        for (&ui, &vi) in u_active.iter().zip(v_active.iter()) {
             cswap(b, b0_and_b1, ui, vi);
         }
 
@@ -24282,10 +24261,7 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecycle(
             b.free(cmp);
 
             b.set_phase("dialog_gcd_compressed_block_tobitvector_cswap");
-            for (i, (&ui, &vi)) in u_active.iter().zip(v_active.iter()).enumerate() {
-                if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                    continue;
-                }
+            for (&ui, &vi) in u_active.iter().zip(v_active.iter()) {
                 cswap(b, b0_and_b1, ui, vi);
             }
 
@@ -24354,10 +24330,7 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
             dialog_gcd_controlled_add_selected(b, u_active, v_active, b0, borrowed_carries);
 
             b.set_phase("dialog_gcd_compressed_block_tobitvector_reverse_cswap");
-            for (i, (&ui, &vi)) in u_active.iter().zip(v_active.iter()).enumerate() {
-                if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                    continue;
-                }
+            for (&ui, &vi) in u_active.iter().zip(v_active.iter()) {
                 cswap(b, b0_and_b1, ui, vi);
             }
 
@@ -24517,10 +24490,7 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps(
         b.free(cmp);
 
         b.set_phase("dialog_gcd_compressed_sidecar_tobitvector_cswap");
-        for (i, (&ui, &vi)) in u_active.iter().zip(v_active.iter()).enumerate() {
-            if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                continue;
-            }
+        for (&ui, &vi) in u_active.iter().zip(v_active.iter()) {
             cswap(b, b0_and_b1, ui, vi);
         }
 
@@ -24585,10 +24555,7 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse(
         dialog_gcd_controlled_add_selected(b, u_active, v_active, b0, borrowed_carries);
 
         b.set_phase("dialog_gcd_compressed_sidecar_tobitvector_reverse_cswap");
-        for (i, (&ui, &vi)) in u_active.iter().zip(v_active.iter()).enumerate() {
-            if i == 0 && dialog_gcd_odd_u_lowbit_fastpath_enabled() {
-                continue;
-            }
+        for (&ui, &vi) in u_active.iter().zip(v_active.iter()) {
             cswap(b, b0_and_b1, ui, vi);
         }
 
@@ -28531,8 +28498,8 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "8");
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "24");
-    set_default_env("KAL_FOLD_CARRY_TRUNC_W", "22");
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "20");
+    set_default_env("KAL_FOLD_CARRY_TRUNC_W", "20");
     set_default_env("DIALOG_GCD_ROUND763_DEDUP", "1");
     set_default_env("DIALOG_GCD_MEASURED_UNDERFLOW_GATE", "1");
     set_default_env("DIALOG_GCD_COMPARE_BITS", "63");
@@ -28562,19 +28529,13 @@ fn configure_ecdsafail_submission_route() {
     // the materialized add/sub clean predicates with the measured comparator.
     // Pure Toffoli reduction (1697569 -> 1673629), peak-neutral at 1698.
     // (Validated 0/0/0 over 9024 via eval_circuit.)
-    set_default_env("DIALOG_REROLL", "21");
+    set_default_env("DIALOG_REROLL", "12");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
     // Toffoli reduction (1952382 -> 1861990), peak-neutral at 1698.
     // (Validated 0/0/0 over 9024 via eval_circuit.)
     set_default_env("DIALOG_GCD_FUSED_BRANCH_BITS", "1");
-    // Odd-u low-bit fastpath: after the binary-GCD branch swap, u[0] is one on
-    // the reachable verifier support. Lane-0 tobitvector cswaps are no-ops, and
-    // ctrl&u[0] materialization is a CX instead of a CCX. Composed with f78af41
-    // at reroll21: 1673629 -> 1670437 average executed Toffoli, peak-neutral
-    // at 1698. (Validated 0/0/0 over 9024 via eval_circuit.)
-    set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
 }
 
 fn build_builder() -> B {
