@@ -23081,6 +23081,10 @@ fn dialog_gcd_cmod_add_materialized_pseudomersenne(
     b.free_vec(&f);
 }
 
+fn dialog_gcd_measured_apply_sub_enabled() -> bool {
+    std::env::var("DIALOG_GCD_MEASURED_APPLY_SUB").ok().as_deref() == Some("1")
+}
+
 fn dialog_gcd_cmod_sub_materialized_pseudomersenne(
     b: &mut B,
     acc: &[QubitId],
@@ -23104,7 +23108,16 @@ fn dialog_gcd_cmod_sub_materialized_pseudomersenne(
     f_ext.push(f_ovf);
 
     b.set_phase("dialog_gcd_materialized_special_raw_difference");
-    sub_nbit_qq(b, &f_ext, &acc_ext);
+    if dialog_gcd_measured_apply_sub_enabled() {
+        // Measured (Gidney) difference: ~n Toffoli instead of the ~2n of the
+        // non-fast cuccaro_sub uncompute. Peak-safe: the symmetric apply ADD
+        // already runs cuccaro_add_fast with its carry lane in this same phase.
+        let c_in = b.alloc_qubit();
+        cuccaro_sub_fast(b, &f_ext, &acc_ext, c_in);
+        b.free(c_in);
+    } else {
+        sub_nbit_qq(b, &f_ext, &acc_ext);
+    }
     b.free(f_ovf);
 
     b.set_phase("dialog_gcd_materialized_special_underflow_fold");
@@ -27865,7 +27878,13 @@ fn configure_ecdsafail_submission_route() {
     // Toffoli reduction (2447846 -> 2396158), peak-neutral at 1698.
     // (Validated 0/0/0 over 9024 via eval_circuit.)
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "28");
-    set_default_env("DIALOG_REROLL", "2");
+    // Measured (Gidney) uncompute for the apply-phase modular subtract's raw
+    // difference, mirroring the already-measured apply ADD. ~n Toffoli instead
+    // of ~2n per call; peak-neutral (same carry lane the ADD already uses).
+    set_default_env("DIALOG_GCD_MEASURED_APPLY_SUB", "1");
+    // The measured difference changes the op stream (Fiat-Shamir sample);
+    // reroll=1 lands a clean 9024-shot island for it.
+    set_default_env("DIALOG_REROLL", "1");
 }
 
 fn build_builder() -> B {
