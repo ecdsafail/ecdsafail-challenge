@@ -503,13 +503,41 @@ pub(crate) fn with_kal_inv_raw_borrow_v_w_pair<F: FnOnce(&mut B, &[QubitId])>(
     let n = alias_v_w.len();
     // Borrow the live denominator register as Kaliski's v_w. The callback must
     // not read or write alias_v_w: it is consumed to zero until backward restores it.
+    //
+    // DIALOG HISTORY-FOLD (KAL_DIALOG_FOLD=1): route foldable m_hist[j] into idle
+    // HIGH bits of the borrowed v_w (alias_v_w[c]) instead of fresh qubits; only
+    // the irreducible step-4 carry-pool slots stay dedicated.  Allocation ORDER
+    // is preserved (u, r, s, m_hist, f_flag) so fold-OFF is byte-identical.
+    let fold = kal_dialog_fold_enabled();
+    let u = b.alloc_qubits(n);
+    let r = b.alloc_qubits(n);
+    let s = b.alloc_qubits(n);
+    let mut dedicated_m_hist: Vec<QubitId> = Vec::new();
+    let m_hist: Vec<QubitId> = if fold {
+        let map = dialog_fold_vw_slotmap(n, iters);
+        (0..iters)
+            .map(|j| match map[j] {
+                Some(c) => alias_v_w[c], // ride in the vacated v_w high bit
+                None => {
+                    let q = b.alloc_qubit();
+                    dedicated_m_hist.push(q);
+                    q
+                }
+            })
+            .collect()
+    } else {
+        let v = b.alloc_qubits(iters);
+        dedicated_m_hist = v.clone();
+        v
+    };
+    let f_flag = b.alloc_qubit();
     let mut st = KaliskiState {
-        u: b.alloc_qubits(n),
+        u,
         v_w: alias_v_w.to_vec(),
-        r: b.alloc_qubits(n),
-        s: b.alloc_qubits(n),
-        m_hist: b.alloc_qubits(iters),
-        f_flag: b.alloc_qubit(),
+        r,
+        s,
+        m_hist,
+        f_flag,
     };
     let bulk_caps = bulk_prefix_caps(pair);
     let keep_full_state = std::env::var("KAL_KEEP_FULL_STATE").ok().as_deref() == Some("1");
@@ -552,7 +580,10 @@ pub(crate) fn with_kal_inv_raw_borrow_v_w_pair<F: FnOnce(&mut B, &[QubitId])>(
     kaliski_backward_alias_v_w_caps(b, &st, p, iters, bulk_caps);
 
     b.free(st.f_flag);
-    b.free_vec(&st.m_hist);
+    // Free only the DEDICATED m_hist qubits; folded slots are alias_v_w high
+    // bits owned by the caller (restored to |0> by the backward m_i peel and to
+    // the original tx value in their low bits). For fold-OFF this == st.m_hist.
+    b.free_vec(&dedicated_m_hist);
     b.free_vec(&st.s);
     b.free_vec(&st.r);
     b.free_vec(&st.u);

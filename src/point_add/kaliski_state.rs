@@ -38,7 +38,7 @@ use super::*;
 // cswap-base a25248f margin=0 island (with K0=26/R=326 only W=26 is clean at
 // 2,574,129; dropping to K0=25 needs the R=325 re-roll → 2,570,415). R=324/326/327
 // reject at this depth. Stacks: margin=0 + K0=25 + R=325 + W=26 = 5,935,088,235.
-pub(crate) const R_SMALL_THRESHOLD: usize = 326;
+pub(crate) const R_SMALL_THRESHOLD: usize = 321;
 
 pub(crate) fn r_small_threshold() -> usize {
     std::env::var("KAL_R_SMALL_THRESHOLD")
@@ -77,7 +77,14 @@ pub(crate) fn kal_wtrunc_enabled() -> bool {
 pub(crate) fn kal_wtrunc_k0() -> usize {
     // T-squeeze: K0=25 (was 26) — envelope decay starts 1 iter earlier. Validates on
     // the cswap-base margin=0 island only with the R=325 re-roll (K0=24 rejects).
-    env_usize("KAL_WTRUNC_K0").unwrap_or(21)
+    // FS-RE-ROLL T-squeeze: K0=20 (was 22). The envelope decay starts 2 iters
+    // earlier, shaving ~8.8k emitted CCX across step2/3/4. K0=20 just misses the
+    // default-seed lottery, but the free KAL_REROLL knob (identity X;X pairs,
+    // zero Toffoli / peak) lands a clean 9024 island at rr=12 — validated 0/0/0,
+    // flat peak 2309, avg-exec 2,410,038 T × 2309 = 5,564,777,742. The baked
+    // KAL_REROLL default (=12) is CO-TUNED to this K0; changing either re-rolls
+    // the Fiat-Shamir input set and must be re-searched.
+    env_usize("KAL_WTRUNC_K0").unwrap_or(20)
 }
 
 pub(crate) fn kal_wtrunc_margin() -> usize {
@@ -111,11 +118,200 @@ pub(crate) fn kal_wtrunc_width(iter_idx: usize, n: usize) -> usize {
     let env = if iter_idx < k0 {
         n
     } else {
-        // n - floor((it-k0)*2/3); saturating so it never underflows.
-        let dec = ((iter_idx - k0) * 2) / 3;
-        n.saturating_sub(dec)
+        // n - floor((it-k0)*num/den); saturating so it never underflows.
+        // Default slope 2/3. A STEEPER slope (e.g. 3/4, 5/7) shaves more width
+        // in the mid/late iters where the GCD bitlen has the most envelope slack;
+        // co-tune with KAL_REROLL to land a clean Fiat-Shamir island.
+        let dec = ((iter_idx - k0) * kal_wtrunc_slope_num()) / kal_wtrunc_slope_den();
+        // Floor so a steeper-than-default slope never collapses a width loop to 0
+        // (the comparator/cswap index [0]). Default slope 2/3 bottoms at ~3 and is
+        // unaffected by a floor of 3.
+        n.saturating_sub(dec).max(kal_wtrunc_floor())
     };
     (env + margin).min(n)
+}
+
+pub(crate) fn kal_wtrunc_floor() -> usize {
+    env_usize("KAL_WTRUNC_FLOOR").unwrap_or(3)
+}
+
+pub(crate) fn kal_wtrunc_slope_num() -> usize {
+    env_usize("KAL_WTRUNC_SLOPE_NUM").unwrap_or(2)
+}
+
+pub(crate) fn kal_wtrunc_slope_den() -> usize {
+    let d = env_usize("KAL_WTRUNC_SLOPE_DEN").unwrap_or(3);
+    if d == 0 { 3 } else { d }
+}
+
+// ─── DIALOG HISTORY-FOLD (default ON; KAL_DIALOG_FOLD=0 restores old path) ───
+//
+// The Kaliski inversion accumulates one history qubit `m_hist[i]` per iteration
+// (~iters of them) for reversibility, AND borrows the *future* slots
+// `m_hist[i+1..]` as the clean |0> carry register for the STEP-4 fast Cuccaro
+// (see `cuccaro_*_fast_borrow` / `gz_*`).  As the GCD walk proceeds, the borrowed
+// v_w value SHRINKS, so its high bits (>= kal_wtrunc_width(i)) become guaranteed
+// |0> and idle.  The fold ROUTES each foldable m_hist[i] into one such idle v_w
+// HIGH bit, anchored at/above the circuit's OWN truncation width — so the bit is
+// certified |0> by the SAME envelope the circuit already truncates and validates
+// against (0/0/0).  Pure qubit-id RELABELING => Toffoli-NEUTRAL.
+//
+// CARRY-POOL CONSTRAINT (the part the classical prototype omitted): a slot is
+// also BORROWED as a step-4 carry by every earlier iter whose m_future window
+// reaches it.  The full-width SUB (early iters) and full-width s-ADD (late iters)
+// each draw ~n-1 simultaneously-live carries, so the slots inside those windows
+// can NOT live in idle high bits (there are none while the register is wide) and
+// stay on a dedicated residual register.  Only the history bits that fall
+// outside every full-width carry window fold away.  Anchor per slot = max
+// kal_wtrunc_width over its storage iter and every carry-borrow iter.
+//
+// REQUIRES the step-6 v_w shift to be truncated to kal_wtrunc_width(i) so it
+// never disturbs the folded dialog bits (see kaliski_walk.rs).  Fold OFF =>
+// byte-identical to the banked circuit.
+pub(crate) fn kal_dialog_fold_enabled() -> bool {
+    // BAKED DEFAULT ON (part of the validated C* construction, score 5,185,018,575).
+    // KAL_DIALOG_FOLD=0 restores the pre-fold (byte-identical banked) path.
+    env_flag_enabled("KAL_DIALOG_FOLD", true)
+}
+
+/// Excursion SLACK for the dialog fold.  The full-width step-6 v_w >>=1 shift
+/// is load-bearing at the tight margin=0 envelope: rare Fiat-Shamir inputs
+/// briefly carry a set bit ONE position above kal_wtrunc_width(i), and the
+/// full shift moves it back down into range for the next iter.  Truncating the
+/// shift to exactly kal_wtrunc_width(i) would drop that bit and corrupt the GCD.
+/// So the truncated shift runs over `kal_wtrunc_width(i) + slack` (still free —
+/// swaps are not Toffoli) to retain that recovery, and dialog bits are anchored
+/// ABOVE `kal_wtrunc_width(i) + slack` so the recovery band never reaches them.
+pub(crate) fn kal_dialog_fold_slack() -> usize {
+    // BAKED DEFAULT 4: the validated C* island (with KAL_GZ_EARLY_RECOVER on and
+    // KAL_WTRUNC_MARGIN=0) folds 196 slots at slack=4 (peak 2025). Override remains.
+    env_usize("KAL_DIALOG_FOLD_SLACK").unwrap_or(4)
+}
+
+/// Truncated step-6 v_w shift width when the dialog fold is active (else `n`).
+/// = kal_wtrunc_width(i) + slack, clamped to n. Single source of truth so the
+/// forward/backward, bulk/generic shift sites stay byte-identical width.
+#[inline]
+pub(crate) fn dialog_fold_shift_width(iter_idx: usize, n: usize) -> usize {
+    if kal_dialog_fold_enabled() {
+        (kal_wtrunc_width(iter_idx, n) + kal_dialog_fold_slack()).min(n)
+    } else {
+        n
+    }
+}
+
+/// Slot map for the dialog fold.  For each iter `j` in `0..iters`, returns the
+/// v_w HIGH-bit coord hosting `m_hist[j]` (`Some(c)` => fold into `v_w[c]`), or
+/// `None` (=> dedicated fresh qubit, part of the irreducible carry pool).
+///
+/// A slot is foldable only at a coord `c >= anchor(j)`, where
+///   anchor(j) = max kal_wtrunc_width(i) over every iter `i` that
+///               (a) stores slot j (i == j), or
+///               (b) borrows slot j as a STEP-4 fast-Cuccaro carry, i.e.
+///                   j is inside iter i's m_future draw window [i+1, i+drawn(i)].
+/// At `c >= kal_wtrunc_width(i)` the bit is provably |0> at iter i (the GCD value
+/// in v_w is `< 2^kal_wtrunc_width(i)` — the very invariant the W-TRUNC layer
+/// already relies on for its validated truncation), so the slot is clean exactly
+/// when it is touched.  `drawn(i)` mirrors the forward/backward step-4 borrow:
+/// `max(load_width(i), add_width(i)) - 1`, capped by the live `m_future` length.
+pub(crate) fn dialog_fold_vw_slotmap(n: usize, iters: usize) -> Vec<Option<usize>> {
+    if iters == 0 {
+        return Vec::new();
+    }
+    let slack = kal_dialog_fold_slack();
+    // wt(i) including the excursion slack and the merged-cswap widen: this is the
+    // highest v_w index that iter i can touch/dirty (value + excursion recovery
+    // band + the iter-(i-1) merged (u,v_w) cswap), so a folded bit at coord >=
+    // wt_hi(i) is provably untouched at iter i.
+    let wt_hi = |i: usize| (kal_wtrunc_width(i.saturating_sub(1), n) + slack).min(n);
+    let load_w = |i: usize| (if i < n { n } else { 2 * n - i }).min(kal_wtrunc_width(i, n));
+    let add_w = |i: usize| if i + 2 < n { i + 2 } else { n };
+    // Lever C* (gz_early_recover): the wide STEP-4 v_w SUB (fwd) / v_w ADD (bwd)
+    // now hosts its (width-1) fast-Cuccaro carry register on s's provably-|0>
+    // HIGH bits FIRST (s[gz_s_clean_lo(i)..n), width s_clean_w(i)) and only draws
+    // the SHORTFALL from m_future. So that op's m_future draw shrinks from
+    // load_w-1 to max(0, load_w-1 - s_clean_w). This collapses the wide EARLY
+    // carry windows (where wt_hi==n) that pinned ~n m_hist slots to a dedicated
+    // pool — those slots now fold. The s-add/s-sub still draws m_future first
+    // (its u-high recovery, gz_late_recover, covers only the late tail), so it
+    // keeps its own (smaller, add_w-bounded) anchor.
+    let early = gz_early_recover();
+    // Per-iter clean |0> carry-donor widths (must match gz_vw_clean_pool /
+    // gz_s_clean_pool in builder.rs exactly): s-high = r-high = n-(i+1) (coeff
+    // bitlen bound), u-high = i-n (late Kaliski bound). The SUB hosts on
+    // s+r+u-high, the s-add on r+u-high (s is its accumulator).
+    let s_clean_w = |i: usize| n.saturating_sub(gz_s_clean_lo(i, n)); // == r-high
+    // u-high uses the W-TRUNC load envelope (u[load_w..n] is |0>), matching
+    // gz_u_clean_high_wtrunc — much wider than the provable bound for i<n.
+    let u_clean_w = |i: usize| n.saturating_sub(load_w(i));
+    let sub_clean_w = |i: usize| 2 * s_clean_w(i) + u_clean_w(i);
+    let sadd_clean_w = |i: usize| s_clean_w(i) + u_clean_w(i);
+    // Storage anchor: m_hist[j] is WRITTEN in steps 0-2 of iter j, so it is live
+    // across iter j's own step-3/step-9 (u,v_w) cswap and the step-6 shift's
+    // excursion band — both bounded by wt_hi(j).
+    let mut anchor: Vec<usize> = (0..iters).map(|j| wt_hi(j)).collect();
+    for i in 0..iters {
+        let mf_len = iters - 1 - i; // |m_future| = m_hist[i+1..iters]
+        let (sub_need, sadd_need) = if early {
+            (
+                load_w(i).saturating_sub(1).saturating_sub(sub_clean_w(i)),
+                add_w(i).saturating_sub(1).saturating_sub(sadd_clean_w(i)),
+            )
+        } else {
+            (load_w(i).saturating_sub(1), add_w(i).saturating_sub(1))
+        };
+        let need = sub_need.max(sadd_need);
+        let drawn = need.min(mf_len);
+        if drawn == 0 {
+            continue;
+        }
+        // Carry-borrow anchor: a future slot borrowed at iter i must sit above
+        // everything iter i can touch (value + excursion band + merged cswap).
+        let wti = wt_hi(i);
+        let hi = (i + drawn).min(iters - 1);
+        for slot in anchor.iter_mut().take(hi + 1).skip(i + 1) {
+            if wti > *slot {
+                *slot = wti;
+            }
+        }
+    }
+    // Optional cap (diagnostic / safety): fold at most KAL_DIALOG_FOLD_COUNT slots.
+    let cap = env_usize("KAL_DIALOG_FOLD_COUNT").unwrap_or(usize::MAX);
+    // Foldable = slots with at least one valid v_w coord (anchor < n).
+    let mut foldable: Vec<usize> = (0..iters).filter(|&j| anchor[j] < n).collect();
+    // OPTIMAL placement (maximize folded count): each foldable slot j needs a
+    // DISTINCT v_w coord in [anchor[j], n). This is interval-point bipartite
+    // matching; the optimal greedy processes slots by anchor ASCENDING and
+    // assigns the smallest free coord >= anchor. The previous lowest-coord scan
+    // in index order left high-anchor clusters unplaced (folded ~1/3 of the
+    // feasible matching); this lifts the fold count to the Hall maximum, which is
+    // what lever C* needs (it makes ~all slots foldable, so PLACEMENT, not
+    // foldability, is the binding limit).
+    foldable.sort_by_key(|&j| anchor[j]);
+    let mut free: std::collections::BTreeSet<usize> = (0..n).collect();
+    let mut map: Vec<Option<usize>> = vec![None; iters];
+    let mut nfolded = 0usize;
+    for &j in &foldable {
+        if nfolded >= cap {
+            break;
+        }
+        let a = anchor[j];
+        if let Some(&c) = free.range(a..n).next() {
+            free.remove(&c);
+            map[j] = Some(c);
+            nfolded += 1;
+        }
+    }
+    if std::env::var("KAL_FOLD_DEBUG").is_ok() {
+        let placed = map.iter().filter(|m| m.is_some()).count();
+        let foldable_n = (0..iters).filter(|&j| anchor[j] < n).count();
+        let pinned_n = (0..iters).filter(|&j| anchor[j] >= n).count();
+        eprintln!(
+            "FOLD_DEBUG early={} n={} iters={} foldable={} pinned_at_n={} placed(folded)={} dedicated={}",
+            early, n, iters, foldable_n, pinned_n, placed, iters - placed
+        );
+    }
+    map
 }
 
 /// CSWAP W-TRUNC (default-ON): narrow the bulk Kaliski step3/step9 (u,v_w)
@@ -254,8 +450,17 @@ pub(crate) fn kal_carrytail_w() -> usize {
     // 44->36 (chain to bit 33+36=69; the direct-double's extra truncated sites re-roll
     // the island so W=36 lands clean — W∈{32,33,34,35,37,40,44} reject with DOUBLE on).
     // DOUBLE + W=36 = 2,462,914 × 2309 = 5,686,868,426 (9024-clean, flat peak 2309).
+    // OPTIMIZER ctW=19: both-path carry-tail dropped 20->19 (sub-borrow cut
+    // 33+19=52, still >> the 19-bit MC sub-borrow max at bit 51; the add-path
+    // truncation is the lottery source). The 1-bit-tighter window re-rolled the
+    // Fiat-Shamir island; a 128-reroll screen found clean islands at rr=35 and
+    // rr=86 (identical avg-exec 2,408,761 T, flat peak 2309 = 5,561,829,149,
+    // validated 0/0/0 over 9024 by official benchmark.sh). The baked KAL_REROLL
+    // default (=35, see mod.rs) is CO-TUNED to this W; changing either re-rolls
+    // the input set and must be re-searched. W=18 has no clean island in 64
+    // rerolls (too aggressive). −1,277 avg-exec Toffoli vs the W=20 baseline.
     let default = if kal_carrytail_add_enabled() {
-        20
+        19
     } else if kal_cswap_wtrunc_enabled() {
         26
     } else {

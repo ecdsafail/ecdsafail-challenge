@@ -466,6 +466,116 @@ pub(crate) fn gz_u_clean_high(u: &[QubitId], iter_idx: usize) -> &[QubitId] {
     &u[lo..]
 }
 
+/// Sub-knob (lever C*): EARLY-iter carry-pool RELOCATION. The wide STEP-4
+/// `v_w -= u` SUB (forward) / `v_w += u` ADD (backward) hosts its fast-Cuccaro
+/// carry register on the GCD coefficient register `s`'s PROVABLY-|0> high bits
+/// instead of the `m_future` (m_hist tail) pool, exactly mirroring
+/// `gz_late_recover` (which hosts the LATE s-add/s-sub on u's |0> high bits).
+///
+/// Why this is the keystone: the dialog fold (`KAL_DIALOG_FOLD`) cannot relocate
+/// the m_hist slots that the early SUB borrows as carries (they must stay clean
+/// & dedicated). Moving those carries onto s-high frees ~n m_hist slots to fold,
+/// dropping the inversion sweep peak at ~0 Toffoli (a pure carry-host relabel).
+///
+/// The s-high bits are clean by the SAME Kaliski invariant the late-recover and
+/// the W-TRUNC layer already rely on: at iter i, the (r,s) step-3 cswap is width
+/// `i+1` and the s +/-= tmp is width `i+2`, so `bitlen(s) <= i+1` at the v_w
+/// SUB/ADD instant (forward: before the s-add; backward: after the s-sub undoes
+/// it) ⇒ `s[i+1 .. n)` is |0> exactly when borrowed, and is restored to |0> by
+/// the same measurement-uncompute as the validated `cuccaro_*_fast_borrow`.
+/// The boundary is a CLASSICAL function of iter_idx (no data-dependent branch),
+/// so validity is structural. BAKED DEFAULT ON (the validated C* construction);
+/// `KAL_GZ_EARLY_RECOVER=0` restores the m_future-pool carry hosting.
+pub(crate) fn gz_early_recover() -> bool {
+    kal_gouzien_9n_enabled() && env_flag_enabled("KAL_GZ_EARLY_RECOVER", true)
+}
+
+/// Lowest index of `s` that is provably |0> at the STEP-4 v_w SUB/ADD instant of
+/// iter `iter_idx`: `min(iter_idx+1, n)`. Single source of truth shared by the
+/// hosting sites ([`gz_s_clean_high`]) and the dialog-fold slot map's carry
+/// anchor (`dialog_fold_vw_slotmap`) so the two never disagree about how much of
+/// the early SUB carry pool has been moved off `m_future`.
+#[inline]
+pub(crate) fn gz_s_clean_lo(iter_idx: usize, n: usize) -> usize {
+    (iter_idx + 1).min(n)
+}
+
+/// Provably-|0> high bits of the coefficient register `s` at the STEP-4 v_w
+/// SUB/ADD instant: `s[gz_s_clean_lo(iter_idx,n) .. n)`. Safe clean carry donors
+/// for the wide early SUB/ADD borrow pool. See [`gz_early_recover`].
+pub(crate) fn gz_s_clean_high(s: &[QubitId], iter_idx: usize) -> &[QubitId] {
+    let n = s.len();
+    let lo = gz_s_clean_lo(iter_idx, n);
+    &s[lo..]
+}
+
+/// Provably-|0> high bits of the coefficient register `r` at the STEP-4 instant.
+/// `bitlen(r) <= iter_idx+1` (symmetric to `s`: the step-3 cswap is width i+1 and
+/// the s-add only writes r-via-transform over the low bits), so `r[i+1 .. n)` is
+/// |0>. The SUB carry-borrow restores them to |0> before the transform reads r's
+/// low bits and before the s-add reuses r-high. See [`gz_early_recover`].
+pub(crate) fn gz_r_clean_high(r: &[QubitId], iter_idx: usize) -> &[QubitId] {
+    let n = r.len();
+    let lo = gz_s_clean_lo(iter_idx, n);
+    &r[lo..]
+}
+
+/// STEP-4 load/SUB width: `(i<n ? n : 2n-i).min(wtrunc(i))`. Single source of
+/// truth shared by the walk (kaliski_walk.rs) and the C* clean-pool sizing.
+#[inline]
+pub(crate) fn gz_load_width(iter_idx: usize, n: usize) -> usize {
+    (if iter_idx < n { n } else { 2 * n - iter_idx }).min(kal_wtrunc_width(iter_idx, n))
+}
+
+/// Provably/empirically-|0> HIGH bits of the GCD register `u` available as clean
+/// carry donors at the STEP-4 instant: `u[gz_load_width(i) .. n)`. The STEP-4
+/// LOAD only reads `u[0..gz_load_width(i))` (it assumes the rest is 0 — the SAME
+/// W-TRUNC envelope the circuit already validates 0/0/0 against), so `u`'s high
+/// bits are |0> when borrowed, and the transform's cx/ccx/cx restores `u` exactly
+/// so they are still |0> at the later s-add. Much wider than the provable
+/// `gz_u_clean_high` for i<n (where that is empty), which is what lets the s-add
+/// mid-iter borrow avoid pinning m_hist slots. Couples to the SAME island as the
+/// existing load truncation (no new correctness risk beyond W-TRUNC).
+pub(crate) fn gz_u_clean_high_wtrunc(u: &[QubitId], iter_idx: usize) -> &[QubitId] {
+    let n = u.len();
+    let lo = gz_load_width(iter_idx, n).min(n);
+    &u[lo..]
+}
+
+/// Combined clean |0> carry-donor pool for the wide STEP-4 `v_w` SUB (fwd) / ADD
+/// (bwd) under lever C*: s-high ++ r-high ++ u-high (W-TRUNC). `v_w`/`tmp` are the
+/// operands (excluded); s, r are coefficients (high bits |0>) and u's high bits
+/// are |0> by the W-TRUNC load envelope — none alias the SUB/ADD, and each is
+/// restored to |0> by the same measurement-uncompute as the validated
+/// late-recover. Drawn BEFORE `m_future`, so the m_hist tail keeps almost none of
+/// the carry pool and folds away. Identical in fwd & bwd (same qubit ids) ⇒
+/// reversible.
+pub(crate) fn gz_vw_clean_pool(
+    s: &[QubitId],
+    r: &[QubitId],
+    u: &[QubitId],
+    iter_idx: usize,
+) -> Vec<QubitId> {
+    let mut v: Vec<QubitId> = Vec::new();
+    v.extend_from_slice(gz_s_clean_high(s, iter_idx));
+    v.extend_from_slice(gz_r_clean_high(r, iter_idx));
+    v.extend_from_slice(gz_u_clean_high_wtrunc(u, iter_idx));
+    v
+}
+
+/// Combined clean |0> carry-donor pool for the STEP-4 `s` add (fwd) / sub (bwd)
+/// under lever C*: r-high ++ u-high (W-TRUNC) (`s` is the accumulator so s-high is
+/// excluded). r-high is big early, u-high is big mid/late (anti-correlated), so
+/// the pool covers the s-add need with ~0 `m_future` shortfall except in a narrow
+/// √n boundary band near i≈n. See [`gz_early_recover`]; generalizes
+/// [`gz_late_recover`]'s u-high hosting to the W-TRUNC envelope.
+pub(crate) fn gz_s_clean_pool(r: &[QubitId], u: &[QubitId], iter_idx: usize) -> Vec<QubitId> {
+    let mut v: Vec<QubitId> = Vec::new();
+    v.extend_from_slice(gz_r_clean_high(r, iter_idx));
+    v.extend_from_slice(gz_u_clean_high_wtrunc(u, iter_idx));
+    v
+}
+
 /// Master switch for the stacked sub-2708-peak construction (default ON).
 /// When ON (no env / != "0"):
 ///   - pair1 inverse borrows dx as in-place v_w  (drops pair1-backward carrier)

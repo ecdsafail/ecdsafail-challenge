@@ -211,7 +211,21 @@ pub(crate) fn kaliski_iteration_bulk_prefix3(
         // clean future m_hist bits (restored to |0>), so the STEP-4 binder
         // drops by up to n-1 at FLAT Toffoli.
         if gz {
-            sub_nbit_qq_fast_mfut(b, &tmp[..load_width], &v_w[..load_width], m_future);
+            // Lever C*: host the wide v_w SUB carry register on s's provably-|0>
+            // HIGH bits first (gz_early_recover), drawing only the shortfall from
+            // m_future, so the m_hist carry-pool slots fold (dialog_fold_vw_slotmap).
+            if gz_early_recover() {
+                let clean = gz_vw_clean_pool(s, r, u, iter_idx);
+                sub_nbit_qq_fast_mfut_pool(
+                    b,
+                    &tmp[..load_width],
+                    &v_w[..load_width],
+                    &clean,
+                    m_future,
+                );
+            } else {
+                sub_nbit_qq_fast_mfut(b, &tmp[..load_width], &v_w[..load_width], m_future);
+            }
         } else {
             sub_nbit_qq_fast(b, &tmp[..load_width], &v_w[..load_width]);
         }
@@ -238,7 +252,12 @@ pub(crate) fn kaliski_iteration_bulk_prefix3(
         if gz {
             // Late-iter recovery: also borrow u's provably-|0> high bits so the
             // full-width s-add never falls back to slow Cuccaro (flat peak).
-            if gz_late_recover() {
+            if gz_early_recover() {
+                // Lever C*: host the s-add carry pool on r-high ++ u-high (clean
+                // first) so the early/mid s-add stops borrowing m_hist slots.
+                let clean = gz_s_clean_pool(r, u, iter_idx);
+                add_nbit_qq_fast_mfut_pool(b, &tmp_slice, &s_slice, &clean, m_future);
+            } else if gz_late_recover() {
                 let u_clean = gz_u_clean_high(u, iter_idx);
                 add_nbit_qq_fast_mfut_pool(b, &tmp_slice, &s_slice, m_future, u_clean);
             } else {
@@ -281,7 +300,11 @@ pub(crate) fn kaliski_iteration_bulk_prefix3(
     b.cx(a_f, b_f);
 
     b.set_phase("kal_bulk_step6_7_8");
-    for i in 0..(u.len() - 1) {
+    // DIALOG FOLD: truncate the v_w >>=1 shift to the empirical width so it never
+    // touches the folded dialog bits in v_w[>= wtrunc]. Exact (v_w < 2^wtrunc),
+    // Toffoli-neutral (swaps are free). Fold OFF => full-width (byte-identical).
+    let shift_w = dialog_fold_shift_width(iter_idx, u.len());
+    for i in 0..(shift_w - 1) {
         b.swap(v_w[i], v_w[i + 1]);
     }
     if iter_idx < r_small_threshold() {
@@ -513,7 +536,14 @@ pub(crate) fn kaliski_iteration(
         let tmp_sub_slice: Vec<QubitId> = tmp[0..load_width].to_vec();
         let v_w_sub_slice: Vec<QubitId> = v_w[0..load_width].to_vec();
         if gz {
-            sub_nbit_qq_fast_mfut(b, &tmp_sub_slice, &v_w_sub_slice, m_future);
+            // Lever C*: host the wide v_w SUB carry register on s's provably-|0>
+            // HIGH bits first (gz_early_recover); shortfall from m_future.
+            if gz_early_recover() {
+                let clean = gz_vw_clean_pool(s, r, u, iter_idx);
+                sub_nbit_qq_fast_mfut_pool(b, &tmp_sub_slice, &v_w_sub_slice, &clean, m_future);
+            } else {
+                sub_nbit_qq_fast_mfut(b, &tmp_sub_slice, &v_w_sub_slice, m_future);
+            }
         } else {
             sub_nbit_qq_fast(b, &tmp_sub_slice, &v_w_sub_slice);
         }
@@ -548,7 +578,12 @@ pub(crate) fn kaliski_iteration(
         if gz {
             // Late-iter recovery: also borrow u's provably-|0> high bits so the
             // full-width s-add never falls back to slow Cuccaro (flat peak).
-            if gz_late_recover() {
+            if gz_early_recover() {
+                // Lever C*: host the s-add carry pool on r-high ++ u-high (clean
+                // first) so the early/mid s-add stops borrowing m_hist slots.
+                let clean = gz_s_clean_pool(r, u, iter_idx);
+                add_nbit_qq_fast_mfut_pool(b, &tmp_slice, &s_slice, &clean, m_future);
+            } else if gz_late_recover() {
                 let u_clean = gz_u_clean_high(u, iter_idx);
                 add_nbit_qq_fast_mfut_pool(b, &tmp_slice, &s_slice, m_future, u_clean);
             } else {
@@ -599,7 +634,10 @@ pub(crate) fn kaliski_iteration(
     // or f=0 (algorithm terminated with v_w=0). Unconditional shift of 0 is 0.
     // Saves 255 CCX per iter vs cswap-controlled version.
     let _ = f;
-    for i in 0..(n - 1) {
+    // DIALOG FOLD: truncate v_w >>=1 to wtrunc width (protects folded dialog
+    // bits in v_w high; exact + Toffoli-neutral; fold OFF => full-width).
+    let shift_w = dialog_fold_shift_width(iter_idx, n);
+    for i in 0..(shift_w - 1) {
         b.swap(v_w[i], v_w[i + 1]);
     }
 
@@ -790,7 +828,9 @@ pub(crate) fn kaliski_iteration_bulk_prefix3_backward(
         dirty.extend_from_slice(v_w);
         mod_halve_inplace_fast_with_dirty(b, r, p, Some(&dirty));
     }
-    for i in (0..(n - 1)).rev() {
+    // DIALOG FOLD: mirror the forward truncated v_w shift (phase-parity law).
+    let shift_w = dialog_fold_shift_width(iter_idx, n);
+    for i in (0..(shift_w - 1)).rev() {
         b.swap(v_w[i], v_w[i + 1]);
     }
 
@@ -815,7 +855,12 @@ pub(crate) fn kaliski_iteration_bulk_prefix3_backward(
         if gz {
             // Late-iter recovery: also borrow u's provably-|0> high bits so the
             // full-width s-sub never falls back to slow Cuccaro (flat peak).
-            if gz_late_recover() {
+            if gz_early_recover() {
+                // Lever C*: mirror the forward s-add carry host (r-high ++ u-high
+                // clean first) so the reverse s-sub is byte-identical.
+                let clean = gz_s_clean_pool(r, u, iter_idx);
+                sub_nbit_qq_fast_mfut_pool(b, &tmp_sub_slice, &s_slice, &clean, m_future);
+            } else if gz_late_recover() {
                 let u_clean = gz_u_clean_high(u, iter_idx);
                 sub_nbit_qq_fast_mfut_pool(b, &tmp_sub_slice, &s_slice, m_future, u_clean);
             } else {
@@ -853,7 +898,15 @@ pub(crate) fn kaliski_iteration_bulk_prefix3_backward(
         let tmp_add_slice: Vec<QubitId> = tmp[0..add_width].to_vec();
         let v_w_slice: Vec<QubitId> = v_w[0..add_width].to_vec();
         if gz {
-            add_nbit_qq_fast_mfut(b, &tmp_add_slice, &v_w_slice, m_future);
+            // Lever C*: mirror the forward v_w SUB carry host (gz_early_recover) so
+            // the measurement-uncompute reverse is byte-identical: s's |0> high
+            // bits first, m_future shortfall second.
+            if gz_early_recover() {
+                let clean = gz_vw_clean_pool(s, r, u, iter_idx);
+                add_nbit_qq_fast_mfut_pool(b, &tmp_add_slice, &v_w_slice, &clean, m_future);
+            } else {
+                add_nbit_qq_fast_mfut(b, &tmp_add_slice, &v_w_slice, m_future);
+            }
         } else if std::env::var("KAL_VENT_MODADD").ok().as_deref() == Some("1") {
             add_nbit_qq(b, &tmp_add_slice, &v_w_slice);
         } else {
@@ -1063,7 +1116,9 @@ pub(crate) fn kaliski_iteration_backward(
 
     // ── Reverse STEP 6 (unconditional shift-left) ───────────
     let _ = f;
-    for i in (0..(n - 1)).rev() {
+    // DIALOG FOLD: mirror the forward truncated v_w shift (phase-parity law).
+    let shift_w = dialog_fold_shift_width(iter_idx, n);
+    for i in (0..(shift_w - 1)).rev() {
         b.swap(v_w[i], v_w[i + 1]);
     }
 
@@ -1089,7 +1144,12 @@ pub(crate) fn kaliski_iteration_backward(
         if gz {
             // Late-iter recovery: also borrow u's provably-|0> high bits so the
             // full-width s-sub never falls back to slow Cuccaro (flat peak).
-            if gz_late_recover() {
+            if gz_early_recover() {
+                // Lever C*: mirror the forward s-add carry host (r-high ++ u-high
+                // clean first) so the reverse s-sub is byte-identical.
+                let clean = gz_s_clean_pool(r, u, iter_idx);
+                sub_nbit_qq_fast_mfut_pool(b, &tmp_sub_slice, &s_slice, &clean, m_future);
+            } else if gz_late_recover() {
                 let u_clean = gz_u_clean_high(u, iter_idx);
                 sub_nbit_qq_fast_mfut_pool(b, &tmp_sub_slice, &s_slice, m_future, u_clean);
             } else {
@@ -1121,7 +1181,15 @@ pub(crate) fn kaliski_iteration_backward(
         let tmp_add_slice: Vec<QubitId> = tmp[0..add_width].to_vec();
         let v_w_slice: Vec<QubitId> = v_w[0..add_width].to_vec();
         if gz {
-            add_nbit_qq_fast_mfut(b, &tmp_add_slice, &v_w_slice, m_future);
+            // Lever C*: mirror the forward v_w SUB carry host (gz_early_recover) so
+            // the measurement-uncompute reverse is byte-identical: s's |0> high
+            // bits first, m_future shortfall second.
+            if gz_early_recover() {
+                let clean = gz_vw_clean_pool(s, r, u, iter_idx);
+                add_nbit_qq_fast_mfut_pool(b, &tmp_add_slice, &v_w_slice, &clean, m_future);
+            } else {
+                add_nbit_qq_fast_mfut(b, &tmp_add_slice, &v_w_slice, m_future);
+            }
         } else if std::env::var("KAL_VENT_MODADD").ok().as_deref() == Some("1") {
             add_nbit_qq(b, &tmp_add_slice, &v_w_slice);
         } else {
