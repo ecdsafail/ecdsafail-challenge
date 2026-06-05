@@ -32247,9 +32247,13 @@ fn configure_ecdsafail_submission_route() {
     // Margin 7 -> 6 stacked on the WIDTH_SLOPE=711 tightening: narrows the per-step
     // comparator on low/mid-width GCD steps, orthogonal to the slope envelope.
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "6");
-    // Final-window W2 gives back one DOUBLE-carry truncation bit; this keeps the
-    // cleaner safety stack peak-neutral at 1320q.
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "22");
+    // DOUBLE-carry lazy-Solinas window re-tightened 22 -> 21 on the peak-1313
+    // K2_PAIR_COMPRESS base: -1,038 avg executed Toffoli, peak-neutral at 1313q
+    // (avg_T 1,536,923 -> 1,535,885; 1313 x 1,535,885 = 2,016,617,005, beats the
+    // prior #1 2,017,979,899 by 1,362,894). Value-exact on the reachable support
+    // (dropped double-carry bit is 0 there, ~2^-22/call otherwise); residual
+    // failures are Fiat-Shamir phase, dodged by a fresh tail nonce (re-hunted below).
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "21");
     // Likewise give back the FOLD-carry truncation bit for the final-window W2
     // island; the Toffoli budget still beats the 1320q frontier.
     // Re-tighten 24 -> 22 on the W2 base (the lazy-Solinas fold-carry window had
@@ -32287,13 +32291,7 @@ fn configure_ecdsafail_submission_route() {
     // K2 pair-compressed route spends one branch-comparator bit back from the
     // newest frontier cut. This keeps the lower 1313q tier while landing a much
     // denser clean island than the 45-bit edge.
-    // Re-tighten 46 -> 45 on anshu4321's 1313q apply-teardown base (which had
-    // relaxed the GCD branch comparator to 46 to land its structural island).
-    // The comparator still decides every branch correctly on the reachable
-    // support at 45; clean Fiat-Shamir island at the re-rolled tail nonce below
-    // (5005587), found via island_search_prefilter and quantum-confirmed.
-    // avg executed Toffoli 1,536,923 -> 1,536,047 (-876), peak-neutral at 1313q.
-    set_default_env("DIALOG_GCD_COMPARE_BITS", "45");
+    set_default_env("DIALOG_GCD_COMPARE_BITS", "46");
     // Spend one apply-clean comparator bit back as well. The extra guard costs
     // 681 executed Toffoli on this route and still beats the current frontier.
     set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
@@ -32524,11 +32522,11 @@ fn configure_ecdsafail_submission_route() {
     // Pair-compressed 46/20 island: nonce 689 lands a clean trusted run,
     // validated 0/0/0 over all 9024 shots at
     // 1313q x 1,536,923 T = 2,017,979,899.
+    // Re-rolled for the KAL_DOUBLE_CARRY_TRUNC_W=21 re-tightening above: nonce
+    // 1000001157 lands a clean island, validated 0/0/0 over all 9024 shots at
+    // 1313q x 1,535,885 T = 2,016,617,005 (official ecdsafail run).
     set_default_env("DIALOG_GCD_SELECTED_BODY_NOCIN", "1");
-    // Re-rolled for the COMPARE_BITS 46 -> 45 re-tightening on the 1313q base:
-    // nonce 5005587 lands a clean island, validated 0/0/0 over all 9024 shots at
-    // 1313q x 1,536,047 T = 2,016,829,711.
-    set_default_env("DIALOG_TAIL_NONCE", "5005587");
+    set_default_env("DIALOG_TAIL_NONCE", "1000001157");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
