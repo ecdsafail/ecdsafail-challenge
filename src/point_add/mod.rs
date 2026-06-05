@@ -31601,7 +31601,7 @@ fn configure_ecdsafail_submission_route() {
     // 52 -> 51: reclaimed on the 1320q base (the structural five-chunk-apply cut
     // reverted the GCD branch comparator to 52). The comparator never mis-decides
     // a branch at 51 on the verifier support; pure -T, peak-neutral.
-    set_default_env("DIALOG_GCD_COMPARE_BITS", "47");
+    set_default_env("DIALOG_GCD_COMPARE_BITS", "46");
     // Apply-phase cmod-correction comparator tightened 20 -> 19 (-790 executed
     // Toffoli, peak-neutral at 1434q) -- an orthogonal value-exact lever the
     // frontier had dropped, stacked on compare57+active395. Clean island below.
@@ -31826,7 +31826,7 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled again for the added WIDTH_SLOPE=1010 + band-late-trim=2 notches:
     // nonce=22000964 lands a clean island, validated 0/0/0 over all 9024 shots at
     // 1320q x 1,556,187 T = 2,054,166,840.
-    set_default_env("DIALOG_TAIL_NONCE", "256973122702329");
+    set_default_env("DIALOG_TAIL_NONCE", "100874459447525");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
