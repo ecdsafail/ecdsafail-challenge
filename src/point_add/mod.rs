@@ -1536,14 +1536,7 @@ fn mod_sub_qq_vent(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
         let one = b.alloc_qubit();
         b.x(one);
         let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
-        venting::cisub_dirty_2clean_classical(
-            b,
-            &acc_ext,
-            &a_ext[..n1 - 2],
-            &q_clean2,
-            c_low,
-            one,
-        );
+        venting::cisub_dirty_2clean_classical(b, &acc_ext, &a_ext[..n1 - 2], &q_clean2, c_low, one);
         b.free(q_clean2[0]);
         b.free(q_clean2[1]);
         b.x(one);
@@ -3871,6 +3864,205 @@ fn ccx_cmp_lt_into_fast_prefix_targets(
     }
     b.free_vec(&carries);
     b.free(c_in);
+}
+
+fn cmp_lt_fast_prefix_window_forward(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    c_in: QubitId,
+    carries: &[QubitId],
+    ctrl: QubitId,
+    targets: &[(QubitId, usize)],
+) {
+    let n = u.len();
+    assert_eq!(n, v.len());
+    assert!(n > 0);
+    assert!(carries.len() >= n);
+    assert!(targets.iter().all(|&(_, p)| (1..=n).contains(&p)));
+    assert!(targets.windows(2).all(|w| w[0].1 < w[1].1));
+
+    b.cx(u[0], v[0]);
+    b.cx(u[0], c_in);
+    b.ccx(c_in, v[0], carries[0]);
+    b.cx(carries[0], u[0]);
+    let mut next_target = 0usize;
+    while next_target < targets.len() && targets[next_target].1 == 1 {
+        b.ccx(ctrl, u[0], targets[next_target].0);
+        next_target += 1;
+    }
+    for i in 1..n {
+        b.cx(u[i], v[i]);
+        b.cx(u[i], u[i - 1]);
+        b.ccx(u[i - 1], v[i], carries[i]);
+        b.cx(carries[i], u[i]);
+        while next_target < targets.len() && targets[next_target].1 == i + 1 {
+            b.ccx(ctrl, u[i], targets[next_target].0);
+            next_target += 1;
+        }
+    }
+    assert_eq!(next_target, targets.len());
+}
+
+fn cmp_lt_fast_prefix_window_inverse(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    c_in: QubitId,
+    carries: &[QubitId],
+) {
+    let n = u.len();
+    assert_eq!(n, v.len());
+    assert!(n > 0);
+    assert!(carries.len() >= n);
+
+    for i in (1..n).rev() {
+        b.cx(carries[i], u[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(u[i - 1], v[i], m);
+        b.cx(u[i], u[i - 1]);
+        b.cx(u[i], v[i]);
+    }
+    b.cx(carries[0], u[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(c_in, v[0], m0);
+    b.cx(u[0], c_in);
+    b.cx(u[0], v[0]);
+}
+
+fn ccx_cmp_lt_into_fast_prefix_targets_split(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    ctrl: QubitId,
+    targets: &[(QubitId, usize)],
+    split: usize,
+) {
+    if targets.is_empty() {
+        return;
+    }
+    let n = targets.last().expect("non-empty targets").1;
+    assert_eq!(u.len(), n);
+    assert_eq!(v.len(), n);
+    assert!(n > 0);
+    assert!(targets.iter().all(|&(_, p)| (1..=n).contains(&p)));
+    assert!(targets.windows(2).all(|w| w[0].1 < w[1].1));
+    if split == 0 || split >= n {
+        ccx_cmp_lt_into_fast_prefix_targets(b, u, v, ctrl, targets);
+        return;
+    }
+
+    if let Some(boundary_idx) = targets.iter().position(|&(_, p)| p == split) {
+        let boundary = targets[boundary_idx].0;
+        let targets_lo = targets[..=boundary_idx].to_vec();
+        let targets_hi_rel = targets[boundary_idx + 1..]
+            .iter()
+            .map(|&(target, p)| (target, p - split))
+            .collect::<Vec<_>>();
+
+        for &q in u {
+            b.x(q);
+        }
+
+        let hi_len = n - split;
+        let carries_hi = b.alloc_qubits(hi_len);
+        cmp_lt_fast_prefix_window_forward(
+            b,
+            &u[split..n],
+            &v[split..n],
+            boundary,
+            &carries_hi,
+            ctrl,
+            &targets_hi_rel,
+        );
+        cmp_lt_fast_prefix_window_inverse(b, &u[split..n], &v[split..n], boundary, &carries_hi);
+        b.free_vec(&carries_hi);
+
+        let c_in_lo = b.alloc_qubit();
+        let carries_lo = b.alloc_qubits(split);
+        cmp_lt_fast_prefix_window_forward(
+            b,
+            &u[..split],
+            &v[..split],
+            c_in_lo,
+            &carries_lo,
+            ctrl,
+            &targets_lo,
+        );
+        cmp_lt_fast_prefix_window_inverse(b, &u[..split], &v[..split], c_in_lo, &carries_lo);
+        b.free_vec(&carries_lo);
+        b.free(c_in_lo);
+
+        for &q in u {
+            b.x(q);
+        }
+        return;
+    }
+
+    let (targets_lo, targets_hi): (Vec<_>, Vec<_>) =
+        targets.iter().copied().partition(|&(_, p)| p <= split);
+    let targets_hi_rel = targets_hi
+        .iter()
+        .map(|&(target, p)| (target, p - split))
+        .collect::<Vec<_>>();
+
+    for &q in u {
+        b.x(q);
+    }
+
+    let boundary = b.alloc_qubit();
+    let c_in_lo = b.alloc_qubit();
+    let carries_lo = b.alloc_qubits(split);
+    cmp_lt_fast_prefix_window_forward(
+        b,
+        &u[..split],
+        &v[..split],
+        c_in_lo,
+        &carries_lo,
+        ctrl,
+        &targets_lo,
+    );
+    b.cx(u[split - 1], boundary);
+    cmp_lt_fast_prefix_window_inverse(b, &u[..split], &v[..split], c_in_lo, &carries_lo);
+    b.free_vec(&carries_lo);
+    b.free(c_in_lo);
+
+    let hi_len = n - split;
+    let carries_hi = b.alloc_qubits(hi_len);
+    cmp_lt_fast_prefix_window_forward(
+        b,
+        &u[split..n],
+        &v[split..n],
+        boundary,
+        &carries_hi,
+        ctrl,
+        &targets_hi_rel,
+    );
+    cmp_lt_fast_prefix_window_inverse(b, &u[split..n], &v[split..n], boundary, &carries_hi);
+    b.free_vec(&carries_hi);
+
+    let c_in_clear = b.alloc_qubit();
+    let carries_clear = b.alloc_qubits(split);
+    cmp_lt_fast_prefix_window_forward(
+        b,
+        &u[..split],
+        &v[..split],
+        c_in_clear,
+        &carries_clear,
+        ctrl,
+        &[],
+    );
+    b.cx(u[split - 1], boundary);
+    cmp_lt_fast_prefix_window_inverse(b, &u[..split], &v[..split], c_in_clear, &carries_clear);
+    b.free_vec(&carries_clear);
+    b.free(c_in_clear);
+    b.free(boundary);
+
+    for &q in u {
+        b.x(q);
+    }
 }
 
 /// Like `mod_add_qq` but uses `cmp_lt_into_fast` for the flag uncompute.
@@ -6234,7 +6426,12 @@ fn schoolbook_square_symmetric_lowq_inverse(b: &mut B, x: &[QubitId], tmp_ext: &
 /// (returned clean) instead of a fresh allocation. Toffoli-identical to the
 /// fast square, peak-identical to the lowq square — used for the z0 lobe of the
 /// round84 Karatsuba square, where the not-yet-written z2 slice is clean scratch.
-fn schoolbook_square_symmetric_hosted(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId], host: &[QubitId]) {
+fn schoolbook_square_symmetric_hosted(
+    b: &mut B,
+    x: &[QubitId],
+    tmp_ext: &[QubitId],
+    host: &[QubitId],
+) {
     let n = x.len();
     debug_assert_eq!(tmp_ext.len(), 2 * n);
     if square_selfhost_safe_lane_reuse_enabled() {
@@ -6458,7 +6655,11 @@ fn schoolbook_square_symmetric_lowq_selfhosted_with_clean_supplement(
     }
 }
 
-fn schoolbook_square_symmetric_lowq_selfhosted_inverse(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
+fn schoolbook_square_symmetric_lowq_selfhosted_inverse(
+    b: &mut B,
+    x: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
     schoolbook_square_symmetric_lowq_selfhosted_inverse_with_clean_supplement(b, x, tmp_ext, &[]);
 }
 
@@ -7032,7 +7233,10 @@ fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[QubitId], p:
     // shift itself, so the dirty-borrow form hosts that scratch on `acc` (venting
     // 2-clean), dropping the phase peak well under the GCD-apply binder. Same value
     // on `acc`; gated so it can be A/B compared.
-    let shift_dirty = std::env::var("ROUND84_XTAIL_BORROW_CARRIES").ok().as_deref() == Some("1");
+    let shift_dirty = std::env::var("ROUND84_XTAIL_BORROW_CARRIES")
+        .ok()
+        .as_deref()
+        == Some("1");
     if shift_dirty {
         // Dirty-doubles form of `acc -= hi * 2^22 mod p`: 22 in-place doubles
         // (each borrows `acc` via Gidney venting) avoid the shift's persistent
@@ -24049,8 +24253,22 @@ fn dialog_gcd_apply_chunked_f_cut3() -> Option<usize> {
         .filter(|&cut| (1..N).contains(&cut))
 }
 
+fn dialog_gcd_apply_chunked_f_cut4() -> Option<usize> {
+    std::env::var("DIALOG_GCD_APPLY_CHUNKED_F_CUT4")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&cut| (1..N).contains(&cut))
+}
+
 fn dialog_gcd_apply_chunked_f_custom4_enabled() -> bool {
     std::env::var("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM4")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+fn dialog_gcd_apply_chunked_f_custom5_enabled() -> bool {
+    std::env::var("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM5")
         .ok()
         .as_deref()
         == Some("1")
@@ -24068,6 +24286,17 @@ fn dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() -> bool {
         .ok()
         .as_deref()
         != Some("0")
+}
+
+fn dialog_gcd_apply_final_lowq_enabled() -> bool {
+    std::env::var("DIALOG_GCD_APPLY_FINAL_LOWQ").ok().as_deref() == Some("1")
+}
+
+fn dialog_gcd_apply_boundary_split() -> Option<usize> {
+    std::env::var("DIALOG_GCD_APPLY_BOUNDARY_SPLIT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&split| split > 0)
 }
 
 fn dialog_gcd_apply_replay_swap_host_enabled() -> bool {
@@ -24792,7 +25021,10 @@ fn dialog_gcd_body_host_cin_enabled() -> bool {
 }
 
 fn dialog_gcd_late_borrow_uv_high_enabled() -> bool {
-    std::env::var("DIALOG_GCD_LATE_BORROW_UV_HIGH").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_LATE_BORROW_UV_HIGH")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 /// Pick the carry/gated borrow slice for a GCD step. Prefer the compressed
@@ -25368,8 +25600,25 @@ fn dialog_gcd_chunk_hi(blocks: usize, block: usize, ext_n: usize) -> usize {
             return cuts[block];
         }
     }
+    if blocks == 5 && dialog_gcd_apply_chunked_f_custom5_enabled() {
+        let cuts = [
+            dialog_gcd_apply_chunked_f_cut().unwrap_or(ext_n / 5),
+            dialog_gcd_apply_chunked_f_cut2().unwrap_or((2 * ext_n) / 5),
+            dialog_gcd_apply_chunked_f_cut3().unwrap_or((3 * ext_n) / 5),
+            dialog_gcd_apply_chunked_f_cut4().unwrap_or((4 * ext_n) / 5),
+        ];
+        assert!(
+            cuts[0] < cuts[1] && cuts[1] < cuts[2] && cuts[2] < cuts[3] && cuts[3] < ext_n,
+            "custom five-chunk apply boundaries must be strictly increasing and below {ext_n}: {cuts:?}"
+        );
+        if block < cuts.len() {
+            return cuts[block];
+        }
+    }
     if block == 0 && blocks <= 3 {
-        return dialog_gcd_apply_chunked_f_cut().unwrap_or(ext_n / 2).min(ext_n - 1);
+        return dialog_gcd_apply_chunked_f_cut()
+            .unwrap_or(ext_n / 2)
+            .min(ext_n - 1);
     }
     if blocks == 3 && block == 1 {
         return dialog_gcd_apply_chunked_f_cut2()
@@ -25415,14 +25664,26 @@ fn dialog_gcd_add_ctrl_chunked_low_to_ext(
             continue;
         }
         if blk == blocks - 1 || hi == ext_n {
+            b.set_phase("dialog_gcd_apply_chunk_add_final_load");
             let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo.min(n), n);
-            cuccaro_add_fast_low_to_ext(b, &f, &acc_ext[lo..hi], carry);
+            b.set_phase("dialog_gcd_apply_chunk_add_final_ripple");
+            if dialog_gcd_apply_final_lowq_enabled() {
+                let zero = b.alloc_qubit();
+                let mut f_ext = f.clone();
+                f_ext.push(zero);
+                cuccaro_add(b, &f_ext, &acc_ext[lo..hi], carry);
+                b.free(zero);
+            } else {
+                cuccaro_add_fast_low_to_ext(b, &f, &acc_ext[lo..hi], carry);
+            }
+            b.set_phase("dialog_gcd_apply_chunk_add_final_clear");
             dialog_gcd_clear_controlled_slice_hmr(b, ctrl, source, lo.min(n), &f);
             b.free_vec(&f);
             break;
         }
 
         assert!(hi <= n);
+        b.set_phase("dialog_gcd_apply_chunk_add_load");
         let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo, hi);
         let needs_distinct_zero =
             carry == c_in || !dialog_gcd_apply_chunked_f_reuse_cin_zero_enabled();
@@ -25439,10 +25700,12 @@ fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         a_block.push(zero);
         let mut acc_block = acc_ext[lo..hi].to_vec();
         acc_block.push(cout);
+        b.set_phase("dialog_gcd_apply_chunk_add_ripple");
         cuccaro_add_fast(b, &a_block, &acc_block, carry);
         if owned_zero {
             b.free(zero);
         }
+        b.set_phase("dialog_gcd_apply_chunk_add_clear");
         dialog_gcd_clear_controlled_slice_hmr(b, ctrl, source, lo, &f);
         b.free_vec(&f);
         couts.push((cout, hi, owned_cout));
@@ -25452,20 +25715,27 @@ fn dialog_gcd_add_ctrl_chunked_low_to_ext(
 
     if dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() {
         if let Some(&(_, p, _)) = couts.last() {
+            b.set_phase("dialog_gcd_apply_chunk_add_boundary_clear");
             let targets = couts
                 .iter()
                 .map(|&(cout, p, _)| (cout, p))
                 .collect::<Vec<_>>();
-            ccx_cmp_lt_into_fast_prefix_targets(
-                b,
-                &acc_ext[..p],
-                &source[..p],
-                ctrl,
-                &targets,
-            );
+            if let Some(split) = dialog_gcd_apply_boundary_split() {
+                ccx_cmp_lt_into_fast_prefix_targets_split(
+                    b,
+                    &acc_ext[..p],
+                    &source[..p],
+                    ctrl,
+                    &targets,
+                    split.min(p.saturating_sub(1)),
+                );
+            } else {
+                ccx_cmp_lt_into_fast_prefix_targets(b, &acc_ext[..p], &source[..p], ctrl, &targets);
+            }
         }
     } else {
         for &(cout, p, _) in couts.iter().rev() {
+            b.set_phase("dialog_gcd_apply_chunk_add_boundary_clear");
             ccx_cmp_lt_into_fast(b, &acc_ext[..p], &source[..p], ctrl, cout);
         }
     }
@@ -25510,14 +25780,26 @@ fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
             continue;
         }
         if blk == blocks - 1 || hi == ext_n {
+            b.set_phase("dialog_gcd_apply_chunk_sub_final_load");
             let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo.min(n), n);
-            cuccaro_sub_fast_low_to_ext(b, &f, &acc_ext[lo..hi], borrow);
+            b.set_phase("dialog_gcd_apply_chunk_sub_final_ripple");
+            if dialog_gcd_apply_final_lowq_enabled() {
+                let zero = b.alloc_qubit();
+                let mut f_ext = f.clone();
+                f_ext.push(zero);
+                cuccaro_sub(b, &f_ext, &acc_ext[lo..hi], borrow);
+                b.free(zero);
+            } else {
+                cuccaro_sub_fast_low_to_ext(b, &f, &acc_ext[lo..hi], borrow);
+            }
+            b.set_phase("dialog_gcd_apply_chunk_sub_final_clear");
             dialog_gcd_clear_controlled_slice_hmr(b, ctrl, source, lo.min(n), &f);
             b.free_vec(&f);
             break;
         }
 
         assert!(hi <= n);
+        b.set_phase("dialog_gcd_apply_chunk_sub_load");
         let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo, hi);
         let needs_distinct_zero =
             borrow == c_in || !dialog_gcd_apply_chunked_f_reuse_cin_zero_enabled();
@@ -25534,10 +25816,12 @@ fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         a_block.push(zero);
         let mut acc_block = acc_ext[lo..hi].to_vec();
         acc_block.push(bout);
+        b.set_phase("dialog_gcd_apply_chunk_sub_ripple");
         cuccaro_sub_fast(b, &a_block, &acc_block, borrow);
         if owned_zero {
             b.free(zero);
         }
+        b.set_phase("dialog_gcd_apply_chunk_sub_clear");
         dialog_gcd_clear_controlled_slice_hmr(b, ctrl, source, lo, &f);
         b.free_vec(&f);
         bouts.push((bout, hi, owned_bout));
@@ -25547,6 +25831,7 @@ fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
 
     if dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() {
         if let Some(&(_, p, _)) = bouts.last() {
+            b.set_phase("dialog_gcd_apply_chunk_sub_boundary_clear");
             for i in 0..p {
                 b.x(source[i]);
             }
@@ -25554,19 +25839,25 @@ fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
                 .iter()
                 .map(|&(bout, p, _)| (bout, p))
                 .collect::<Vec<_>>();
-            ccx_cmp_lt_into_fast_prefix_targets(
-                b,
-                &source[..p],
-                &acc_ext[..p],
-                ctrl,
-                &targets,
-            );
+            if let Some(split) = dialog_gcd_apply_boundary_split() {
+                ccx_cmp_lt_into_fast_prefix_targets_split(
+                    b,
+                    &source[..p],
+                    &acc_ext[..p],
+                    ctrl,
+                    &targets,
+                    split.min(p.saturating_sub(1)),
+                );
+            } else {
+                ccx_cmp_lt_into_fast_prefix_targets(b, &source[..p], &acc_ext[..p], ctrl, &targets);
+            }
             for i in 0..p {
                 b.x(source[i]);
             }
         }
     } else {
         for &(bout, p, _) in bouts.iter().rev() {
+            b.set_phase("dialog_gcd_apply_chunk_sub_boundary_clear");
             for i in 0..p {
                 b.x(source[i]);
             }
@@ -26646,19 +26937,18 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecycle(
 ) {
     assert_eq!(u.len(), N);
     assert_eq!(v.len(), N);
-    assert!(
-        raw_block.is_empty() || raw_block.len() == dialog_gcd_raw_block_len()
-    );
+    assert!(raw_block.is_empty() || raw_block.len() == dialog_gcd_raw_block_len());
     assert!(compressed_log.len() >= dialog_gcd_compressed_sidecar_bits());
 
     for block in 0..dialog_gcd_compressed_sidecar_blocks() {
         let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
         let hosted_raw_block = dialog_gcd_forward_raw_block_host(u, compressed_log, block);
-        let owned_raw_block = if dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
-            b.alloc_qubits(dialog_gcd_raw_block_len())
-        } else {
-            Vec::new()
-        };
+        let owned_raw_block =
+            if dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
+                b.alloc_qubits(dialog_gcd_raw_block_len())
+            } else {
+                Vec::new()
+            };
         let raw_block = hosted_raw_block.unwrap_or_else(|| {
             if owned_raw_block.is_empty() {
                 raw_block
@@ -26692,7 +26982,14 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecycle(
                 )
             });
             let borrowed_carries = composite_scratch.as_ref().map_or_else(
-                || dialog_gcd_pick_runway_safe_borrow_slice(future, u, compressed_log, active_width),
+                || {
+                    dialog_gcd_pick_runway_safe_borrow_slice(
+                        future,
+                        u,
+                        compressed_log,
+                        active_width,
+                    )
+                },
                 |scratch| Some(scratch.lanes.as_slice()),
             );
 
@@ -26809,20 +27106,19 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
 ) {
     assert_eq!(u.len(), N);
     assert_eq!(v.len(), N);
-    assert!(
-        raw_block.is_empty() || raw_block.len() == dialog_gcd_raw_block_len()
-    );
+    assert!(raw_block.is_empty() || raw_block.len() == dialog_gcd_raw_block_len());
     assert!(compressed_log.len() >= dialog_gcd_compressed_sidecar_bits());
 
     for block in (0..dialog_gcd_compressed_sidecar_blocks()).rev() {
         let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
         let compressed_block = dialog_gcd_compressed_sidecar_block(compressed_log, start);
         let hosted_raw_block = dialog_gcd_reverse_raw_block_host(u, compressed_log, block);
-        let owned_raw_block = if dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
-            b.alloc_qubits(dialog_gcd_raw_block_len())
-        } else {
-            Vec::new()
-        };
+        let owned_raw_block =
+            if dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
+                b.alloc_qubits(dialog_gcd_raw_block_len())
+            } else {
+                Vec::new()
+            };
         let raw_block = hosted_raw_block.unwrap_or_else(|| {
             if owned_raw_block.is_empty() {
                 raw_block
@@ -26901,7 +27197,14 @@ fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
                 )
             });
             let borrowed_carries = composite_scratch.as_ref().map_or_else(
-                || dialog_gcd_pick_runway_safe_borrow_slice(future, u, compressed_log, active_width),
+                || {
+                    dialog_gcd_pick_runway_safe_borrow_slice(
+                        future,
+                        u,
+                        compressed_log,
+                        active_width,
+                    )
+                },
                 |scratch| Some(scratch.lanes.as_slice()),
             );
             dialog_gcd_controlled_add_selected(b, u_active, v_active, b0, borrowed_carries, step);
@@ -26991,7 +27294,9 @@ fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle(
 
             b.set_phase("dialog_gcd_compressed_block_apply_double_y");
             mod_double_inplace_fast(b, y, p);
-            if dialog_gcd_k2_enabled() && std::env::var("DIALOG_GCD_K2_NO_APPLY").ok().as_deref() != Some("1") {
+            if dialog_gcd_k2_enabled()
+                && std::env::var("DIALOG_GCD_K2_NO_APPLY").ok().as_deref() != Some("1")
+            {
                 // mirror the forward K=2 second shift: conditional 2nd double of y.
                 // MUST use the lazy (Solinas, truncated) controlled double so it
                 // composes with the uncontrolled mod_double_inplace_fast above.
@@ -27078,7 +27383,9 @@ fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_block_lifecy
 
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_halve_y");
             mod_halve_inplace_fast(b, y, p);
-            if dialog_gcd_k2_enabled() && std::env::var("DIALOG_GCD_K2_NO_APPLY").ok().as_deref() != Some("1") {
+            if dialog_gcd_k2_enabled()
+                && std::env::var("DIALOG_GCD_K2_NO_APPLY").ok().as_deref() != Some("1")
+            {
                 // mirror the forward K=2 second shift: conditional 2nd halve of y.
                 // MUST use the lazy (Solinas, truncated) controlled halve to match.
                 let s2 = raw_block[2 * DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE + slot];
@@ -27368,11 +27675,7 @@ fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
 
     b.set_phase("dialog_gcd_compressed_block_ipmul_tobitvector");
     emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecycle(
-        b,
-        &u,
-        factor,
-        replay_log,
-        &raw_block,
+        b, &u, factor, replay_log, &raw_block,
     );
 
     if dialog_gcd_raw_ipmul_terminal_reuse_enabled() {
@@ -27392,7 +27695,11 @@ fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
             target,
             factor,
             p,
-            if apply_raw_block.is_empty() { &raw_block } else { &apply_raw_block },
+            if apply_raw_block.is_empty() {
+                &raw_block
+            } else {
+                &apply_raw_block
+            },
         );
         if !apply_raw_block.is_empty() {
             b.free_vec(&apply_raw_block);
@@ -27419,11 +27726,7 @@ fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
 
         b.set_phase("dialog_gcd_compressed_block_ipmul_uncompute_tobitvector");
         emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
-            b,
-            &u,
-            factor,
-            replay_log,
-            &raw_block,
+            b, &u, factor, replay_log, &raw_block,
         );
 
         b.set_phase("dialog_gcd_compressed_block_ipmul_unload_p");
@@ -27447,12 +27750,7 @@ fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
     let tmp = b.alloc_qubits(N);
     b.set_phase("dialog_gcd_compressed_block_ipmul_apply_bitvector");
     emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle(
-        b,
-        replay_log,
-        target,
-        &tmp,
-        p,
-        &raw_block,
+        b, replay_log, target, &tmp, p, &raw_block,
     );
 
     b.set_phase("dialog_gcd_compressed_block_ipmul_swap_product_into_target");
@@ -27465,11 +27763,7 @@ fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
 
     b.set_phase("dialog_gcd_compressed_block_ipmul_uncompute_tobitvector");
     emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
-        b,
-        &u,
-        factor,
-        replay_log,
-        &raw_block,
+        b, &u, factor, replay_log, &raw_block,
     );
 
     b.set_phase("dialog_gcd_compressed_block_ipmul_unload_p");
@@ -27651,11 +27945,7 @@ fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
 
     b.set_phase("dialog_gcd_compressed_block_quotient_tobitvector");
     emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecycle(
-        b,
-        &u,
-        factor,
-        replay_log,
-        &raw_block,
+        b, &u, factor, replay_log, &raw_block,
     );
 
     if dialog_gcd_raw_quotient_terminal_reuse_enabled() {
@@ -27675,7 +27965,11 @@ fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
             factor,
             target,
             p,
-            if apply_raw_block.is_empty() { &raw_block } else { &apply_raw_block },
+            if apply_raw_block.is_empty() {
+                &raw_block
+            } else {
+                &apply_raw_block
+            },
         );
         if !apply_raw_block.is_empty() {
             b.free_vec(&apply_raw_block);
@@ -27693,11 +27987,7 @@ fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
 
         b.set_phase("dialog_gcd_compressed_block_quotient_uncompute_tobitvector");
         emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
-            b,
-            &u,
-            factor,
-            replay_log,
-            &raw_block,
+            b, &u, factor, replay_log, &raw_block,
         );
 
         b.set_phase("dialog_gcd_compressed_block_quotient_unload_p");
@@ -27720,21 +28010,12 @@ fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
 
     b.set_phase("dialog_gcd_compressed_block_quotient_apply_reverse");
     emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_block_lifecycle(
-        b,
-        replay_log,
-        factor,
-        target,
-        p,
-        &raw_block,
+        b, replay_log, factor, target, p, &raw_block,
     );
 
     b.set_phase("dialog_gcd_compressed_block_quotient_uncompute_tobitvector");
     emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block_lifecycle(
-        b,
-        &u,
-        factor,
-        replay_log,
-        &raw_block,
+        b, &u, factor, replay_log, &raw_block,
     );
 
     b.set_phase("dialog_gcd_compressed_block_quotient_unload_p");
@@ -31279,13 +31560,7 @@ fn configure_ecdsafail_submission_route() {
     // DOUBLE-carry lazy-Solinas window tightened 24 -> 23 (-1,038 avg executed
     // Toffoli, peak-neutral at 1390q). Re-found tail nonce below validates the
     // combined double+fold carry-truncation stream.
-    // 23 -> 22: one further notch on the 2*v doubling's lazy-Solinas carry-tail
-    // window. Value-exact on the reachable verifier support (the dropped carry
-    // bit is 0 there by the same pseudo-Mersenne argument); the residual
-    // failures are pure Fiat-Shamir, dodged by the re-found tail nonce below.
-    // -544 avg executed Toffoli, peak-neutral at 1382q. Orthogonal to the GCD
-    // body-carry band trim below (Solinas fold vs GCD-body subtract).
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "22");
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "23");
     // FOLD-carry lazy-Solinas window tightened 24 -> 23 (-518 avg executed
     // Toffoli, peak-neutral at 1390q). Re-stacked onto alexander-sei's
     // COMPARE_BITS=52 base, which had reverted FOLD to 24. Value-exact on the
@@ -31327,12 +31602,10 @@ fn configure_ecdsafail_submission_route() {
     // 396 -> 395 -> 394 on the current 1355q route. The binary-GCD transcript
     // still converges on the verifier support for the Fiat-Shamir island below,
     // while dropping two full GCD body/reverse steps.
-    // 259 -> 258: drops one more GCD body/reverse iteration from the active
-    // band (-~3446 avg executed Toffoli, peak-neutral at 1390q). The transcript
-    // still converges on the verifier support for the Fiat-Shamir island below;
-    // stacked with WIDTH_SLOPE 1004->1005 (the two break sets partially cancel,
-    // so the combined island is gentler than either lever alone).
-    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
+    // 258 -> 260: re-spends two active GCD rows after the 1320q apply teardown
+    // below. This removes the residual phase failures at the custom-five seed
+    // while still staying below the 1320q x current-best Toffoli budget.
+    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "260");
     set_default_env("DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE", "1");
     set_default_env("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
     set_default_env("DIALOG_GCD_RAW_QUOTIENT_TERMINAL_REUSE", "1");
@@ -31412,8 +31685,9 @@ fn configure_ecdsafail_submission_route() {
     // 257-78) and drops the apply phase to 1543 == the ROUND84 floor. Global peak
     // 1558 -> 1543. F_CUT only reseeds + grows the boundary comparator (+~6,384
     // avg-executed Toffoli, 1,688,703 -> 1,695,087); peak-neutral for any cut>=78.
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "4");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM4", "1");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "5");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM4", "0");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM5", "1");
     // PEAK-QUBIT CUT 1542 -> 1500 (-42q). Two co-binders dropped together:
     //  (1) ROUND84 Karatsuba square (z0=lo^2 / z2=hi^2 schoolbook squares parked a
     //      ~130-wide cuccaro_add_fast carry lane, and the Solinas mid_sub/sub_add's
@@ -31470,27 +31744,20 @@ fn configure_ecdsafail_submission_route() {
     // 399 T/qubit, far inside break-even. Score 1446 x 1,740,263 = 2,516,420,298.
     set_default_env("DIALOG_GCD_BODY_HOST_CIN", "1");
     set_default_env("DIALOG_GCD_LATE_BORROW_UV_HIGH", "1");
-    // Body-carry band trims: the per-band ripple truncation of the GCD-body
-    // controlled sub/add. The late bands (8-15, covering the converged-state
-    // GCD steps where the active width has already shrunk well below the
-    // operand width) were at trim=1; deepening them to trim=2 drops one more
-    // ripple bit per band. Value-exact on the reachable support (those carry
-    // bits are provably 0 once the GCD has converged, the same premise the
-    // width-envelope truncation already relies on), so it adds NO hard inputs
-    // (measured meanCf unchanged vs base over 80 random nonces). The early
-    // bands (0-7) stay at 0: those steps still hold full-width operands and
-    // trimming them breaks thousands of shots. -~1,500 avg executed Toffoli,
-    // peak-neutral at 1382q. Re-rolls the Fiat-Shamir island (tail nonce below).
     set_default_env(
         "DIALOG_GCD_BODY_CARRY_BAND_TRIMS",
-        "0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2",
+        "0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1",
     );
-    // K=2 apply rebalance: moving the last custom chunk boundary 168 -> 170
-    // drops the apply raw sum/difference peak 1394 -> 1390. It adds 1,036
-    // Toffoli per apply direction, but the four-qubit reduction wins on product.
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "58");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "114");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "170");
+    // 1320q apply teardown: low-q final chunk plus a hosted boundary split at
+    // the second custom-five cut. The retained carry at bit 100 hosts the
+    // high-window comparator carry-in, avoiding the generic split's extra
+    // boundary qubit and low-window recompute.
+    set_default_env("DIALOG_GCD_APPLY_FINAL_LOWQ", "1");
+    set_default_env("DIALOG_GCD_APPLY_BOUNDARY_SPLIT", "100");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "150");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "200");
     // WIDTH_SLOPE tightening: the per-step GCD width envelope shrink rate
     // (ideal = N - step*SLOPE + MARGIN) was left at the default 0.7075 by the
     // whole frontier lineage; only the constant MARGIN was ever tuned. The
@@ -31501,11 +31768,10 @@ fn configure_ecdsafail_submission_route() {
     // 1,779,067 -> 1,778,555 (-512), peak-neutral at 1355q. The tighter
     // truncation re-rolls the Fiat-Shamir island; a 1-D reroll sweep (post_sub
     // fixed at the inherited 503292) lands a clean island at DIALOG_REROLL=101019.
-    // 1004 -> 1005 -> 1006: tightens every late-step GCD-body width by an extra
-    // fraction of a bit per notch (~-512 / -544 avg executed Toffoli per notch,
-    // peak-neutral at 1382q). 1005 was stacked with ACTIVE_ITERATIONS 259->258
-    // under a shared island; 1006 then re-rolled to its own island below.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1006");
+    // 1004 -> 1005: tightens every late-step GCD-body width by an extra
+    // fraction of a bit (~-512 avg executed Toffoli, peak-neutral at 1390q),
+    // stacked with ACTIVE_ITERATIONS 259->258 above under one shared island.
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1005");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -31524,17 +31790,10 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the combined KAL_DOUBLE/FOLD_CARRY_TRUNC_W=23 op stream:
     // nonce=254 lands a clean island, validated 0/0/0 over all 9024 shots at
     // 1390q x 1,518,179 T = 2,110,268,810.
-    // Re-rolled for the WIDTH_SLOPE=1005 + ACTIVE_ITERATIONS=258 op stream:
-    // nonce=3577 was clean at 1382q x 1,514,221 T = 2,092,653,422.
-    // Re-rolled again for WIDTH_SLOPE=1006 (above): nonce=13555 lands a clean
-    // island, validated 0/0/0 over all 9024 shots at 1382q x 1,513,677 T =
-    // 2,091,901,614.
-    // Re-rolled for the combined KAL_DOUBLE_CARRY_TRUNC_W=22 + BODY_CARRY_BAND
-    // late-band trim=2 op stream (above): nonce=3002341 lands a clean island,
-    // validated 0/0/0 over all 9024 shots at 1382q x 1,511,667 T =
-    // 2,089,123,794. Found by a parallel early-exit tail-nonce sweep on a
-    // 192-core box, then confirmed with the official full-9024 eval_circuit.
-    set_default_env("DIALOG_TAIL_NONCE", "3002341");
+    // Re-rolled for the active260 custom-five hosted-boundary apply teardown:
+    // nonce=108 lands a clean island, validated 0/0/0 over all 9024 shots at
+    // 1320q x 1,565,417 T = 2,066,350,440.
+    set_default_env("DIALOG_TAIL_NONCE", "108");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
