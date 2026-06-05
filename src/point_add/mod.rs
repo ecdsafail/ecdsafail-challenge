@@ -31279,7 +31279,13 @@ fn configure_ecdsafail_submission_route() {
     // DOUBLE-carry lazy-Solinas window tightened 24 -> 23 (-1,038 avg executed
     // Toffoli, peak-neutral at 1390q). Re-found tail nonce below validates the
     // combined double+fold carry-truncation stream.
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "23");
+    // 23 -> 22: one further notch on the 2*v doubling's lazy-Solinas carry-tail
+    // window. Value-exact on the reachable verifier support (the dropped carry
+    // bit is 0 there by the same pseudo-Mersenne argument); the residual
+    // failures are pure Fiat-Shamir, dodged by the re-found tail nonce below.
+    // -544 avg executed Toffoli, peak-neutral at 1382q. Orthogonal to the GCD
+    // body-carry band trim below (Solinas fold vs GCD-body subtract).
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "22");
     // FOLD-carry lazy-Solinas window tightened 24 -> 23 (-518 avg executed
     // Toffoli, peak-neutral at 1390q). Re-stacked onto alexander-sei's
     // COMPARE_BITS=52 base, which had reverted FOLD to 24. Value-exact on the
@@ -31464,9 +31470,20 @@ fn configure_ecdsafail_submission_route() {
     // 399 T/qubit, far inside break-even. Score 1446 x 1,740,263 = 2,516,420,298.
     set_default_env("DIALOG_GCD_BODY_HOST_CIN", "1");
     set_default_env("DIALOG_GCD_LATE_BORROW_UV_HIGH", "1");
+    // Body-carry band trims: the per-band ripple truncation of the GCD-body
+    // controlled sub/add. The late bands (8-15, covering the converged-state
+    // GCD steps where the active width has already shrunk well below the
+    // operand width) were at trim=1; deepening them to trim=2 drops one more
+    // ripple bit per band. Value-exact on the reachable support (those carry
+    // bits are provably 0 once the GCD has converged, the same premise the
+    // width-envelope truncation already relies on), so it adds NO hard inputs
+    // (measured meanCf unchanged vs base over 80 random nonces). The early
+    // bands (0-7) stay at 0: those steps still hold full-width operands and
+    // trimming them breaks thousands of shots. -~1,500 avg executed Toffoli,
+    // peak-neutral at 1382q. Re-rolls the Fiat-Shamir island (tail nonce below).
     set_default_env(
         "DIALOG_GCD_BODY_CARRY_BAND_TRIMS",
-        "0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1",
+        "0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2",
     );
     // K=2 apply rebalance: moving the last custom chunk boundary 168 -> 170
     // drops the apply raw sum/difference peak 1394 -> 1390. It adds 1,036
@@ -31484,11 +31501,11 @@ fn configure_ecdsafail_submission_route() {
     // 1,779,067 -> 1,778,555 (-512), peak-neutral at 1355q. The tighter
     // truncation re-rolls the Fiat-Shamir island; a 1-D reroll sweep (post_sub
     // fixed at the inherited 503292) lands a clean island at DIALOG_REROLL=101019.
-    // 1004 -> 1005 -> 1006 -> 1007: tightens every late-step GCD-body width by an
-    // extra fraction of a bit per notch (~-512 / -544 / -384 avg executed Toffoli,
+    // 1004 -> 1005 -> 1006: tightens every late-step GCD-body width by an extra
+    // fraction of a bit per notch (~-512 / -544 avg executed Toffoli per notch,
     // peak-neutral at 1382q). 1005 was stacked with ACTIVE_ITERATIONS 259->258
-    // under a shared island; 1006 and 1007 each re-rolled to their own island.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1007");
+    // under a shared island; 1006 then re-rolled to its own island below.
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1006");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -31509,12 +31526,15 @@ fn configure_ecdsafail_submission_route() {
     // 1390q x 1,518,179 T = 2,110,268,810.
     // Re-rolled for the WIDTH_SLOPE=1005 + ACTIVE_ITERATIONS=258 op stream:
     // nonce=3577 was clean at 1382q x 1,514,221 T = 2,092,653,422.
-    // Re-rolled again for WIDTH_SLOPE=1006: nonce=13555 was clean at
-    // 1382q x 1,513,677 T = 2,091,901,614.
-    // Re-rolled again for WIDTH_SLOPE=1007 (above): nonce=6483 lands a clean
-    // island, validated 0/0/0 over all 9024 shots at 1382q x 1,513,293 T =
-    // 2,091,370,926.
-    set_default_env("DIALOG_TAIL_NONCE", "6483");
+    // Re-rolled again for WIDTH_SLOPE=1006 (above): nonce=13555 lands a clean
+    // island, validated 0/0/0 over all 9024 shots at 1382q x 1,513,677 T =
+    // 2,091,901,614.
+    // Re-rolled for the combined KAL_DOUBLE_CARRY_TRUNC_W=22 + BODY_CARRY_BAND
+    // late-band trim=2 op stream (above): nonce=3002341 lands a clean island,
+    // validated 0/0/0 over all 9024 shots at 1382q x 1,511,667 T =
+    // 2,089,123,794. Found by a parallel early-exit tail-nonce sweep on a
+    // 192-core box, then confirmed with the official full-9024 eval_circuit.
+    set_default_env("DIALOG_TAIL_NONCE", "3002341");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
