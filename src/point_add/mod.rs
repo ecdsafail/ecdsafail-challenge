@@ -31700,9 +31700,9 @@ fn configure_ecdsafail_submission_route() {
     // 257-78) and drops the apply phase to 1543 == the ROUND84 floor. Global peak
     // 1558 -> 1543. F_CUT only reseeds + grows the boundary comparator (+~6,384
     // avg-executed Toffoli, 1,688,703 -> 1,695,087); peak-neutral for any cut>=78.
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "5");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM4", "0");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM5", "1");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "4");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM4", "1");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUSTOM5", "0");
     // PEAK-QUBIT CUT 1542 -> 1500 (-42q). Two co-binders dropped together:
     //  (1) ROUND84 Karatsuba square (z0=lo^2 / z2=hi^2 schoolbook squares parked a
     //      ~130-wide cuccaro_add_fast carry lane, and the Solinas mid_sub/sub_add's
@@ -31772,10 +31772,10 @@ fn configure_ecdsafail_submission_route() {
     // high-window comparator carry-in, avoiding the generic split's extra
     // boundary qubit and low-window recompute.
     set_default_env("DIALOG_GCD_APPLY_FINAL_LOWQ", "1");
-    set_default_env("DIALOG_GCD_APPLY_BOUNDARY_SPLIT", "100");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "150");
+    set_default_env("DIALOG_GCD_APPLY_BOUNDARY_SPLIT", "52");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "52");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "104");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "156");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "200");
     // WIDTH_SLOPE tightening: the per-step GCD width envelope shrink rate
     // (ideal = N - step*SLOPE + MARGIN) was left at the default 0.7075 by the
@@ -31795,7 +31795,7 @@ fn configure_ecdsafail_submission_route() {
     // widths stay within the provably-|0> converged GCD region. ~-512 avg-T.
     // 1009 -> 1010: one further notch, stacked with the band-trim late-band
     // deepening below under one shared island. Peak-neutral at 1320q.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1010");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1014");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -31826,7 +31826,7 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled again for the added WIDTH_SLOPE=1010 + band-late-trim=2 notches:
     // nonce=22000964 lands a clean island, validated 0/0/0 over all 9024 shots at
     // 1320q x 1,556,187 T = 2,054,166,840.
-    set_default_env("DIALOG_TAIL_NONCE", "22000964");
+    set_default_env("DIALOG_TAIL_NONCE", "198702767358738");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
