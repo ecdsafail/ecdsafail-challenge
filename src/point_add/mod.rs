@@ -31637,7 +31637,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "6");
     // Final-window W2 gives back one DOUBLE-carry truncation bit; this keeps the
     // cleaner safety stack peak-neutral at 1320q.
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "23");
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "22");
     // Likewise give back the FOLD-carry truncation bit for the final-window W2
     // island; the Toffoli budget still beats the 1320q frontier.
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "24");
@@ -31845,7 +31845,7 @@ fn configure_ecdsafail_submission_route() {
     // truncation re-rolls the Fiat-Shamir island; a 1-D reroll sweep (post_sub
     // fixed at the inherited 503292) lands a clean island at DIALOG_REROLL=101019.
     // Back off the width slope to 1004 for the final-window W2 clean island.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1004");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1005");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -31866,7 +31866,7 @@ fn configure_ecdsafail_submission_route() {
     // 1390q x 1,518,179 T = 2,110,268,810.
     // Final-window W2 island: validated 0/0/0 over all 9024 shots at
     // 1320q x 1,545,787 T = 2,040,438,840.
-    set_default_env("DIALOG_TAIL_NONCE", "192345092161242");
+    set_default_env("DIALOG_TAIL_NONCE", "188481450290415");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
