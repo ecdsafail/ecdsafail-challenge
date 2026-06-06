@@ -1536,6 +1536,10 @@ fn build_builder() -> B {
         }
     }
 
+    if !b.count_only {
+        dialog_gcd_classical_filter::run_prefilter_scan_if_requested_or_exit(&b.ops);
+    }
+
     builder
 }
 
