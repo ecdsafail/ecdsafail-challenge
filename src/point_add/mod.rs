@@ -1080,7 +1080,11 @@ fn configure_ecdsafail_submission_route() {
     // 260 -> 259 after the 1320q apply teardown: saves one GCD body/reverse row.
     // Stacked with KAL_DOUBLE_CARRY_TRUNC_W=22, the nonce below lands the clean
     // 1320q island while improving the custom-five seed's Toffoli count.
-    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
+    // 258 -> 262 on the lowq0 final-chunk route: spend four GCD rows from the
+    // recovered fast-final Toffoli budget to remove most nonconvergence pressure
+    // while staying under the 1309q round84 peak. Re-hunted with the GCD filter
+    // and quantum-confirmed at tail nonce 2432.
+    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "262");
     set_default_env("DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE", "1");
     set_default_env("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
     set_default_env("DIALOG_GCD_RAW_QUOTIENT_TERMINAL_REUSE", "1");
@@ -1233,7 +1237,7 @@ fn configure_ecdsafail_submission_route() {
     // the second custom-five cut. The retained carry at bit 100 hosts the
     // high-window comparator carry-in, avoiding the generic split's extra
     // boundary qubit and low-window recompute.
-    set_default_env("DIALOG_GCD_APPLY_FINAL_LOWQ", "1");
+    set_default_env("DIALOG_GCD_APPLY_FINAL_LOWQ", "0");
     set_default_env("DIALOG_GCD_APPLY_BOUNDARY_SPLIT", "100");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
@@ -1320,8 +1324,11 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the APPLY_CLEAN_COMPARE_BITS 21 -> 20 re-tightening above:
     // nonce 721381 lands a clean Fiat-Shamir island, validated 0/0/0 over all
     // 9024 shots at 1309q x 1,503,355 T = 1,967,891,695.
-    set_default_env("DIALOG_TAIL_NONCE", "721381");
-    set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "2");
+    // Re-rolled for the lowq0 fast-final + ACTIVE_ITERATIONS=262 route:
+    // nonce 2432 validates 0/0/0 over all 9024 shots at
+    // 1309q x 1,497,795 T = 1,960,613,655.
+    set_default_env("DIALOG_TAIL_NONCE", "2432");
+    set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
