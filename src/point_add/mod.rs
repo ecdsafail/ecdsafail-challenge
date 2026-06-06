@@ -32730,7 +32730,7 @@ fn configure_ecdsafail_submission_route() {
     // prior #1 2,017,979,899 by 1,362,894). Value-exact on the reachable support
     // (dropped double-carry bit is 0 there, ~2^-22/call otherwise); residual
     // failures are Fiat-Shamir phase, dodged by a fresh tail nonce (re-hunted below).
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "21");
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "24");
     // Likewise give back the FOLD-carry truncation bit for the final-window W2
     // island; the Toffoli budget still beats the 1320q frontier.
     // Re-tighten 24 -> 22 on the W2 base (the lazy-Solinas fold-carry window had
@@ -32789,7 +32789,7 @@ fn configure_ecdsafail_submission_route() {
     // 260 -> 259 after the 1320q apply teardown: saves one GCD body/reverse row.
     // Stacked with KAL_DOUBLE_CARRY_TRUNC_W=22, the nonce below lands the clean
     // 1320q island while improving the custom-five seed's Toffoli count.
-    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
+    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "259");
     set_default_env("DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE", "1");
     set_default_env("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
     set_default_env("DIALOG_GCD_RAW_QUOTIENT_TERMINAL_REUSE", "1");
@@ -32943,7 +32943,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "150");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "190");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "165");
     // WIDTH_SLOPE tightening: the per-step GCD width envelope shrink rate
     // (ideal = N - step*SLOPE + MARGIN) was left at the default 0.7075 by the
     // whole frontier lineage; only the constant MARGIN was ever tuned. The
@@ -32967,7 +32967,7 @@ fn configure_ecdsafail_submission_route() {
     // KAL_FOLD 24->22 and APPLY_CLEAN_COMPARE_BITS 20->19 re-tightenings above.
     // 1011 -> 1012: one more width-envelope notch, stacked on COMPARE_BITS=46
     // under the nonce-10429 island below. Value-exact, peak-neutral at 1320q.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1014");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1013");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -33006,14 +33006,13 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the KAL_DOUBLE_CARRY_TRUNC_W=21 re-tightening above: nonce
     // 1000001157 lands a clean island, validated 0/0/0 over all 9024 shots at
     // 1313q x 1,535,885 T = 2,016,617,005 (official ecdsafail run).
-    // Selected no-c_in body suffix self-hosts four high carry stages on the
-    // gated source lanes. This drops the three tobitvector binders to the
-    // round84 floor at 1309q, at +4,120 T, and nonce 264497 is clean by the
-    // CUDA K=2 filter and trusted eval: 0/0/0 over 9024 at
-    // 1309q x 1,516,943 T = 1,985,678,387.
+    // Rebalanced 1309q route: spend one active GCD iteration and loosen the
+    // double carry window, then reclaim more Toffoli by moving the final apply
+    // chunk cut 190 -> 165 and width slope 1014 -> 1013. Tail nonce 4596 is
+    // trusted-clean: 0/0/0 over 9024 at 1309q x 1,515,788 T = 1,984,166,492.
     set_default_env("DIALOG_GCD_SELECTED_BODY_NOCIN", "1");
     set_default_env("DIALOG_GCD_SELECTED_BODY_GATE_SUFFIX_CARRIES", "4");
-    set_default_env("DIALOG_TAIL_NONCE", "264497");
+    set_default_env("DIALOG_TAIL_NONCE", "4596");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
