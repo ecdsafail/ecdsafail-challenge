@@ -1071,7 +1071,9 @@ fn configure_ecdsafail_submission_route() {
     // pre-filter + bit-exact quantum confirm, validated 0/0/0 over all 9024
     // shots: 1309 x 1,503,355 = 1,967,891,695, beats the 1,968,064,139 frontier
     // by 172,444).
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
+    // Re-tightened to 19 on top of BODY_CARRY_BAND_TRIMS=0,1,2; nonce 158127
+    // validates 0/0/0 over all 9024 shots at 1307q x 1,487,670 T.
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_RAW_PA", "1");
     set_default_env("DIALOG_GCD_K2", "1");
     // Both-phase apply fold-fusion (fused double_y + halve_y Solinas folds,
@@ -1332,10 +1334,10 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the APPLY_CLEAN_COMPARE_BITS 21 -> 20 re-tightening above:
     // nonce 721381 lands a clean Fiat-Shamir island, validated 0/0/0 over all
     // 9024 shots at 1309q x 1,503,355 T = 1,967,891,695.
-    // Re-rolled for BODY_CARRY_BAND_TRIMS=0,1,2 on the 1307q route:
-    // nonce 13362 validates 0/0/0 over all 9024 shots at
-    // 1307q x 1,488,188 T = 1,945,061,716.
-    set_default_env("DIALOG_TAIL_NONCE", "13362");
+    // Re-rolled for APPLY_CLEAN_COMPARE_BITS=19 + BODY_CARRY_BAND_TRIMS=0,1,2
+    // on the 1307q route: nonce 158127 validates 0/0/0 over all 9024 shots at
+    // 1307q x 1,487,670 T = 1,944,384,690.
+    set_default_env("DIALOG_TAIL_NONCE", "158127");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
