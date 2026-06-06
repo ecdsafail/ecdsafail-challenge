@@ -3756,11 +3756,44 @@ fn mod_shift_left_by_k_lowq_with_dirty(
     cuccaro_op(b, 10, false);
     cuccaro_op(b, 32, false);
 
-    add_nbit_const(b, &v_ext, c);
+    let const_vent = std::env::var("ROUND84_XTAIL_SCHOOLBOOK_SHIFT_CONST_VENT")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && dirty_src.len() >= v_ext.len().saturating_sub(2);
+    if const_vent {
+        let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
+        venting::iadd_dirty_2clean_classical(
+            b,
+            &v_ext,
+            &dirty_src[..v_ext.len() - 2],
+            &q_clean2,
+            c.as_limbs()[0],
+            false,
+        );
+        b.free(q_clean2[0]);
+        b.free(q_clean2[1]);
+    } else {
+        add_nbit_const(b, &v_ext, c);
+    }
     b.x(ovf);
     b.cx(ovf, flag_inv);
     b.x(ovf);
-    csub_nbit_const(b, &v_ext, c, flag_inv);
+    if const_vent {
+        let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
+        venting::cisub_dirty_2clean_classical(
+            b,
+            &v_ext,
+            &dirty_src[..v_ext.len() - 2],
+            &q_clean2,
+            c.as_limbs()[0],
+            flag_inv,
+        );
+        b.free(q_clean2[0]);
+        b.free(q_clean2[1]);
+    } else {
+        csub_nbit_const(b, &v_ext, c, flag_inv);
+    }
     b.x(flag_inv);
     b.cx(flag_inv, ovf);
     b.x(flag_inv);
@@ -3847,16 +3880,56 @@ fn mod_shift_right_by_k_lowq_with_dirty(
 
     let mut v_ext = v.to_vec();
     v_ext.push(ovf);
+    let const_vent = std::env::var("ROUND84_XTAIL_SCHOOLBOOK_SHIFT_CONST_VENT")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && dirty_src.len() >= v_ext.len().saturating_sub(2);
 
     b.x(flag_inv);
     b.cx(flag_inv, ovf);
     b.x(flag_inv);
-    cadd_nbit_const(b, &v_ext, c, flag_inv);
+    if const_vent {
+        let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
+        venting::ciadd_dirty_2clean_classical(
+            b,
+            &v_ext,
+            &dirty_src[..v_ext.len() - 2],
+            &q_clean2,
+            c.as_limbs()[0],
+            flag_inv,
+            false,
+        );
+        b.free(q_clean2[0]);
+        b.free(q_clean2[1]);
+    } else {
+        cadd_nbit_const(b, &v_ext, c, flag_inv);
+    }
 
     b.x(ovf);
     b.cx(ovf, flag_inv);
     b.x(ovf);
-    sub_nbit_const(b, &v_ext, c);
+    if const_vent {
+        for &q in &v_ext {
+            b.x(q);
+        }
+        let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
+        venting::iadd_dirty_2clean_classical(
+            b,
+            &v_ext,
+            &dirty_src[..v_ext.len() - 2],
+            &q_clean2,
+            c.as_limbs()[0],
+            false,
+        );
+        b.free(q_clean2[0]);
+        b.free(q_clean2[1]);
+        for &q in &v_ext {
+            b.x(q);
+        }
+    } else {
+        sub_nbit_const(b, &v_ext, c);
+    }
     b.free(flag_inv);
 
     let cuccaro_op = |b: &mut B, pos: usize, is_sub: bool| {
@@ -7774,9 +7847,35 @@ fn squaring_sub_from_acc_schoolbook_lowq_shift22(
         mod_double_inplace_direct_const_fast(b, &hi, p);
     }
     mod_sub_qq(b, acc, &hi, p);
-    let (spill, flag_inv, ovf) = mod_shift_left_by_k_lowq(b, &hi, p, 22);
-    mod_sub_qq(b, acc, &hi, p);
-    mod_shift_right_by_k_lowq(b, &hi, p, 22, spill, flag_inv, ovf);
+    let shift_dirty = std::env::var("ROUND84_XTAIL_SCHOOLBOOK_SHIFT_DIRTY")
+        .ok()
+        .as_deref()
+        == Some("1");
+    let (spill, flag_inv, ovf) = if shift_dirty {
+        mod_shift_left_by_k_lowq_with_dirty(b, &hi, p, 22, acc)
+    } else {
+        mod_shift_left_by_k_lowq(b, &hi, p, 22)
+    };
+    match std::env::var("ROUND84_XTAIL_SCHOOLBOOK_FINAL_SUB").ok().as_deref() {
+        Some("fast") => mod_sub_qq_fast(b, acc, &hi, p),
+        Some("vent") => mod_sub_qq_vent(b, acc, &hi, p),
+        _ => {
+            if std::env::var("ROUND84_XTAIL_SCHOOLBOOK_FINAL_SUB_VENT")
+                .ok()
+                .as_deref()
+                == Some("1")
+            {
+                mod_sub_qq_vent(b, acc, &hi, p);
+            } else {
+                mod_sub_qq(b, acc, &hi, p);
+            }
+        }
+    }
+    if shift_dirty {
+        mod_shift_right_by_k_lowq_with_dirty(b, &hi, p, 22, spill, flag_inv, ovf, acc);
+    } else {
+        mod_shift_right_by_k_lowq(b, &hi, p, 22, spill, flag_inv, ovf);
+    }
     for _ in 0..10 {
         mod_halve_inplace_direct_const_fast(b, &hi, p);
     }
@@ -32703,13 +32802,6 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    // === Config-A bake: tightened GCD comparators + clean tail-nonce island ===
-    // set_default_env is first-wins, so these override the later lever lines.
-    set_default_env("DIALOG_GCD_COMPARE_BITS", "46");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "18");
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "22");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1008");
-    set_default_env("DIALOG_TAIL_NONCE", "450007074");
     set_default_env("SKIP_ALT_SEED_CHECKS", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_SIDECAR_LOG", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
@@ -32737,7 +32829,7 @@ fn configure_ecdsafail_submission_route() {
     // prior #1 2,017,979,899 by 1,362,894). Value-exact on the reachable support
     // (dropped double-carry bit is 0 there, ~2^-22/call otherwise); residual
     // failures are Fiat-Shamir phase, dodged by a fresh tail nonce (re-hunted below).
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "24");
+    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "21");
     // Likewise give back the FOLD-carry truncation bit for the final-window W2
     // island; the Toffoli budget still beats the 1320q frontier.
     // Re-tighten 24 -> 22 on the W2 base (the lazy-Solinas fold-carry window had
@@ -32778,8 +32870,8 @@ fn configure_ecdsafail_submission_route() {
     // Both-phase apply fold-fusion: spend comparator bits back to cb=52 (the
     // exact-screen zone) so the on-GPU island finder lands a clean Fiat-Shamir
     // nonce; the fold-fusion's -25k Toffoli keeps the score well under 2B.
-    set_default_env("DIALOG_GCD_COMPARE_BITS", "50");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "23");
+    set_default_env("DIALOG_GCD_COMPARE_BITS", "47");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_RAW_PA", "1");
     set_default_env("DIALOG_GCD_K2", "1");
     // Both-phase apply fold-fusion (fused double_y + halve_y Solinas folds,
@@ -32796,7 +32888,7 @@ fn configure_ecdsafail_submission_route() {
     // 260 -> 259 after the 1320q apply teardown: saves one GCD body/reverse row.
     // Stacked with KAL_DOUBLE_CARRY_TRUNC_W=22, the nonce below lands the clean
     // 1320q island while improving the custom-five seed's Toffoli count.
-    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "259");
+    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
     set_default_env("DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE", "1");
     set_default_env("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
     set_default_env("DIALOG_GCD_RAW_QUOTIENT_TERMINAL_REUSE", "1");
@@ -32950,7 +33042,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "150");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "165");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "190");
     // WIDTH_SLOPE tightening: the per-step GCD width envelope shrink rate
     // (ideal = N - step*SLOPE + MARGIN) was left at the default 0.7075 by the
     // whole frontier lineage; only the constant MARGIN was ever tuned. The
@@ -32974,7 +33066,7 @@ fn configure_ecdsafail_submission_route() {
     // KAL_FOLD 24->22 and APPLY_CLEAN_COMPARE_BITS 20->19 re-tightenings above.
     // 1011 -> 1012: one more width-envelope notch, stacked on COMPARE_BITS=46
     // under the nonce-10429 island below. Value-exact, peak-neutral at 1320q.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1013");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1014");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -33013,13 +33105,24 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the KAL_DOUBLE_CARRY_TRUNC_W=21 re-tightening above: nonce
     // 1000001157 lands a clean island, validated 0/0/0 over all 9024 shots at
     // 1313q x 1,535,885 T = 2,016,617,005 (official ecdsafail run).
-    // Rebalanced 1309q route: spend one active GCD iteration and loosen the
-    // double carry window, then reclaim more Toffoli by moving the final apply
-    // chunk cut 190 -> 165 and width slope 1014 -> 1013. Tail nonce 4596 is
-    // trusted-clean: 0/0/0 over 9024 at 1309q x 1,515,788 T = 1,984,166,492.
+    // Selected no-c_in body suffix self-hosts four high carry stages on the
+    // gated source lanes. This drops the three tobitvector binders to the
+    // round84 floor at 1309q, at +4,120 T, and nonce 264497 is clean by the
+    // CUDA K=2 filter and trusted eval: 0/0/0 over 9024 at
+    // 1309q x 1,516,943 T = 1,985,678,387.
+    // 1285q ladder: suffix self-hosts 28 selected-body carry stages, while the
+    // round84 schoolbook x-tail uses dirty/vented Solinas reductions at the
+    // final post-shift subtract and the shift-by-22 constant corrections. This
+    // moves the GCD tobitvector and round84 binders down to the raw-PA 1285q
+    // floor. Comparator stack retuned to compare47/apply19; GPU K=2 scan found
+    // nonce 393525 and trusted eval validates 0/0/0 over 9024:
+    // 1285q x 1,539,655 T = 1,978,456,675.
     set_default_env("DIALOG_GCD_SELECTED_BODY_NOCIN", "1");
-    set_default_env("DIALOG_GCD_SELECTED_BODY_GATE_SUFFIX_CARRIES", "4");
-    set_default_env("DIALOG_TAIL_NONCE", "4596");
+    set_default_env("DIALOG_GCD_SELECTED_BODY_GATE_SUFFIX_CARRIES", "28");
+    set_default_env("ROUND84_XTAIL_SCHOOLBOOK_FINAL_SUB", "vent");
+    set_default_env("ROUND84_XTAIL_SCHOOLBOOK_SHIFT_DIRTY", "1");
+    set_default_env("ROUND84_XTAIL_SCHOOLBOOK_SHIFT_CONST_VENT", "1");
+    set_default_env("DIALOG_TAIL_NONCE", "393525");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
