@@ -1052,17 +1052,18 @@ fn configure_ecdsafail_submission_route() {
     // exact-screen zone) while preserving a clean Fiat-Shamir
     // nonce; the fold-fusion's -25k Toffoli keeps the score well under 2B.
     set_default_env("DIALOG_GCD_COMPARE_BITS", "49");
-    // Apply-phase overflow-clean comparator narrowed 23 -> 22 -> 21. The
+    // Apply-phase overflow-clean comparator narrowed 23 -> 22 -> 21 -> 20. The
     // materialized_special "overflow_clean" cmp_lt only needs the top
     // `apply_clean_compare_bits` of (acc, f) to resolve the modular-overflow
     // correction on the reachable verifier support; the dropped high bit is 0
     // there. Pure structural Toffoli cut 1,504,903 -> 1,504,387 -> 1,503,871
+    // -> 1,503,355
     // (-516 per bit), peak-neutral at 1309q. The shorter op stream re-rolls the
-    // Fiat-Shamir island, re-hunted to DIALOG_TAIL_NONCE=431581 below (GCD
+    // Fiat-Shamir island, re-hunted to DIALOG_TAIL_NONCE=721381 below (GCD
     // pre-filter + bit-exact quantum confirm, validated 0/0/0 over all 9024
-    // shots: 1309 x 1,503,871 = 1,968,064,139, beats the 1,969,242,583 frontier
-    // by 1,178,444).
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "21");
+    // shots: 1309 x 1,503,355 = 1,967,891,695, beats the 1,968,064,139 frontier
+    // by 172,444).
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
     set_default_env("DIALOG_GCD_RAW_PA", "1");
     set_default_env("DIALOG_GCD_K2", "1");
     // Both-phase apply fold-fusion (fused double_y + halve_y Solinas folds,
@@ -1316,10 +1317,10 @@ fn configure_ecdsafail_submission_route() {
     // ON clean islands occur at the SAME ~1/108 rate among GCD-survivors as K2-alone
     // OFF. Backup clean islands (all validated 0/0/0 @ 1309 x 1,506,043 = 1,971,410,287):
     // 3756953, 3774241, 3840981, 40330388.
-    // Re-rolled for the APPLY_CLEAN_COMPARE_BITS 22 -> 21 re-tightening above:
-    // nonce 431581 lands a clean Fiat-Shamir island, validated 0/0/0 over all
-    // 9024 shots at 1309q x 1,503,871 T = 1,968,064,139.
-    set_default_env("DIALOG_TAIL_NONCE", "431581");
+    // Re-rolled for the APPLY_CLEAN_COMPARE_BITS 21 -> 20 re-tightening above:
+    // nonce 721381 lands a clean Fiat-Shamir island, validated 0/0/0 over all
+    // 9024 shots at 1309q x 1,503,355 T = 1,967,891,695.
+    set_default_env("DIALOG_TAIL_NONCE", "721381");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "2");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
