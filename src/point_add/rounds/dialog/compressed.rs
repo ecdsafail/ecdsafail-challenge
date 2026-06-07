@@ -448,6 +448,18 @@ pub(crate) fn dialog_gcd_build_composite_scratch(
         }
     }
     let owned = b.alloc_qubits(want - lanes.len());
+    if std::env::var("PROBE_SCRATCH").is_ok() && active_width >= 254 {
+        eprintln!(
+            "SCRATCH step={} aw={} body_w={} body_len={} want={} borrowed={} owned={}",
+            step,
+            active_width,
+            body_w,
+            body_len,
+            want,
+            lanes.len() - owned.len(),
+            owned.len()
+        );
+    }
     lanes.extend_from_slice(&owned);
     DialogGcdCompositeScratch { lanes, owned }
 }

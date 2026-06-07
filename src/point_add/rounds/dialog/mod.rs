@@ -218,7 +218,39 @@ pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize
     if dialog_gcd_trio_width_notch_enabled() && step == dialog_gcd_trio_width_notch_step() {
         w = w.saturating_add(dialog_gcd_trio_width_notch_extra());
     }
+    // Multi-step binder notch (gated, default OFF). When
+    // DIALOG_GCD_BINDER_NOTCH_STEPS lists `step`, trim an extra
+    // DIALOG_GCD_BINDER_NOTCH_EXTRA (default 2) high bits off the materialized
+    // sub/add body at THIS step too. Under the active nocin body the composite
+    // scratch ask is want = 2*body_len-1, so trimming body_w by k drops the
+    // owned deficit (and thus the compressed-block trio peak) by k at each
+    // listed binder step. Value-exact on the reachable GCD support: at the
+    // width-clamped binder steps the realizable bitlen sits WIDTH_MARGIN below
+    // active_width, so the trimmed top bits of both operands are |0> (the gated
+    // load there is ctrl & 0 = 0 and the carry ripple above the cut is 0).
+    // Absent the env this is a no-op -> byte-identical to the accepted stream.
+    if dialog_gcd_binder_notch_steps().contains(&step) {
+        w = w.saturating_add(dialog_gcd_binder_notch_extra());
+    }
     active_width.saturating_sub(w).max(2)
+}
+
+pub(crate) fn dialog_gcd_binder_notch_steps() -> Vec<usize> {
+    std::env::var("DIALOG_GCD_BINDER_NOTCH_STEPS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .filter_map(|t| t.trim().parse::<usize>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn dialog_gcd_binder_notch_extra() -> usize {
+    std::env::var("DIALOG_GCD_BINDER_NOTCH_EXTRA")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(2)
 }
 
 pub(crate) fn dialog_gcd_trio_width_notch_enabled() -> bool {

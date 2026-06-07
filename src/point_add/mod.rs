@@ -1244,9 +1244,10 @@ fn configure_ecdsafail_submission_route() {
     // compare schedule frees enough Toffoli to pay back the ~1,088 this saved AND
     // remove that hazard class, making the island materially easier to land while
     // net Toffoli still beats the flat-50 baseline (1,512,823 -> 1,506,043 @ 1313).
-    // Stacked peak-1302 band-trim schedule (supersedes the 0,1,2 rationale above):
-    // trims average executed Toffoli to 1,458,957 at peak 1302 qubits.
-    set_default_env("DIALOG_GCD_BODY_CARRY_BAND_TRIMS", "0,2,2,2,2,2,2,2,2,2,2,2,2,2,0,0,0,0,0,0,0,0,0,2,2,2");
+    // Stacked peak-1302 band-trim schedule + measured-ovfclear + F_CUT4=189 (tier-3 "safe lock"):
+    // trims average executed Toffoli to 1,456,963 at peak 1302 qubits.
+    set_default_env("DIALOG_GCD_BODY_CARRY_BAND_TRIMS", "0,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3");
+    set_default_env("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED", "1");
     // 1320q apply teardown: low-q final chunk plus a hosted boundary split at
     // the second custom-five cut. The retained carry at bit 100 hosts the
     // high-window comparator carry-in, avoiding the generic split's extra
@@ -1269,7 +1270,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT3", "150");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "190");
+    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT4", "189");
     // WIDTH_SLOPE tightening: the per-step GCD width envelope shrink rate
     // (ideal = N - step*SLOPE + MARGIN) was left at the default 0.7075 by the
     // whole frontier lineage; only the constant MARGIN was ever tuned. The
@@ -1354,9 +1355,9 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the lowq0 fast-final + ACTIVE_ITERATIONS=262 route:
     // nonce 2432 validates 0/0/0 over all 9024 shots at
     // 1309q x 1,497,795 T = 1,960,613,655.
-    // Re-hunted clean Fiat-Shamir island for the stacked band-trim schedule:
-    // nonce 10016000183 validates 0/0/0 over all 9024 shots at 1302q x 1,458,957 T = 1,899,562,014.
-    set_default_env("DIALOG_TAIL_NONCE", "10016000183");
+    // Re-hunted clean Fiat-Shamir island for the tier-3 schedule:
+    // nonce 11201395269 validates 0/0/0 over all 9024 shots at 1302q x 1,456,963 T = 1,896,965,826.
+    set_default_env("DIALOG_TAIL_NONCE", "11201395269");
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
