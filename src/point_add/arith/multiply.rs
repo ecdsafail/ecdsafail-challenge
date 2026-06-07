@@ -1424,7 +1424,15 @@ pub(crate) fn squaring_sub_from_acc_schoolbook_lowq_shift22(
         }
         mod_sub_qq(b, acc, &hi, p);
         let (spill, flag_inv, ovf) = mod_shift_left_by_k_lowq(b, &hi, p, 22);
-        if r84_lowq_enabled() {
+        if std::env::var("R84_MIDSUB_NOOP_PROBE").ok().as_deref() == Some("1") {
+            // PROBE: skip the mid-sub entirely to measure the round84 floor WITHOUT
+            // any const-add register. If round84 stays at 1307 here, the ca register
+            // is NOT the binder (the floor is tmp_ext+acc+GCD context).
+        } else if std::env::var("R84_DIRECT_MIDSUB_CLEAN").ok().as_deref() == Some("1") {
+            mod_sub_qq_lowq_directclean(b, acc, &hi, p);
+        } else if std::env::var("R84_DIRECT_MIDSUB_TEST").ok().as_deref() == Some("1") {
+            mod_sub_qq_lowq_directtest(b, acc, &hi, p);
+        } else if r84_lowq_enabled() {
             mod_sub_qq_lowq(b, acc, &hi, p);
         } else {
             mod_sub_qq(b, acc, &hi, p);

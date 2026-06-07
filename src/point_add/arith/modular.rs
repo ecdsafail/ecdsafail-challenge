@@ -122,6 +122,137 @@ pub(crate) fn mod_sub_qq_lowq(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
     emit_inverse(b, move |b| mod_add_qq_lowq(b, acc, &a_copy, p));
 }
 
+/// CLEAN direct-const lowq mod-add: identical to `mod_add_qq_lowq` but the two
+/// Solinas const corrections use the CLEAN direct const adders (no `ca` register;
+/// n-1 = 255 carry ancillas, no measurement) instead of `load_const`+Cuccaro
+/// (256q). Saves the −1q that takes the round84-lowq mid-sub 1307 → 1306. Clean
+/// (no b.hmr) so emit_inverse-safe → the sub is its exact inverse, and prefilter-
+/// modelable. Value-identical to mod_add_qq_lowq (self-tested adders).
+///
+/// The conditional `-c` in step 4 (controlled by `flag`) is realized by the
+/// standard trick: subtract the UNCONDITIONAL clean direct const under a control
+/// via `flag`-gated execution is not directly available for the in-place direct
+/// walk, so we keep step 4's controlled correction on the proven controlled clean
+/// extcarry adder (`csub_nbit_const_extcarry_clean_with_cin`, which is the same
+/// 256q register). The peak-binding op is step 2's UNCONDITIONAL +c — replacing
+/// only THAT with the direct walk removes the simultaneously-live 256q `ca`.
+/// (Step 4's `ca` is not co-resident with step 2's at the peak instant: step 2
+/// completes and frees before step 4 allocates, and the round84 peak is sampled
+/// during step 2's load. Confirmed by the noop probe: round84 floor = 1306.)
+pub(crate) fn mod_add_qq_lowq_directclean(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
+    let n = acc.len();
+    assert_eq!(n, a.len());
+    debug_assert_eq!(n, 256);
+
+    let (acc_ext, acc_ovf) = ext_reg(b, acc);
+    let (a_ext, a_ovf) = ext_reg(b, a);
+
+    add_nbit_qq(b, &a_ext, &acc_ext);
+
+    // a_ovf is provably |0> and idle during steps 2 & 4 (same argument as
+    // mod_add_qq_lowq); lend it to BOTH const corrections to match the faithful
+    // cin-borrow accounting.
+    let borrow = if r84_lowq_cin_borrow_enabled() {
+        Some(a_ovf)
+    } else {
+        None
+    };
+
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+    // Step 2: UNCONDITIONAL +c via the CLEAN direct walk (no ca register, 255
+    // carry ancillas; carry_0 borrowed from a_ovf when available → 254 fresh).
+    add_nbit_const_clean_direct_with_cin(b, &acc_ext, c, borrow);
+
+    let flag = b.alloc_qubit();
+    b.cx(acc_ovf, flag);
+
+    // Step 4: CONDITIONAL -c — CLEAN direct controlled walk (no ca register),
+    // cin-borrowed exactly like the faithful path.
+    b.x(flag);
+    csub_nbit_const_clean_direct_with_cin(b, &acc_ext, c, flag, borrow);
+    b.x(flag);
+
+    b.cx(flag, acc_ovf);
+
+    cmp_lt_into(b, &acc_ext[..n], &a_ext[..n], flag);
+    b.free(flag);
+
+    unext_reg(b, a_ovf);
+    unext_reg(b, acc_ovf);
+    let _ = (acc_ext, a_ext);
+}
+
+pub(crate) fn mod_sub_qq_lowq_directclean(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
+    let a_copy: Vec<QubitId> = a.to_vec();
+    emit_inverse(b, move |b| mod_add_qq_lowq_directclean(b, acc, &a_copy, p));
+}
+
+/// EXPERIMENTAL probe (R84_DIRECT_MIDSUB_TEST): the two Solinas const corrections
+/// use the MEASUREMENT-based direct adders (no 256-wide `ca` register; 255 borrow
+/// ancillas + b.hmr). Used only to measure whether removing the `ca` register
+/// drops the round84 peak. NOT clean (measurement). Isolates the binder.
+pub(crate) fn mod_add_qq_lowq_directtest(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
+    let n = acc.len();
+    assert_eq!(n, a.len());
+    debug_assert_eq!(n, 256);
+
+    let (acc_ext, acc_ovf) = ext_reg(b, acc);
+    let (a_ext, a_ovf) = ext_reg(b, a);
+
+    add_nbit_qq(b, &a_ext, &acc_ext);
+
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+    add_nbit_const_direct_uncontrolled_fast(b, &acc_ext, c);
+
+    let flag = b.alloc_qubit();
+    b.cx(acc_ovf, flag);
+
+    b.x(flag);
+    csub_nbit_const_direct_fast(b, &acc_ext, c, flag);
+    b.x(flag);
+
+    b.cx(flag, acc_ovf);
+
+    cmp_lt_into(b, &acc_ext[..n], &a_ext[..n], flag);
+    b.free(flag);
+
+    unext_reg(b, a_ovf);
+    unext_reg(b, acc_ovf);
+    let _ = (acc_ext, a_ext);
+}
+
+pub(crate) fn mod_sub_qq_lowq_directtest(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
+    // Forward direct sub (measurement adders are not emit_inverse-safe). Mirrors
+    // mod_sub_qq_fast but the underflow correction uses the direct const sub (no
+    // ca register). PEAK PROBE ONLY — not value-exact under emit_inverse contexts.
+    let n = acc.len();
+    assert_eq!(n, a.len());
+    debug_assert_eq!(n, 256);
+
+    let (acc_ext, acc_ovf) = ext_reg(b, acc);
+    let (a_ext, a_ovf) = ext_reg(b, a);
+
+    sub_nbit_qq_fast(b, &a_ext, &acc_ext);
+
+    let flag = b.alloc_qubit();
+    b.cx(acc_ovf, flag);
+    b.cx(flag, acc_ovf);
+
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+    // Direct const sub (no ca register; 255 borrow ancillas + measurement).
+    csub_nbit_const_direct_fast(b, &acc_ext[..n], c, flag);
+
+    b.x(flag);
+    mod_neg_inplace_fast(b, &a_ext[..n], p);
+    cmp_lt_into_fast(b, &acc_ext[..n], &a_ext[..n], flag);
+    mod_neg_inplace_fast(b, &a_ext[..n], p);
+    b.free(flag);
+
+    unext_reg(b, a_ovf);
+    unext_reg(b, acc_ovf);
+    let _ = (acc_ext, a_ext);
+}
+
 /// Fast `acc := (acc - a) mod p`. Direct sub + conditional add-p + flag
 /// uncompute via neg+cmp_lt+neg. All ops use measurement-based Cuccaro.
 pub(crate) fn mod_sub_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {

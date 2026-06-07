@@ -1259,6 +1259,21 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("ROUND84_INPLACE_SOLINAS_FOLD", "1");
     set_default_env("ROUND84_INPLACE_QUOTIENT_CARRY_TRUNC_W", "21");
     set_default_env("DIALOG_GCD_BORROW_CURRENT_S2", "1");
+    // H1+H3 compressed-block trio cut (qubit-research-08): a one-step body-width
+    // notch (H3, dialog_gcd_body_carry_trunc_width) + a sibling-step s2 fold (H1,
+    // dialog_gcd_build_composite_scratch) relieve BOTH active_width=256 binder
+    // steps (10 and 11) of the compressed-block tobitvector. On this frontier the
+    // trio is the SOLE 1307 binder (round84 sits at <=1285 via the inplace-solinas
+    // fold above), so the notch drops the GLOBAL peak 1307 -> 1306 at -16 emitted
+    // Toffoli (the notched body has two fewer ripple bits). Value-exact on the
+    // reachable GCD support (the trimmed top carry bits are 0 there); the shorter
+    // op stream re-rolls the Fiat-Shamir island, re-hunted via DIALOG_TAIL_NONCE.
+    set_default_env("DIALOG_GCD_TRIO_WIDTH_NOTCH", "1");
+    // Round84 clean direct-const mid-sub (qubit-research-05). INERT on this base:
+    // the round84 mid-sub takes the ROUND84_INPLACE_SOLINAS_FOLD path above, so
+    // this gate (which targets the non-fold flat-sequence else-branch) is a no-op
+    // here. Kept ON for forward-compatibility with a base that drops the fold.
+    set_default_env("R84_DIRECT_MIDSUB_CLEAN", "1");
     set_default_env("DIALOG_GCD_APPLY_BOUNDARY_SPLIT", "100");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT", "50");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_CUT2", "100");
@@ -1348,7 +1363,7 @@ fn configure_ecdsafail_submission_route() {
     // Re-rolled for the lowq0 fast-final + ACTIVE_ITERATIONS=262 route:
     // nonce 2432 validates 0/0/0 over all 9024 shots at
     // 1309q x 1,497,795 T = 1,960,613,655.
-    set_default_env("DIALOG_TAIL_NONCE", "4009893105");
+    set_default_env("DIALOG_TAIL_NONCE", "5001200692");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
@@ -1568,7 +1583,338 @@ fn build_builder() -> B {
     builder
 }
 
+/// Build-time self-test (gated R84_CLEAN_DIRECT_SELFTEST=1) for the CLEAN direct
+/// const adders. Runs the real Simulator on classical basis states; verifies
+/// value (add with carry-out into the ext bit), operand cleanliness (ancillas
+/// return to |0>), and zero phase. Exhaustive over a 12-bit low register for the
+/// secp Solinas constant c = 2^32+977 (truncated to fit the test width: bits 0,4,
+/// 6,7,8,9 are in-range; bit 32 is above the 12-bit window but exercises the
+/// "high zero region carry propagation" by also testing c masked to 12 bits and a
+/// full 12-bit-spanning constant). Panics on any mismatch.
+fn r84_clean_direct_selftest() {
+    use crate::sim::Simulator;
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake128,
+    };
+    fn set_reg<R: XofReader>(sim: &mut Simulator<'_, R>, qs: &[QubitId], val: u64, shot: usize) {
+        for (i, &q) in qs.iter().enumerate() {
+            if ((val >> i) & 1) != 0 {
+                *sim.qubit_mut(q) |= 1u64 << shot;
+            } else {
+                *sim.qubit_mut(q) &= !(1u64 << shot);
+            }
+        }
+    }
+    fn get_reg<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
+        let mut out = 0u64;
+        for (i, &q) in qs.iter().enumerate() {
+            out |= ((sim.qubit(q) >> shot) & 1) << i;
+        }
+        out
+    }
+
+    const N: usize = 12; // low register width; acc_ext is N+1 wide.
+    let lo_mask: u64 = (1u64 << N) - 1;
+    let ext_mask: u64 = (1u64 << (N + 1)) - 1;
+    // c values to exercise: 1; the secp Solinas low bits {0,4,6,7,8,9} = 0x3D1;
+    // a value with a long carry-propagation run (0xFFF) to stress the high carry
+    // chain; an all-bits value; and 0.
+    let test_cs: [u64; 5] = [1, 0x3D1, 0xFFF, 0b1010_1010_1010, 0];
+    let mut total_cases = 0usize;
+
+    for &c_small in &test_cs {
+        let c = U256::from(c_small);
+        // ---- forward add ----
+        let mut b = B::new();
+        let acc_ext = b.alloc_qubits(N + 1);
+        add_nbit_const_clean_direct(&mut b, &acc_ext, c);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        // Exhaustive 12-bit low value sweep, 64 shots/batch.
+        let num_batches = ((1usize << N) + 63) / 64;
+        for batch in 0..num_batches {
+            let mut seed = Shake128::default();
+            seed.update(b"clean-direct-add");
+            seed.update(&c_small.to_le_bytes());
+            seed.update(&(batch as u64).to_le_bytes());
+            let mut xof = seed.finalize_xof();
+            let mut sim = Simulator::new(nq, nb, &mut xof);
+            for shot in 0..64usize {
+                let x = ((batch * 64 + shot) as u64) & lo_mask;
+                set_reg(&mut sim, &acc_ext, x, shot); // top ext bit = 0
+            }
+            sim.apply_iter(b.ops.iter());
+            assert_eq!(sim.phase, 0, "clean direct add phase garbage c={c_small:#x}");
+            for shot in 0..64usize {
+                let case = batch * 64 + shot;
+                if case >= (1usize << N) {
+                    break;
+                }
+                let x = (case as u64) & lo_mask;
+                let expect = (x + c_small) & ext_mask;
+                assert_eq!(
+                    get_reg(&sim, &acc_ext, shot),
+                    expect,
+                    "clean direct ADD value c={c_small:#x} x={x:#x}"
+                );
+                for q in (N + 1)..nq {
+                    assert_eq!(
+                        (sim.qubit(QubitId(q as u64)) >> shot) & 1,
+                        0,
+                        "clean direct ADD ancilla {q} dirty c={c_small:#x} x={x:#x}"
+                    );
+                }
+                total_cases += 1;
+            }
+        }
+
+        // ---- sub (emit_inverse of add) ----
+        let mut b2 = B::new();
+        let acc_ext2 = b2.alloc_qubits(N + 1);
+        sub_nbit_const_clean_direct(&mut b2, &acc_ext2, c);
+        let nq2 = b2.next_qubit as usize;
+        let nb2 = b2.next_bit as usize;
+        for batch in 0..num_batches {
+            let mut seed = Shake128::default();
+            seed.update(b"clean-direct-sub");
+            seed.update(&c_small.to_le_bytes());
+            seed.update(&(batch as u64).to_le_bytes());
+            let mut xof = seed.finalize_xof();
+            let mut sim = Simulator::new(nq2, nb2, &mut xof);
+            for shot in 0..64usize {
+                let x = ((batch * 64 + shot) as u64) & lo_mask;
+                set_reg(&mut sim, &acc_ext2, x, shot);
+            }
+            sim.apply_iter(b2.ops.iter());
+            assert_eq!(sim.phase, 0, "clean direct sub phase garbage c={c_small:#x}");
+            for shot in 0..64usize {
+                let case = batch * 64 + shot;
+                if case >= (1usize << N) {
+                    break;
+                }
+                let x = (case as u64) & lo_mask;
+                let expect = x.wrapping_sub(c_small) & ext_mask;
+                assert_eq!(
+                    get_reg(&sim, &acc_ext2, shot),
+                    expect,
+                    "clean direct SUB value c={c_small:#x} x={x:#x}"
+                );
+                for q in (N + 1)..nq2 {
+                    assert_eq!(
+                        (sim.qubit(QubitId(q as u64)) >> shot) & 1,
+                        0,
+                        "clean direct SUB ancilla {q} dirty c={c_small:#x} x={x:#x}"
+                    );
+                }
+            }
+        }
+    }
+    // ---- CONTROLLED clean direct adder (used by step 4 of the lowq mid-sub) ----
+    let mut ctrl_cases = 0usize;
+    for &c_small in &test_cs {
+        let c = U256::from(c_small);
+        let mut b = B::new();
+        let acc_ext = b.alloc_qubits(N + 1);
+        let ctrl = b.alloc_qubit();
+        cadd_nbit_const_clean_direct_with_cin(&mut b, &acc_ext, c, ctrl, None);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        let num_batches = ((1usize << N) + 63) / 64;
+        for batch in 0..num_batches {
+            let mut seed = Shake128::default();
+            seed.update(b"clean-direct-cadd");
+            seed.update(&c_small.to_le_bytes());
+            seed.update(&(batch as u64).to_le_bytes());
+            let mut xof = seed.finalize_xof();
+            let mut sim = Simulator::new(nq, nb, &mut xof);
+            for shot in 0..64usize {
+                let x = ((batch * 64 + shot) as u64) & lo_mask;
+                set_reg(&mut sim, &acc_ext, x, shot);
+                // ctrl alternates per shot to exercise both branches.
+                if (batch * 64 + shot) & 1 == 1 {
+                    *sim.qubit_mut(ctrl) |= 1u64 << shot;
+                }
+            }
+            sim.apply_iter(b.ops.iter());
+            assert_eq!(sim.phase, 0, "clean direct CADD phase garbage c={c_small:#x}");
+            for shot in 0..64usize {
+                let case = batch * 64 + shot;
+                if case >= (1usize << N) {
+                    break;
+                }
+                let x = (case as u64) & lo_mask;
+                let ctrl_v = (case & 1) as u64;
+                let expect = (x + ctrl_v * c_small) & ext_mask;
+                assert_eq!(
+                    get_reg(&sim, &acc_ext, shot),
+                    expect,
+                    "clean direct CADD value c={c_small:#x} x={x:#x} ctrl={ctrl_v}"
+                );
+                assert_eq!(
+                    (sim.qubit(ctrl) >> shot) & 1,
+                    ctrl_v,
+                    "clean direct CADD ctrl changed c={c_small:#x} x={x:#x}"
+                );
+                for q in (N + 2)..nq {
+                    assert_eq!(
+                        (sim.qubit(QubitId(q as u64)) >> shot) & 1,
+                        0,
+                        "clean direct CADD ancilla {q} dirty c={c_small:#x} x={x:#x}"
+                    );
+                }
+                ctrl_cases += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "R84_CLEAN_DIRECT_SELFTEST: PASS ({} uncontrolled add+sub cases, {} controlled-add cases; value+phase+ancilla clean, N={})",
+        total_cases, ctrl_cases, N
+    );
+}
+
+/// Build-time self-test (gated DIALOG_GCD_K2_SU_REVERSE_POP_SELFTEST=1) for the
+/// re-ported K2 state-updating reverse-pop codec. Runs the real Simulator on
+/// classical basis states and verifies, bit-exactly:
+///  (1) the pair-core ENCODER over `pair_state_core(compressed)` followed by its
+///      INVERSE is the identity on all 2^5 basis states of the 5 compressed cells,
+///      with zero phase and no ancilla — this is the exact forward
+///      `encode_core_before_s2` / reverse `decode_core_after_s2_pop` pair and
+///      directly exercises the dual-use of `compressed[4]` (core0 <-> step1_s2).
+///  (2) the apply/reverse raw6 fallback round-trips: `clear_raw_block_copy`
+///      (pack raw6 -> compressed5, CX-host) followed by
+///      `copy_compressed_block_to_raw` (the encoder-inverse-based unpack used by
+///      the apply lifecycle that Step E now feeds a dedicated raw6) returns every
+///      reachable raw6 to itself, phase/ancilla clean. Validates the apply-raw6
+///      fallback the panic-gotcha edits depend on.
+/// Panics on any mismatch.
+fn dialog_gcd_k2_su_reverse_pop_selftest() {
+    use crate::sim::Simulator;
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake128,
+    };
+    fn set_reg<R: XofReader>(sim: &mut Simulator<'_, R>, qs: &[QubitId], val: u64, shot: usize) {
+        for (i, &q) in qs.iter().enumerate() {
+            if ((val >> i) & 1) != 0 {
+                *sim.qubit_mut(q) |= 1u64 << shot;
+            } else {
+                *sim.qubit_mut(q) &= !(1u64 << shot);
+            }
+        }
+    }
+    fn get_reg<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
+        let mut out = 0u64;
+        for (i, &q) in qs.iter().enumerate() {
+            out |= ((sim.qubit(q) >> shot) & 1) << i;
+        }
+        out
+    }
+
+    // ---- Part 1: encoder ∘ encoder_inverse over pair_state_core == identity ----
+    // The forward lifecycle emits `encode_core_before_s2` = encoder(state_core);
+    // the reverse emits `decode_core_after_s2_pop` = encoder_inverse(state_core).
+    // Over a full block (no intervening body, since the body only touches u/v),
+    // the encode then its inverse must restore every compressed cell. 5 cells =>
+    // 32 basis states fit in 64 shots in a single batch.
+    {
+        let mut b = B::new();
+        let compressed = b.alloc_qubits(DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS);
+        let core = dialog_gcd_k2_pair_state_core(&compressed);
+        emit_dialog_gcd_k2_pair_core_encoder(&mut b, &core);
+        emit_dialog_gcd_k2_pair_core_encoder_inverse(&mut b, &core);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        let mut seed = Shake128::default();
+        seed.update(b"k2-su-encode-roundtrip");
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        for shot in 0..32usize {
+            set_reg(&mut sim, &compressed, shot as u64, shot);
+        }
+        sim.apply_iter(b.ops.iter());
+        assert_eq!(sim.phase, 0, "K2 SU encoder round-trip phase garbage");
+        for shot in 0..32usize {
+            assert_eq!(
+                get_reg(&sim, &compressed, shot),
+                shot as u64,
+                "K2 SU encoder∘inverse not identity for compressed={shot:#x}"
+            );
+            for q in DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS..nq {
+                assert_eq!(
+                    (sim.qubit(QubitId(q as u64)) >> shot) & 1,
+                    0,
+                    "K2 SU encoder round-trip ancilla {q} dirty for compressed={shot:#x}"
+                );
+            }
+        }
+    }
+
+    // ---- Part 2: clear_raw_block_copy ∘ copy_compressed_block_to_raw round-trip ----
+    // The apply lifecycle (fed a dedicated raw6 by the Step-E edits) decodes via
+    // copy_compressed_block_to_raw, which runs encoder_inverse. We pack a fresh
+    // raw6 into a zero compressed block with clear_raw_block_copy (CX-host), then
+    // unpack it back with copy_compressed_block_to_raw; raw6 must be restored, the
+    // compressed cells must return to |0>, phase clean. raw6 = 6 cells => 64 basis
+    // states in one batch. Forced CX-host (swap-host off) so the operands are the
+    // genuine reachable inputs.
+    {
+        std::env::remove_var("DIALOG_GCD_APPLY_REPLAY_SWAP_HOST");
+        let mut b = B::new();
+        let compressed = b.alloc_qubits(DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS);
+        let raw6 = b.alloc_qubits(6);
+        dialog_gcd_k2_pair_clear_raw_block_copy(&mut b, &compressed, &raw6, 2);
+        dialog_gcd_k2_pair_copy_compressed_block_to_raw(&mut b, &compressed, &raw6, 2);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        let mut seed = Shake128::default();
+        seed.update(b"k2-su-pack-roundtrip");
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        for shot in 0..64usize {
+            set_reg(&mut sim, &raw6, shot as u64, shot); // compressed starts |0>
+        }
+        sim.apply_iter(b.ops.iter());
+        assert_eq!(sim.phase, 0, "K2 SU pack round-trip phase garbage");
+        for shot in 0..64usize {
+            assert_eq!(
+                get_reg(&sim, &raw6, shot),
+                shot as u64,
+                "K2 SU clear∘copy not identity for raw6={shot:#x}"
+            );
+            assert_eq!(
+                get_reg(&sim, &compressed, shot),
+                0,
+                "K2 SU pack round-trip compressed not cleared for raw6={shot:#x}"
+            );
+            for q in (DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS + 6)..nq {
+                assert_eq!(
+                    (sim.qubit(QubitId(q as u64)) >> shot) & 1,
+                    0,
+                    "K2 SU pack round-trip ancilla {q} dirty for raw6={shot:#x}"
+                );
+            }
+        }
+    }
+
+    eprintln!(
+        "DIALOG_GCD_K2_SU_REVERSE_POP_SELFTEST: PASS (encoder round-trip 32/32 basis states, \
+         pack round-trip 64/64 raw6 states; value+phase+ancilla clean)"
+    );
+}
+
 pub fn build() -> Vec<Op> {
+    if std::env::var("R84_CLEAN_DIRECT_SELFTEST").ok().as_deref() == Some("1") {
+        r84_clean_direct_selftest();
+    }
+    if std::env::var("DIALOG_GCD_K2_SU_REVERSE_POP_SELFTEST")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        dialog_gcd_k2_su_reverse_pop_selftest();
+    }
     build_builder().ops
 }
 

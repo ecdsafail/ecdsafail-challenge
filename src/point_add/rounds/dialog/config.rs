@@ -420,6 +420,15 @@ pub(crate) fn dialog_gcd_k2_pair_compress_enabled() -> bool {
             == Some("1")
 }
 
+pub(crate) fn dialog_gcd_k2_state_updating_reverse_pop_enabled() -> bool {
+    dialog_gcd_k2_pair_compress_enabled()
+        && dialog_gcd_active_iterations() % 2 == 0
+        && std::env::var("DIALOG_GCD_K2_STATE_UPDATING_REVERSE_POP")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
 pub(crate) fn dialog_gcd_sidecar_group_size() -> usize {
     if dialog_gcd_k2_pair_compress_enabled() {
         2

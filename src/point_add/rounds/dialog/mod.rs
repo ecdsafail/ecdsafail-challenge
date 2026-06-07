@@ -209,13 +209,56 @@ pub(crate) fn dialog_gcd_body_carry_band_trim(step: usize) -> Option<usize> {
 }
 
 pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize) -> usize {
-    let w = dialog_gcd_body_carry_band_trim(step).unwrap_or_else(|| {
+    let mut w = dialog_gcd_body_carry_band_trim(step).unwrap_or_else(|| {
         std::env::var("DIALOG_GCD_BODY_CARRY_TRUNC_W")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0)
     });
+    // H3 (DIALOG_GCD_TRIO_WIDTH_NOTCH): a one-step extra band-trim at the second
+    // co-binding GCD-walk step. Steps 10 AND 11 both sit on the active_width=256
+    // plateau (round-to-even(256 - step*slope + margin) only drops at step 12), so
+    // both materialize want = 2*body_len-1 = 509 composite-scratch lanes and TIE at
+    // the trio peak. Notching ONLY step 11's body carry-trunc width by +2 (here,
+    // not in active_width) drops its body_w 256->254 -> body_len 255->253 ->
+    // want 509->505, so step 11 stops co-binding at the trio height. The notch
+    // trims the top 2 carry bits of the sub/add body, which are 0 on the reachable
+    // GCD support (realizable bitlen sits WIDTH_MARGIN below active_width) -> the
+    // SAME value-exact-on-island mechanism as BODY_CARRY_BAND_TRIMS, just one extra
+    // step. The runway layout, comparator and cswap still see the full active_width
+    // (they call dialog_gcd_tobitvector_active_width, not this fn), so the borrow
+    // geometry is unchanged; only the body width and the composite-scratch `want`
+    // shrink. Paired with the H1 sibling-s2 fold at step 10 to take the now-sole
+    // step-10 binder 1307->1306. Default off keeps the body width byte-identical.
+    if dialog_gcd_trio_width_notch_enabled() && step == dialog_gcd_trio_width_notch_step() {
+        w = w.saturating_add(dialog_gcd_trio_width_notch_extra());
+    }
     active_width.saturating_sub(w).max(2)
+}
+
+pub(crate) fn dialog_gcd_trio_width_notch_enabled() -> bool {
+    std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+/// The GCD-walk step whose body width is notched (H3). Default 11 — the second of
+/// the two co-binding active_width=256 plateau steps under the live route.
+pub(crate) fn dialog_gcd_trio_width_notch_step() -> usize {
+    std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH_STEP")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(11)
+}
+
+/// Extra carry-trunc bits removed at the notch step (H3). Default 2 — drops
+/// want by 2 (one carry + one gated lane), enough to clear the trio plateau.
+pub(crate) fn dialog_gcd_trio_width_notch_extra() -> usize {
+    std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH_EXTRA")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(2)
 }
 
 

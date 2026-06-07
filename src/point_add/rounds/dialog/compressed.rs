@@ -414,7 +414,10 @@ pub(crate) fn dialog_gcd_build_composite_scratch(
             push(q);
         }
     }
-    if dialog_gcd_borrow_current_s2_enabled() && !raw_block.is_empty() {
+    if dialog_gcd_borrow_current_s2_enabled()
+        && !raw_block.is_empty()
+        && !dialog_gcd_k2_state_updating_reverse_pop_enabled()
+    {
         // The CURRENT step's own K2 shift2 (`s2`) cell is |0> across this step's
         // body window: forward it is written only by the later SHIFT phase
         // (after the sub body), reverse it has just been uncomputed by
@@ -426,6 +429,13 @@ pub(crate) fn dialog_gcd_build_composite_scratch(
         // excludes all raw_block cells, so add it explicitly with the same
         // operand/duplicate guards. Disjoint from b0/b0_and_b1 (different slot
         // offset) and from u/v (raw_block is its own register).
+        //
+        // Suppressed under the state-updating reverse-pop route: there is no
+        // separate raw s2 cell (the shift2 bit lives *inside* the live compressed
+        // block as a control/state cell, not in a disjoint raw_block), so the
+        // raw_block[2*group_size+slot] index would either alias a live compressed
+        // control (slot 0 -> compressed[4]) or run past the 5-cell compressed
+        // block (slot 1 -> index 5, OOB). The −6q from SU subsumes this −1 borrow.
         let group_size = dialog_gcd_sidecar_group_size();
         let slot = step % group_size;
         let s2 = raw_block[2 * group_size + slot];
@@ -436,10 +446,53 @@ pub(crate) fn dialog_gcd_build_composite_scratch(
         {
             lanes.push(s2);
         }
+        // H1 (sibling-step s2 fold, gated under the trio width-notch). At a slot-0
+        // step (e.g. step 10) the SIBLING step's s2 cell (slot 1, e.g. step 11's
+        // shift2, raw_block[2*group_size+1]) is ALSO |0> across this step's body
+        // window: forward it is written only by the sibling's later SHIFT phase,
+        // which runs strictly after this step's body + free_vec; reverse it has
+        // been uncomputed by the sibling's reverse_unshift, which runs strictly
+        // before this step's reverse_add (reverse iterates high-to-low within the
+        // block). So at slot 0 BOTH s2 cells are clean, but only the current one is
+        // folded by the accepted BORROW_CURRENT_S2 lever. Folding the sibling adds a
+        // SECOND clean borrow lane -> one fewer owned deficit lane at the slot-0
+        // binder. This alone is net-zero (the slot-1 binder, e.g. step 11, ties at
+        // the same height and CANNOT fold its sibling raw[4] because step 10's s2 is
+        // already dirty there) UNLESS the slot-1 binder is independently relieved —
+        // which is exactly what the H3 width-notch does. Hence it is gated under
+        // TRIO_WIDTH_NOTCH and only the slot-0 sibling is added (the slot-1 sibling
+        // is dirty). Pure relabel, 0 added Toffoli; same |0>-window proof as the
+        // accepted s2 fold, just the sibling index. Suppressed under the SU
+        // reverse-pop route for the same alias/OOB reason as the current-s2 fold.
+        if dialog_gcd_trio_width_notch_enabled() && slot == 0 && group_size >= 2 {
+            let sibling_s2 = raw_block[2 * group_size + 1];
+            if lanes.len() < want
+                && !lanes.contains(&sibling_s2)
+                && !u[..active_width].contains(&sibling_s2)
+                && !v[..active_width].contains(&sibling_s2)
+            {
+                lanes.push(sibling_s2);
+            }
+        }
     }
     let owned = b.alloc_qubits(want - lanes.len());
     lanes.extend_from_slice(&owned);
+    if dialog_gcd_trace_composite_enabled() {
+        eprintln!(
+            "TRACE_COMPOSITE step={} active_width={} body_w={} want={} lanes_borrowed={} owned={}",
+            step,
+            active_width,
+            body_w,
+            want,
+            lanes.len() - owned.len(),
+            owned.len(),
+        );
+    }
     DialogGcdCompositeScratch { lanes, owned }
+}
+
+pub(crate) fn dialog_gcd_trace_composite_enabled() -> bool {
+    std::env::var("TRACE_COMPOSITE").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_pick_runway_safe_borrow_slice<'a>(
@@ -675,9 +728,25 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
 
     for block in 0..dialog_gcd_compressed_sidecar_blocks() {
         let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
-        let hosted_raw_block = dialog_gcd_forward_raw_block_host(u, compressed_log, block);
+        let compressed_block = dialog_gcd_compressed_sidecar_block(compressed_log, start);
+        let state_updating =
+            dialog_gcd_k2_state_updating_reverse_pop_enabled() && end - start == 2;
+        if state_updating && dialog_gcd_compressed_log_u_high_runway_enabled() {
+            assert!(
+                !dialog_gcd_slice_intersects(
+                    compressed_block,
+                    &u[..dialog_gcd_tobitvector_active_width(start)]
+                ),
+                "state-updating compressed block overlaps active forward u prefix at block {block}"
+            );
+        }
+        let hosted_raw_block = if state_updating {
+            None
+        } else {
+            dialog_gcd_forward_raw_block_host(u, compressed_log, block)
+        };
         let owned_raw_block =
-            if dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
+            if !state_updating && dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
                 b.alloc_qubits(dialog_gcd_raw_block_len())
             } else {
                 Vec::new()
@@ -689,10 +758,18 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
                 &owned_raw_block
             }
         });
+        let scratch_exclusion = if state_updating {
+            compressed_block
+        } else {
+            raw_block
+        };
         for step in start..end {
             let slot = step - start;
-            let b0 = raw_block[2 * slot];
-            let b0_and_b1 = raw_block[2 * slot + 1];
+            let (b0, b0_and_b1) = if state_updating {
+                dialog_gcd_k2_pair_state_controls(compressed_block, slot)
+            } else {
+                (raw_block[2 * slot], raw_block[2 * slot + 1])
+            };
             let active_width = dialog_gcd_tobitvector_active_width(step);
             let u_active = &u[..active_width];
             let v_active = &v[..active_width];
@@ -710,7 +787,7 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
                     u,
                     v,
                     compressed_log,
-                    raw_block,
+                    scratch_exclusion,
                     active_width,
                     step,
                 )
@@ -786,7 +863,17 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
                 // first shift) into the sidecar, then conditionally shift v_active
                 // right once more. Free 1-bit shift is a relabel; this 2nd shift is
                 // data-dependent (cswap cascade), ~aw CCX.
-                let s2 = raw_block[2 * dialog_gcd_sidecar_group_size() + slot];
+                if state_updating && slot == 1 {
+                    b.set_phase("dialog_gcd_compressed_block_tobitvector_encode_core_before_s2");
+                    let core = dialog_gcd_k2_pair_state_core(compressed_block);
+                    emit_dialog_gcd_k2_pair_core_encoder(b, &core);
+                    b.set_phase("dialog_gcd_compressed_block_tobitvector_shift");
+                }
+                let s2 = if state_updating {
+                    dialog_gcd_k2_pair_state_s2(compressed_block, slot)
+                } else {
+                    raw_block[2 * dialog_gcd_sidecar_group_size() + slot]
+                };
                 let v0 = v_active[0];
                 if std::env::var("DIALOG_GCD_K2_FORCE0").ok().as_deref() != Some("1") {
                     b.cx(v0, s2);
@@ -804,7 +891,6 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
 
         b.set_phase("dialog_gcd_compressed_block_tobitvector_compress_block");
         let base_bits = DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS; // 5
-        let compressed_block = dialog_gcd_compressed_sidecar_block(compressed_log, start);
         if dialog_gcd_compressed_log_u_high_runway_enabled() {
             // A parked forward block is first written only after its high-u
             // hosts have left the active prefix.
@@ -816,7 +902,10 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
                 "compressed-log runway overlaps active forward u prefix at block {block}"
             );
         }
-        if dialog_gcd_k2_pair_compress_enabled() {
+        if state_updating {
+            // The block already lives in compressed form: step0 prefix and step1
+            // controls were encoded before writing step1_s2 into compressed[4].
+        } else if dialog_gcd_k2_pair_compress_enabled() {
             dialog_gcd_k2_pair_clear_raw_block_copy(b, compressed_block, raw_block, end - start);
         } else {
             let raw_base = 2 * dialog_gcd_sidecar_group_size(); // 6
@@ -850,9 +939,15 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
     for block in (0..dialog_gcd_compressed_sidecar_blocks()).rev() {
         let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
         let compressed_block = dialog_gcd_compressed_sidecar_block(compressed_log, start);
-        let hosted_raw_block = dialog_gcd_reverse_raw_block_host(u, compressed_log, block);
+        let state_updating =
+            dialog_gcd_k2_state_updating_reverse_pop_enabled() && end - start == 2;
+        let hosted_raw_block = if state_updating {
+            None
+        } else {
+            dialog_gcd_reverse_raw_block_host(u, compressed_log, block)
+        };
         let owned_raw_block =
-            if dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
+            if !state_updating && dialog_gcd_host_reverse_raw_block_enabled() && hosted_raw_block.is_none() {
                 b.alloc_qubits(dialog_gcd_raw_block_len())
             } else {
                 Vec::new()
@@ -864,6 +959,11 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                 &owned_raw_block
             }
         });
+        let scratch_exclusion = if state_updating {
+            compressed_block
+        } else {
+            raw_block
+        };
 
         b.set_phase("dialog_gcd_compressed_block_tobitvector_reverse_decompress_block");
         if dialog_gcd_compressed_log_u_high_runway_enabled() {
@@ -877,7 +977,7 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                 "compressed-log runway overlaps active reverse u prefix at block {block}"
             );
         }
-        {
+        if !state_updating {
             let base_bits = DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS; // 5
             if dialog_gcd_k2_pair_compress_enabled() {
                 dialog_gcd_k2_pair_copy_compressed_block_to_raw(
@@ -901,8 +1001,11 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
 
         for step in (start..end).rev() {
             let slot = step - start;
-            let b0 = raw_block[2 * slot];
-            let b0_and_b1 = raw_block[2 * slot + 1];
+            let (b0, b0_and_b1) = if state_updating {
+                dialog_gcd_k2_pair_state_controls(compressed_block, slot)
+            } else {
+                (raw_block[2 * slot], raw_block[2 * slot + 1])
+            };
             let active_width = dialog_gcd_tobitvector_active_width(step);
             let u_active = &u[..active_width];
             let v_active = &v[..active_width];
@@ -913,7 +1016,11 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                 // mirror of forward K=2: conditional un-shift (reverse cswap order),
                 // then uncompute s2 back to |0> (v_active[0] is restored after the
                 // un-shift to the value s2 was derived from).
-                let s2 = raw_block[2 * dialog_gcd_sidecar_group_size() + slot];
+                let s2 = if state_updating {
+                    dialog_gcd_k2_pair_state_s2(compressed_block, slot)
+                } else {
+                    raw_block[2 * dialog_gcd_sidecar_group_size() + slot]
+                };
                 for i in (0..v_active.len().saturating_sub(1)).rev() {
                     let (lo, hi) = (v_active[i], v_active[i + 1]);
                     cswap(b, s2, lo, hi);
@@ -925,6 +1032,14 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                 }
             }
             dialog_gcd_unshift_right_assuming_even(b, v_active);
+
+            if state_updating && slot == 1 {
+                b.set_phase(
+                    "dialog_gcd_compressed_block_tobitvector_reverse_decode_core_after_s2_pop",
+                );
+                let core = dialog_gcd_k2_pair_state_core(compressed_block);
+                emit_dialog_gcd_k2_pair_core_encoder_inverse(b, &core);
+            }
 
             b.set_phase("dialog_gcd_compressed_block_tobitvector_reverse_add");
             let future = dialog_gcd_compressed_sidecar_future_carry_slice(
@@ -939,7 +1054,7 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                     u,
                     v,
                     compressed_log,
-                    raw_block,
+                    scratch_exclusion,
                     active_width,
                     step,
                 )
@@ -1422,7 +1537,9 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
     assert_eq!(target.len(), N);
 
     let compressed_log = b.alloc_qubits(dialog_gcd_allocated_compressed_sidecar_bits());
-    let raw_block = if dialog_gcd_host_reverse_raw_block_enabled() {
+    let raw_block = if dialog_gcd_host_reverse_raw_block_enabled()
+        || dialog_gcd_k2_state_updating_reverse_pop_enabled()
+    {
         Vec::new()
     } else {
         b.alloc_qubits(dialog_gcd_raw_block_len())
@@ -1450,7 +1567,8 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
         dialog_gcd_release_terminal_u(b, &u, runway.as_ref());
 
         b.set_phase("dialog_gcd_compressed_block_ipmul_apply_bitvector_reuse_factor_zero");
-        let apply_raw_block = if dialog_gcd_host_reverse_raw_block_enabled() {
+        let apply_raw_block = if dialog_gcd_host_reverse_raw_block_enabled() || raw_block.is_empty()
+        {
             b.alloc_qubits(dialog_gcd_raw_block_len())
         } else {
             Vec::new()
@@ -1692,7 +1810,9 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
     assert_eq!(target.len(), N);
 
     let compressed_log = b.alloc_qubits(dialog_gcd_allocated_compressed_sidecar_bits());
-    let raw_block = if dialog_gcd_host_reverse_raw_block_enabled() {
+    let raw_block = if dialog_gcd_host_reverse_raw_block_enabled()
+        || dialog_gcd_k2_state_updating_reverse_pop_enabled()
+    {
         Vec::new()
     } else {
         b.alloc_qubits(dialog_gcd_raw_block_len())
@@ -1720,7 +1840,8 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
         dialog_gcd_release_terminal_u(b, &u, runway.as_ref());
 
         b.set_phase("dialog_gcd_compressed_block_quotient_apply_reverse_reuse_factor_zero");
-        let apply_raw_block = if dialog_gcd_host_reverse_raw_block_enabled() {
+        let apply_raw_block = if dialog_gcd_host_reverse_raw_block_enabled() || raw_block.is_empty()
+        {
             b.alloc_qubits(dialog_gcd_raw_block_len())
         } else {
             Vec::new()
@@ -1958,6 +2079,38 @@ pub(crate) fn dialog_gcd_k2_pair_core(raw_block: &[QubitId]) -> [QubitId; 5] {
         raw_block[2], // second step b0
         raw_block[3], // second step b0_and_b1
     ]
+}
+
+pub(crate) fn dialog_gcd_k2_pair_state_core(compressed_block: &[QubitId]) -> [QubitId; 5] {
+    assert_eq!(compressed_block.len(), DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS);
+    [
+        compressed_block[4], // core0: first step b0, then step1 shift2 after encode
+        compressed_block[0], // core1: first step b0_and_b1 / encoded_core1
+        compressed_block[1], // core2: first step shift2 / encoded_core2
+        compressed_block[2], // core3: second step b0 / encoded_core3
+        compressed_block[3], // core4: second step b0_and_b1 / encoded_core4
+    ]
+}
+
+pub(crate) fn dialog_gcd_k2_pair_state_controls(
+    compressed_block: &[QubitId],
+    slot: usize,
+) -> (QubitId, QubitId) {
+    assert_eq!(compressed_block.len(), DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS);
+    match slot {
+        0 => (compressed_block[4], compressed_block[0]),
+        1 => (compressed_block[2], compressed_block[3]),
+        _ => panic!("K2 pair state slot out of range: {slot}"),
+    }
+}
+
+pub(crate) fn dialog_gcd_k2_pair_state_s2(compressed_block: &[QubitId], slot: usize) -> QubitId {
+    assert_eq!(compressed_block.len(), DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS);
+    match slot {
+        0 => compressed_block[1],
+        1 => compressed_block[4],
+        _ => panic!("K2 pair state shift slot out of range: {slot}"),
+    }
 }
 
 pub(crate) fn dialog_gcd_k2_pair_copy_compressed_block_to_raw(
