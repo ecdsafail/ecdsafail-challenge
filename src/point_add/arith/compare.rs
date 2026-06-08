@@ -327,6 +327,60 @@ pub(crate) fn cmp_lt_phase_conditioned_with_cin(
     b.pop_condition();
 }
 
+pub(crate) fn cmp_lt_phase_conditioned_borrowed_carries(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    c_in: QubitId,
+    carries: &[QubitId],
+    ctrl: QubitId,
+    phase: BitId,
+) {
+    let n = u.len();
+    assert_eq!(v.len(), n);
+    assert!(n > 0);
+    assert!(carries.len() >= n);
+
+    b.push_condition(phase);
+    for &q in u {
+        b.x(q);
+    }
+    cmp_lt_fast_prefix_window_forward(b, u, v, c_in, carries, ctrl, &[]);
+    b.cz(ctrl, u[n - 1]);
+    cmp_lt_fast_prefix_window_inverse(b, u, v, c_in, carries);
+    for &q in u {
+        b.x(q);
+    }
+    b.pop_condition();
+}
+
+pub(crate) fn cmp_lt_phase_conditioned(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    phase: BitId,
+) {
+    let n = u.len();
+    assert_eq!(v.len(), n);
+    assert!(n > 0);
+
+    let c_in = b.alloc_qubit();
+    b.push_condition(phase);
+    for &q in u {
+        b.x(q);
+    }
+    let carries = b.alloc_qubits(n);
+    cmp_lt_fast_prefix_window_forward(b, u, v, c_in, &carries, c_in, &[]);
+    b.cz(u[n - 1], u[n - 1]);
+    cmp_lt_fast_prefix_window_inverse(b, u, v, c_in, &carries);
+    b.free_vec(&carries);
+    for &q in u {
+        b.x(q);
+    }
+    b.pop_condition();
+    b.free(c_in);
+}
+
 pub(crate) fn ccx_cmp_lt_into_fast_prefix_targets_split(
     b: &mut B,
     u: &[QubitId],

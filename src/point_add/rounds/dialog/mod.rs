@@ -122,6 +122,59 @@ pub(crate) fn dialog_gcd_ccx_cmp_gt_truncated_into_width_hosted(
     }
 }
 
+pub(crate) fn dialog_gcd_cmp_gt_truncated_phase_conditioned_hosted(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    ctrl: QubitId,
+    phase: BitId,
+    compare_bits: usize,
+    borrowed: Option<&[QubitId]>,
+) {
+    assert_eq!(u.len(), v.len());
+    assert!(!u.is_empty());
+    let compare_bits = compare_bits.min(u.len()).max(1);
+    let start = u.len() - compare_bits;
+    let cmp_u = &v[start..];
+    let cmp_v = &u[start..];
+    let n = cmp_u.len();
+    let need = n + 1;
+    let avail = borrowed.map(|s| s.len()).unwrap_or(0);
+    if dialog_gcd_partial_host_comparator_enabled() && avail > 0 && avail < need {
+        let slice = borrowed.expect("avail>0");
+        let owned = b.alloc_qubits(need - avail);
+        let mut clean: Vec<QubitId> = Vec::with_capacity(need);
+        clean.extend_from_slice(slice);
+        clean.extend_from_slice(&owned);
+        let (c_in, carries) = clean.split_first().expect("need >= 1");
+        cmp_lt_phase_conditioned_borrowed_carries(
+            b,
+            cmp_u,
+            cmp_v,
+            *c_in,
+            &carries[..n],
+            ctrl,
+            phase,
+        );
+        b.free_vec(&owned);
+    } else if let Some(slice) = borrowed.filter(|s| s.len() >= need) {
+        let (c_in, carries) = slice.split_first().expect("slice len >= n+1 > 0");
+        cmp_lt_phase_conditioned_borrowed_carries(
+            b,
+            cmp_u,
+            cmp_v,
+            *c_in,
+            &carries[..n],
+            ctrl,
+            phase,
+        );
+    } else {
+        let c_in = b.alloc_qubit();
+        cmp_lt_phase_conditioned_with_cin(b, cmp_u, cmp_v, c_in, ctrl, phase);
+        b.free(c_in);
+    }
+}
+
 pub(crate) fn dialog_gcd_partial_host_comparator_enabled() -> bool {
     std::env::var("DIALOG_GCD_PARTIAL_HOST_COMPARATOR")
         .ok()
@@ -977,8 +1030,24 @@ pub(crate) fn dialog_gcd_clean_truncated_underflow(
     for &q in &a[compare_start..] {
         b.x(q);
     }
-    b.cx(ctrl, acc_ovf);
-    ccx_cmp_lt_into_fast(b, &acc[compare_start..], &a[compare_start..], ctrl, acc_ovf);
+    if dialog_gcd_special_clean_conditional_replay_enabled() {
+        let phase = b.alloc_bit();
+        b.hmr(acc_ovf, phase);
+        b.z_if(ctrl, phase);
+        let c_in = b.alloc_qubit();
+        cmp_lt_phase_conditioned_with_cin(
+            b,
+            &acc[compare_start..],
+            &a[compare_start..],
+            c_in,
+            ctrl,
+            phase,
+        );
+        b.free(c_in);
+    } else {
+        b.cx(ctrl, acc_ovf);
+        ccx_cmp_lt_into_fast(b, &acc[compare_start..], &a[compare_start..], ctrl, acc_ovf);
+    }
     for &q in &a[compare_start..] {
         b.x(q);
     }
@@ -1450,7 +1519,22 @@ pub(crate) fn dialog_gcd_cmod_add_materialized_pseudomersenne_chunked(
 
     b.set_phase("dialog_gcd_materialized_special_overflow_clean");
     let compare_start = N - dialog_gcd_special_overflow_clean_compare_bits(step);
-    ccx_cmp_lt_into_fast(b, &acc[compare_start..], &a[compare_start..], ctrl, acc_ovf);
+    if dialog_gcd_special_clean_conditional_replay_enabled() {
+        let phase = b.alloc_bit();
+        b.hmr(acc_ovf, phase);
+        let c_in = b.alloc_qubit();
+        cmp_lt_phase_conditioned_with_cin(
+            b,
+            &acc[compare_start..],
+            &a[compare_start..],
+            c_in,
+            ctrl,
+            phase,
+        );
+        b.free(c_in);
+    } else {
+        ccx_cmp_lt_into_fast(b, &acc[compare_start..], &a[compare_start..], ctrl, acc_ovf);
+    }
     unext_reg(b, acc_ovf);
 }
 

@@ -201,6 +201,20 @@ pub(crate) fn dialog_gcd_apply_boundary_conditional_replay_enabled() -> bool {
         == Some("1")
 }
 
+pub(crate) fn dialog_gcd_reverse_branch_conditional_replay_enabled() -> bool {
+    std::env::var("DIALOG_GCD_REVERSE_BRANCH_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+pub(crate) fn dialog_gcd_special_clean_conditional_replay_enabled() -> bool {
+    std::env::var("DIALOG_GCD_SPECIAL_CLEAN_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 pub(crate) fn dialog_gcd_apply_replay_swap_host_enabled() -> bool {
     // Prototype, deliberately NOT enabled by configure_ecdsafail_submission_route.
     //

@@ -1050,7 +1050,19 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
             }
 
             b.set_phase("dialog_gcd_compressed_block_tobitvector_reverse_branch_bits");
-            if dialog_gcd_fused_branch_bits_enabled() {
+            if dialog_gcd_reverse_branch_conditional_replay_enabled() {
+                let phase = b.alloc_bit();
+                b.hmr(b0_and_b1, phase);
+                dialog_gcd_cmp_gt_truncated_phase_conditioned_hosted(
+                    b,
+                    u_active,
+                    v_active,
+                    b0,
+                    phase,
+                    compare_bits,
+                    borrowed_carries,
+                );
+            } else if dialog_gcd_fused_branch_bits_enabled() {
                 // Fused path: no separate `cmp` ancilla (derives b0_and_b1 from the
                 // comparator carry). Allocating it would add a dead live-qubit at the
                 // reverse_branch_bits peak instant, so allocate only on the non-fused
