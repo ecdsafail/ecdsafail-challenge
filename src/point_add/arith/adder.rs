@@ -271,6 +271,79 @@ pub(crate) fn cuccaro_sub_low_to_ext_clean(
 }
 
 
+/// Hybrid Cuccaro add `acc += a mod 2^n` where the LOW `k` bits use the measured
+/// fast adder (k carry lanes live => ~1 CCX/bit) and the HIGH `n-k` bits use the
+/// coherent MAJ/UMA adder (0 carry ancilla => ~2 CCX/bit). The ripple carry out of
+/// the low block is threaded into the high block via a single fresh `cout` qubit,
+/// so peak ancilla = k (+1 transient cout) instead of n-1. `a` is preserved,
+/// `c_in` clean in/out. Same arithmetic as [`cuccaro_add`]; the high carry-out is
+/// discarded (mod 2^n). For k>=n this is just the all-fast adder; for k==0 the
+/// all-coherent adder.
+pub(crate) fn cuccaro_add_hybrid_lowfast(
+    b: &mut B,
+    a: &[QubitId],
+    acc: &[QubitId],
+    c_in: QubitId,
+    k: usize,
+) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    if n == 0 {
+        return;
+    }
+    let k = k.min(n);
+    if k == 0 {
+        cuccaro_add(b, a, acc, c_in);
+        return;
+    }
+    if k >= n {
+        cuccaro_add_fast(b, a, acc, c_in);
+        return;
+    }
+    // Low block: fast add of a[..k] into acc[..k], carry-out captured in `cout`.
+    let cout = b.alloc_qubit();
+    let mut acc_lo_ext: Vec<QubitId> = acc[..k].to_vec();
+    acc_lo_ext.push(cout);
+    cuccaro_add_fast_low_to_ext(b, &a[..k], &acc_lo_ext, c_in);
+    // High block: coherent add of a[k..] into acc[k..] with carry-in = cout.
+    // cuccaro_add consumes the carry-in (returns it to |0>) and discards its own
+    // carry-out (mod 2^{n-k}) -- exactly the high half of a mod-2^n ripple add.
+    cuccaro_add(b, &a[k..], &acc[k..], cout);
+    b.free(cout);
+}
+
+/// Hybrid Cuccaro subtract `acc -= a mod 2^n`: LOW `k` bits measured-fast, HIGH
+/// `n-k` bits coherent, borrow threaded through one fresh `cout`. Inverse-shaped
+/// twin of [`cuccaro_add_hybrid_lowfast`]; same peak (k+1) and CCX profile.
+pub(crate) fn cuccaro_sub_hybrid_lowfast(
+    b: &mut B,
+    a: &[QubitId],
+    acc: &[QubitId],
+    c_in: QubitId,
+    k: usize,
+) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    if n == 0 {
+        return;
+    }
+    let k = k.min(n);
+    if k == 0 {
+        cuccaro_sub(b, a, acc, c_in);
+        return;
+    }
+    if k >= n {
+        cuccaro_sub_fast(b, a, acc, c_in);
+        return;
+    }
+    let cout = b.alloc_qubit();
+    let mut acc_lo_ext: Vec<QubitId> = acc[..k].to_vec();
+    acc_lo_ext.push(cout);
+    cuccaro_sub_fast_low_to_ext(b, &a[..k], &acc_lo_ext, c_in);
+    cuccaro_sub(b, &a[k..], &acc[k..], cout);
+    b.free(cout);
+}
+
 pub(crate) fn load_const(b: &mut B, n: usize, c: U256) -> Vec<QubitId> {
     let qs = b.alloc_qubits(n);
     for i in 0..n {
@@ -736,6 +809,132 @@ pub(crate) fn cuccaro_sub_fast_prefix_ctrl_suffix_no_cin(
     b.cx(prefix[0], acc[0]);
 }
 
+/// Top-clean hybrid of [`cuccaro_add_fast_prefix_ctrl_suffix_no_cin`].  The top
+/// `clean_top` bits of the materialized prefix ripple use the zero-ancilla
+/// MAJ/UMA path, so the fast carry-lane region only spans `borrowed = n -
+/// clean_top` low bits and needs `borrowed` carry lanes instead of `n`.  The
+/// seam carry handed to the controlled suffix is still `prefix[n-1]`, exactly as
+/// the baseline (the clean MAJ chain leaves the running carry in prefix[n-1]).
+/// Value/phase identical to the baseline; only the low<->clean split moves.
+pub(crate) fn cuccaro_add_fast_prefix_ctrl_suffix_no_cin_topclean(
+    b: &mut B,
+    prefix: &[QubitId],
+    suffix: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+    carries: &[QubitId],
+    scratch: QubitId,
+    clean_top: usize,
+) {
+    let n = prefix.len();
+    assert!(n > 0);
+    assert!(!suffix.is_empty());
+    assert_eq!(acc.len(), n + suffix.len());
+    let clean_top = clean_top.min(n.saturating_sub(1));
+    if clean_top == 0 {
+        return cuccaro_add_fast_prefix_ctrl_suffix_no_cin(
+            b, prefix, suffix, acc, ctrl, carries, scratch,
+        );
+    }
+    let borrowed = n - clean_top;
+    assert!(carries.len() >= borrowed);
+
+    // Fast carry-lane MAJ for [0, borrowed).
+    b.cx(prefix[0], acc[0]);
+    b.ccx(prefix[0], acc[0], carries[0]);
+    b.cx(carries[0], prefix[0]);
+    for i in 1..borrowed {
+        b.cx(prefix[i], acc[i]);
+        b.cx(prefix[i], prefix[i - 1]);
+        b.ccx(prefix[i - 1], acc[i], carries[i]);
+        b.cx(carries[i], prefix[i]);
+    }
+    // Clean MAJ for [borrowed, n): carry rides in prefix[i].
+    for i in borrowed..n {
+        maj(b, prefix[i - 1], acc[i], prefix[i]);
+    }
+
+    cuccaro_add_ctrl_lowq(b, suffix, &acc[n..], ctrl, prefix[n - 1], scratch);
+
+    // Clean UMA for [borrowed, n) in reverse.
+    for i in (borrowed..n).rev() {
+        uma(b, prefix[i - 1], acc[i], prefix[i]);
+    }
+    // Fast measured UMA for [0, borrowed) in reverse.
+    for i in (1..borrowed).rev() {
+        b.cx(carries[i], prefix[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(prefix[i - 1], acc[i], m);
+        b.cx(prefix[i], prefix[i - 1]);
+        b.cx(prefix[i - 1], acc[i]);
+    }
+    b.cx(carries[0], prefix[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(prefix[0], acc[0], m0);
+}
+
+/// Inverse of [`cuccaro_add_fast_prefix_ctrl_suffix_no_cin_topclean`].
+pub(crate) fn cuccaro_sub_fast_prefix_ctrl_suffix_no_cin_topclean(
+    b: &mut B,
+    prefix: &[QubitId],
+    suffix: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+    carries: &[QubitId],
+    scratch: QubitId,
+    clean_top: usize,
+) {
+    let n = prefix.len();
+    assert!(n > 0);
+    assert!(!suffix.is_empty());
+    assert_eq!(acc.len(), n + suffix.len());
+    let clean_top = clean_top.min(n.saturating_sub(1));
+    if clean_top == 0 {
+        return cuccaro_sub_fast_prefix_ctrl_suffix_no_cin(
+            b, prefix, suffix, acc, ctrl, carries, scratch,
+        );
+    }
+    let borrowed = n - clean_top;
+    assert!(carries.len() >= borrowed);
+
+    // Fast carry-lane forward sweep for [0, borrowed).
+    b.ccx(prefix[0], acc[0], carries[0]);
+    b.cx(carries[0], prefix[0]);
+    for i in 1..borrowed {
+        b.cx(prefix[i - 1], acc[i]);
+        b.cx(prefix[i], prefix[i - 1]);
+        b.ccx(prefix[i - 1], acc[i], carries[i]);
+        b.cx(carries[i], prefix[i]);
+    }
+    // Clean inv_uma for [borrowed, n) (forward, mirrors the body sub-topclean).
+    for i in borrowed..n {
+        inv_uma(b, prefix[i - 1], acc[i], prefix[i]);
+    }
+
+    cuccaro_sub_ctrl_lowq(b, suffix, &acc[n..], ctrl, prefix[n - 1], scratch);
+
+    // Clean inv_maj for [borrowed, n) in reverse.
+    for i in (borrowed..n).rev() {
+        inv_maj(b, prefix[i - 1], acc[i], prefix[i]);
+    }
+    // Fast measured reverse sweep for [0, borrowed).
+    for i in (1..borrowed).rev() {
+        b.cx(carries[i], prefix[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(prefix[i - 1], acc[i], m);
+        b.cx(prefix[i], prefix[i - 1]);
+        b.cx(prefix[i], acc[i]);
+    }
+    b.cx(carries[0], prefix[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(prefix[0], acc[0], m0);
+    b.cx(prefix[0], acc[0]);
+}
+
 
 pub(crate) fn cuccaro_add_fast_windowed_low_to_ext(
     b: &mut B,
@@ -786,6 +985,82 @@ pub(crate) fn cuccaro_add_fast_windowed_low_to_ext(
         cmp_lt_into_fast_with_cin(b, &acc_ext[..p], &a[..p], c_in, cout);
         b.free(cout);
     }
+}
+
+/// Asymmetric 2-block fast windowed add `acc_ext(n+1) += a(n)` (carry into
+/// acc_ext[n]). Both blocks measured-fast; the single inter-block carry is
+/// uncomputed to |0> via one cmp_lt over the LOW `s` bits. Unlike the equal-split
+/// [`cuccaro_add_fast_windowed_low_to_ext`], the boundary is placed at a chosen
+/// `s`, so the cmp_lt uncompute cost (~s CCX) is decoupled from the (large) high
+/// block: pick `s` small and the high block as wide as peak allows to capture most
+/// of the fast saving for ~s overhead. Peak ancilla = max(s+1, n+1-s) carry lanes.
+/// `a` preserved; `c_in` clean in/out. Phase-clean (carry returns to |0>).
+pub(crate) fn cuccaro_add_fast_split2_low_to_ext(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+    s: usize,
+) {
+    let n = a.len();
+    assert_eq!(acc_ext.len(), n + 1);
+    let ext_n = n + 1;
+    // Degenerate: no useful boundary -> plain fast low_to_ext.
+    if s == 0 || s >= ext_n - 1 {
+        cuccaro_add_fast_low_to_ext(b, a, acc_ext, c_in);
+        return;
+    }
+    // Low block [0,s): fast add capturing carry-out into `cout`.
+    let cout = b.alloc_qubit();
+    let zero = b.alloc_qubit();
+    let mut a_block: Vec<QubitId> = a[0..s].to_vec();
+    a_block.push(zero);
+    let mut acc_block: Vec<QubitId> = acc_ext[0..s].to_vec();
+    acc_block.push(cout);
+    cuccaro_add_fast(b, &a_block, &acc_block, c_in);
+    b.free(zero);
+    // High block [s, n+1): fast add of a[s..n] into acc_ext[s..n+1], carry-in cout.
+    cuccaro_add_fast_low_to_ext(b, &a[s..n], &acc_ext[s..ext_n], cout);
+    // Uncompute cout to |0>: recompute the low-block carry (cmp_lt over s bits).
+    cmp_lt_into_fast_with_cin(b, &acc_ext[..s], &a[..s], c_in, cout);
+    b.free(cout);
+}
+
+/// Subtract twin of [`cuccaro_add_fast_split2_low_to_ext`]: `acc_ext -= a` with
+/// borrow into acc_ext[n], borrow threaded across one boundary at `s` and
+/// uncomputed via the borrow-form cmp_lt (X-conjugated). Phase-clean.
+pub(crate) fn cuccaro_sub_fast_split2_low_to_ext(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+    s: usize,
+) {
+    let n = a.len();
+    assert_eq!(acc_ext.len(), n + 1);
+    let ext_n = n + 1;
+    if s == 0 || s >= ext_n - 1 {
+        cuccaro_sub_fast_low_to_ext(b, a, acc_ext, c_in);
+        return;
+    }
+    let bout = b.alloc_qubit();
+    let zero = b.alloc_qubit();
+    let mut a_block: Vec<QubitId> = a[0..s].to_vec();
+    a_block.push(zero);
+    let mut acc_block: Vec<QubitId> = acc_ext[0..s].to_vec();
+    acc_block.push(bout);
+    cuccaro_sub_fast(b, &a_block, &acc_block, c_in);
+    b.free(zero);
+    cuccaro_sub_fast_low_to_ext(b, &a[s..n], &acc_ext[s..ext_n], bout);
+    // Borrow-form uncompute (mirrors the equal-split primitive's sub branch).
+    for i in 0..s {
+        b.x(a[i]);
+    }
+    cmp_lt_into_fast_with_cin(b, &a[..s], &acc_ext[..s], c_in, bout);
+    for i in 0..s {
+        b.x(a[i]);
+    }
+    b.free(bout);
 }
 
 pub(crate) fn cuccaro_sub_fast_windowed_low_to_ext(
@@ -1009,6 +1284,424 @@ pub(crate) fn cuccaro_sub_fast_borrowed_carries_no_cin(
     b.cx(a[0], acc[0]);
 }
 
+/// Top-clean hybrid of [`cuccaro_add_fast_borrowed_carries_no_cin`].  Identical
+/// arithmetic (`acc += a mod 2^n`, `a` preserved, `carries` restored to |0>),
+/// but the top `clean_top` bit positions run the zero-ancilla MAJ/UMA
+/// (CCX-uncomputed) while the low `borrowed = n - clean_top` positions keep
+/// the fast measured-uncompute carry lanes.  This borrows only
+/// `borrowed` carry lanes instead of `n - 1`, lowering transient peak by
+/// `clean_top` qubits.  `clean_top` is clamped to `[0, n]`.  The caller
+/// supplies `carries[..borrowed]` (same convention as the `_no_cin` baseline).
+pub(crate) fn cuccaro_add_fast_borrowed_carries_no_cin_topclean(
+    b: &mut B,
+    a: &[QubitId],
+    acc: &[QubitId],
+    carries: &[QubitId],
+    clean_top: usize,
+) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    let clean_top = clean_top.min(n);
+    let borrowed = n - clean_top;
+
+    if borrowed == 0 {
+        // Pure clean MAJ/UMA ripple (same as _no_cin, which already folds c_in=0).
+        return cuccaro_add_fast_borrowed_carries_no_cin(b, a, acc, carries);
+    }
+    if clean_top == 0 {
+        return cuccaro_add_fast_borrowed_carries_no_cin(b, a, acc, carries);
+    }
+
+    // Now 0 < borrowed < n and 0 < clean_top < n.
+    // The fast region covers bits [0, borrowed) with borrowed MAJ gates
+    // (step 0 + loop 1..borrowed), needing `borrowed` carry lanes.
+    assert!(carries.len() >= borrowed);
+
+    // ── Forward sweep ──────────────────────────────────────────────────────
+    // Fast carry-lane MAJ for indices [0, borrowed).  After this sweep the
+    // running carry lives in a[borrowed-1] (the seam).
+    // Step 0 (c_in folded): cx(a0,acc0); ccx(a0,acc0,c0); cx(c0,a0)
+    b.cx(a[0], acc[0]);
+    b.ccx(a[0], acc[0], carries[0]);
+    b.cx(carries[0], a[0]);
+    // Steps 1..borrowed-1:
+    for i in 1..borrowed {
+        b.cx(a[i], acc[i]);
+        b.cx(a[i], a[i - 1]);
+        b.ccx(a[i - 1], acc[i], carries[i]);
+        b.cx(carries[i], a[i]);
+    }
+    // Clean (zero-ancilla) MAJ for indices [borrowed, n).
+    // At i=borrowed the carry-in x is a[borrowed-1], which holds the seam carry.
+    for i in borrowed..n - 1 {
+        maj(b, a[i - 1], acc[i], a[i]);
+    }
+
+    // Final sum bit (same as the _no_cin baseline):
+    //   acc[n-1] ^= a[n-2]; acc[n-1] ^= a[n-1]
+    b.cx(a[n - 2], acc[n - 1]);
+    b.cx(a[n - 1], acc[n - 1]);
+
+    // ── Reverse sweep ──────────────────────────────────────────────────────
+    // Clean UMA for [borrowed, n): reverse of the clean MAJ above.
+    for i in (borrowed..n - 1).rev() {
+        uma(b, a[i - 1], acc[i], a[i]);
+    }
+    // Fast measured UMA for [0, borrowed): inverse of the fast MAJ above.
+    for i in (1..borrowed).rev() {
+        b.cx(carries[i], a[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(a[i - 1], acc[i], m);
+        b.cx(a[i], a[i - 1]);
+        b.cx(a[i - 1], acc[i]);
+    }
+    // Step 0 UMA (c_in folded):
+    b.cx(carries[0], a[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(a[0], acc[0], m0);
+}
+
+/// Top-clean hybrid of [`cuccaro_sub_fast_borrowed_carries_no_cin`].  Same
+/// carry-lane savings as the add variant; this is its exact subtract analogue
+/// (clean `inv_uma`/`inv_maj` on the top `clean_top` positions, fast measured
+/// carry uncompute on the low region).
+pub(crate) fn cuccaro_sub_fast_borrowed_carries_no_cin_topclean(
+    b: &mut B,
+    a: &[QubitId],
+    acc: &[QubitId],
+    carries: &[QubitId],
+    clean_top: usize,
+) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    let clean_top = clean_top.min(n);
+    let borrowed = n - clean_top;
+
+    if borrowed == 0 {
+        return cuccaro_sub_fast_borrowed_carries_no_cin(b, a, acc, carries);
+    }
+    if clean_top == 0 {
+        return cuccaro_sub_fast_borrowed_carries_no_cin(b, a, acc, carries);
+    }
+
+    // ── Forward sweep ──────────────────────────────────────────────────────
+    // Fast carry-lane sub seed for index 0 (c_in folded):
+    b.ccx(a[0], acc[0], carries[0]);
+    b.cx(carries[0], a[0]);
+    // Steps 1..borrowed-1:
+    for i in 1..borrowed {
+        b.cx(a[i - 1], acc[i]);
+        b.cx(a[i], a[i - 1]);
+        b.ccx(a[i - 1], acc[i], carries[i]);
+        b.cx(carries[i], a[i]);
+    }
+    // Clean inv_uma for [borrowed, n):
+    for i in borrowed..n - 1 {
+        inv_uma(b, a[i - 1], acc[i], a[i]);
+    }
+
+    // Final sum bit (same as the _no_cin baseline):
+    b.cx(a[n - 1], acc[n - 1]);
+    b.cx(a[n - 2], acc[n - 1]);
+
+    // ── Reverse sweep ──────────────────────────────────────────────────────
+    // Clean inv_maj for [borrowed, n):
+    for i in (borrowed..n - 1).rev() {
+        inv_maj(b, a[i - 1], acc[i], a[i]);
+    }
+    // Fast measured inv_MAJ for [0, borrowed):
+    for i in (1..borrowed).rev() {
+        b.cx(carries[i], a[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(a[i - 1], acc[i], m);
+        b.cx(a[i], a[i - 1]);
+        b.cx(a[i], acc[i]);
+    }
+    // Step 0 (c_in folded):
+    b.cx(carries[0], a[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(a[0], acc[0], m0);
+    b.cx(a[0], acc[0]);
+}
+
+/// Build-time differential self-test for the `_topclean` no-c_in ripple
+/// variants.  For a spread of widths `n` and every `clean_top` in
+/// `0..=min(n,8)`, checks (a) `acc == (acc_in (+|-) a_in) mod 2^n`, (b) `a`
+/// restored, (c) every carry lane is |0>, (d) all other ancilla qubits are
+/// |0>, (e) global phase is 0.  Returns `Err` with a precise diagnostic on
+/// the first failure.  Invoked from `point_add::build()` under
+/// `BODY_TOPCLEAN_SELFTEST=1`.
+pub(crate) fn body_topclean_selftest() -> Result<(), String> {
+    use crate::circuit::QubitOrBit;
+
+    // Deterministic 64-bit LCG.
+    fn lcg(s: &mut u64) -> u64 {
+        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *s
+    }
+    fn rand_u256(s: &mut u64, n: usize) -> U256 {
+        let mut limbs = [0u64; 4];
+        for limb in limbs.iter_mut() {
+            *limb = lcg(s);
+        }
+        let mut v = U256::from_limbs(limbs);
+        if n < 256 {
+            let mask = (U256::from(1u64) << n) - U256::from(1u64);
+            v &= mask;
+        }
+        v
+    }
+
+    let widths = [2usize, 3, 5, 8, 16, 33, 64, 65, 128, 255];
+    for &n in widths.iter() {
+        let max_clean_top = n.min(8);
+        for clean_top in 0..=max_clean_top {
+            for is_sub in [false, true] {
+                let mut b = B::new();
+                let a = b.alloc_qubits(n);
+                let acc = b.alloc_qubits(n);
+                let carries = b.alloc_qubits(n.saturating_sub(1));
+                if is_sub {
+                    cuccaro_sub_fast_borrowed_carries_no_cin_topclean(
+                        &mut b, &a, &acc, &carries, clean_top,
+                    );
+                } else {
+                    cuccaro_add_fast_borrowed_carries_no_cin_topclean(
+                        &mut b, &a, &acc, &carries, clean_top,
+                    );
+                }
+                let nq = b.next_qubit as usize;
+                let nb = b.next_bit as usize;
+
+                let a_qb: Vec<QubitOrBit> = a.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+                let acc_qb: Vec<QubitOrBit> =
+                    acc.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+
+                let mut seed = Shake256::default();
+                seed.update(b"body-topclean-selftest");
+                seed.update(&(n as u64).to_le_bytes());
+                seed.update(&(clean_top as u64).to_le_bytes());
+                seed.update(&[is_sub as u8]);
+                let mut xof = seed.finalize_xof();
+                let mut sim = Simulator::new(nq.max(1), nb.max(1), &mut xof);
+
+                let mut rs = 0x9e3779b97f4a7c15u64 ^ ((n as u64) << 32) ^ (clean_top as u64);
+                let modulus = U256::from(1u64) << n;
+                let mut a_in = [U256::ZERO; 64];
+                let mut acc_in = [U256::ZERO; 64];
+                for shot in 0..64usize {
+                    let av = rand_u256(&mut rs, n);
+                    let accv = rand_u256(&mut rs, n);
+                    a_in[shot] = av;
+                    acc_in[shot] = accv;
+                    sim.set_register(&a_qb, av, shot);
+                    sim.set_register(&acc_qb, accv, shot);
+                }
+
+                sim.apply_iter(b.ops.iter());
+
+                if sim.phase != 0 {
+                    return Err(format!(
+                        "phase leak: n={n} clean_top={clean_top} sub={is_sub} phase={:#x}",
+                        sim.phase
+                    ));
+                }
+                for shot in 0..64usize {
+                    let sum = if is_sub {
+                        (acc_in[shot] + modulus - a_in[shot]) % modulus
+                    } else {
+                        (acc_in[shot] + a_in[shot]) % modulus
+                    };
+                    let got = sim.get_register(&acc_qb, shot);
+                    if got != sum {
+                        return Err(format!(
+                            "value mismatch: n={n} clean_top={clean_top} sub={is_sub} shot={shot} got={got:#x} exp={sum:#x} a={:#x} acc={:#x}",
+                            a_in[shot], acc_in[shot]
+                        ));
+                    }
+                    let a_got = sim.get_register(&a_qb, shot);
+                    if a_got != a_in[shot] {
+                        return Err(format!(
+                            "source not restored: n={n} clean_top={clean_top} sub={is_sub} shot={shot} a_got={a_got:#x} a_in={:#x}",
+                            a_in[shot]
+                        ));
+                    }
+                    // Every ancilla qubit (outside a/acc) must be |0>.
+                    let used: std::collections::HashSet<u64> = a
+                        .iter()
+                        .chain(acc.iter())
+                        .map(|q| q.0)
+                        .collect();
+                    for qid in 0..nq as u64 {
+                        if used.contains(&qid) {
+                            continue;
+                        }
+                        if (sim.qubit(QubitId(qid)) >> shot) & 1 != 0 {
+                            return Err(format!(
+                                "ancilla {qid} dirty: n={n} clean_top={clean_top} sub={is_sub} shot={shot}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Differential selftest for the prefix-ctrl-suffix top-clean adders against the
+/// baseline (clean_top=0). Confirms value, source restoration, ancilla, and
+/// phase for all clean_top, ctrl, both add/sub, across widths. Run via
+/// `PREFIX_TOPCLEAN_SELFTEST=1`.
+pub(crate) fn prefix_topclean_selftest() -> Result<(), String> {
+    use crate::circuit::QubitOrBit;
+    fn lcg(s: &mut u64) -> u64 {
+        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *s
+    }
+    fn rand_u256(s: &mut u64, n: usize) -> U256 {
+        let mut limbs = [0u64; 4];
+        for limb in limbs.iter_mut() {
+            *limb = lcg(s);
+        }
+        let mut v = U256::from_limbs(limbs);
+        if n < 256 {
+            let mask = (U256::from(1u64) << n) - U256::from(1u64);
+            v &= mask;
+        }
+        v
+    }
+
+    // (prefix_len, suffix_len). Total n = pl+sl must be <= 255 (U256 modulus).
+    let shapes = [
+        (2usize, 1usize), (3, 1), (3, 2), (5, 2), (8, 3), (16, 4),
+        (33, 7), (64, 5), (128, 9), (180, 55), (240, 7), (244, 9),
+    ];
+    for &(pl, sl) in shapes.iter() {
+        let n = pl + sl; // total a width
+        let max_clean_top = pl.saturating_sub(1).min(8);
+        for clean_top in 0..=max_clean_top {
+            for is_sub in [false, true] {
+                for ctrl_val in [0u8, 1u8] {
+                    let mut b = B::new();
+                    let prefix = b.alloc_qubits(pl);
+                    let suffix = b.alloc_qubits(sl);
+                    let acc = b.alloc_qubits(n);
+                    let carries = b.alloc_qubits(pl); // >= borrowed
+                    let scratch = b.alloc_qubit();
+                    let ctrl = b.alloc_qubit();
+                    if is_sub {
+                        cuccaro_sub_fast_prefix_ctrl_suffix_no_cin_topclean(
+                            &mut b, &prefix, &suffix, &acc, ctrl, &carries, scratch, clean_top,
+                        );
+                    } else {
+                        cuccaro_add_fast_prefix_ctrl_suffix_no_cin_topclean(
+                            &mut b, &prefix, &suffix, &acc, ctrl, &carries, scratch, clean_top,
+                        );
+                    }
+                    let nq = b.next_qubit as usize;
+                    let nb = b.next_bit as usize;
+
+                    let prefix_qb: Vec<QubitOrBit> =
+                        prefix.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+                    let suffix_qb: Vec<QubitOrBit> =
+                        suffix.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+                    let acc_qb: Vec<QubitOrBit> =
+                        acc.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+                    let ctrl_qb = [QubitOrBit::Qubit(ctrl)];
+
+                    let mut seed = Shake256::default();
+                    seed.update(b"prefix-topclean-selftest");
+                    seed.update(&(n as u64).to_le_bytes());
+                    seed.update(&(clean_top as u64).to_le_bytes());
+                    seed.update(&[is_sub as u8, ctrl_val]);
+                    let mut xof = seed.finalize_xof();
+                    let mut sim = Simulator::new(nq.max(1), nb.max(1), &mut xof);
+
+                    let mut rs = 0x1234567u64 ^ ((n as u64) << 32) ^ ((clean_top as u64) << 8)
+                        ^ ((ctrl_val as u64) << 16);
+                    let modulus = U256::from(1u64) << n;
+                    let mut a_in = [U256::ZERO; 64];
+                    let mut acc_in = [U256::ZERO; 64];
+                    for shot in 0..64usize {
+                        let av = rand_u256(&mut rs, n);
+                        let accv = rand_u256(&mut rs, n);
+                        a_in[shot] = av;
+                        acc_in[shot] = accv;
+                        // In real GCD usage the prefix lanes hold `ctrl AND a_low`
+                        // (loaded via ccx(ctrl, sub, gated)); the suffix is read
+                        // through ctrl. So gate BOTH by ctrl in the fixture.
+                        let pmask = (U256::from(1u64) << pl) - U256::from(1u64);
+                        let prefix_load = if ctrl_val == 1 { av & pmask } else { U256::ZERO };
+                        sim.set_register(&prefix_qb, prefix_load, shot);
+                        sim.set_register(&suffix_qb, av >> pl, shot);
+                        sim.set_register(&acc_qb, accv, shot);
+                        if ctrl_val == 1 {
+                            sim.set_register(&ctrl_qb, U256::from(1u64), shot);
+                        }
+                    }
+
+                    sim.apply_iter(b.ops.iter());
+
+                    if sim.phase != 0 {
+                        return Err(format!(
+                            "phase leak: pl={pl} sl={sl} clean_top={clean_top} sub={is_sub} ctrl={ctrl_val} phase={:#x}",
+                            sim.phase
+                        ));
+                    }
+                    for shot in 0..64usize {
+                        // With both prefix and suffix gated by ctrl: delta = ctrl ? a : 0.
+                        let delta = if ctrl_val == 1 { a_in[shot] } else { U256::ZERO };
+                        let sum = if is_sub {
+                            (acc_in[shot] + modulus - delta) % modulus
+                        } else {
+                            (acc_in[shot] + delta) % modulus
+                        };
+                        let got = sim.get_register(&acc_qb, shot);
+                        if got != sum {
+                            return Err(format!(
+                                "value: pl={pl} sl={sl} ct={clean_top} sub={is_sub} ctrl={ctrl_val} shot={shot} got={got:#x} exp={sum:#x}"
+                            ));
+                        }
+                        // prefix (gated by ctrl) and suffix must be restored.
+                        let pmask = (U256::from(1u64) << pl) - U256::from(1u64);
+                        let prefix_load = if ctrl_val == 1 { a_in[shot] & pmask } else { U256::ZERO };
+                        let p_got = sim.get_register(&prefix_qb, shot);
+                        let s_got = sim.get_register(&suffix_qb, shot);
+                        if p_got != prefix_load || s_got != (a_in[shot] >> pl) {
+                            return Err(format!(
+                                "source: pl={pl} sl={sl} ct={clean_top} sub={is_sub} ctrl={ctrl_val} shot={shot} p_got={p_got:#x} s_got={s_got:#x}"
+                            ));
+                        }
+                        let used: std::collections::HashSet<u64> = prefix
+                            .iter()
+                            .chain(suffix.iter())
+                            .chain(acc.iter())
+                            .chain(std::iter::once(&ctrl))
+                            .map(|q| q.0)
+                            .collect();
+                        for qid in 0..nq as u64 {
+                            if used.contains(&qid) {
+                                continue;
+                            }
+                            if (sim.qubit(QubitId(qid)) >> shot) & 1 != 0 {
+                                return Err(format!(
+                                    "ancilla {qid} dirty: pl={pl} sl={sl} ct={clean_top} sub={is_sub} ctrl={ctrl_val} shot={shot}"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 
 pub(crate) fn inv_maj(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
     // maj = CX(w,y); CX(w,x); CCX(x,y,w)
@@ -1058,6 +1751,13 @@ pub(crate) fn cswap(b: &mut B, ctrl: QubitId, a: QubitId, t: QubitId) {
 
 /// 3-controlled X with per-control polarity. Uses a borrowed scratch qubit
 /// (must be supplied clean, returns clean).
+// Gate: measured (Hmr) uncompute of the mcx3_polar scratch instead of a coherent
+// CCX. Default OFF = byte-identical. Saves 1 CCX per controlled-ride MAJ/UMA leaf
+// (the CAT4 lever tofprof found in materialized_add/sub_body on the live #1).
+fn mcx3_measured_uncompute_enabled() -> bool {
+    std::env::var("DIALOG_GCD_CTRL_LOWQ_MEASURED").ok().as_deref() == Some("1")
+}
+
 pub(crate) fn mcx3_polar(
     b: &mut B,
     c1: QubitId,
@@ -1080,7 +1780,16 @@ pub(crate) fn mcx3_polar(
     }
     b.ccx(c1, c2, scratch);
     b.ccx(scratch, c3, target);
-    b.ccx(c1, c2, scratch);
+    if mcx3_measured_uncompute_enabled() {
+        // Gidney measured AND-uncompute (cf. cuccaro_*_fast / ROUND84_FOLD): scratch
+        // holds c1&c2 here; a free Hmr + classical CZ(c1,c2) correction uncomputes it
+        // value/phase-exactly and resets scratch to |0>, saving the coherent CCX.
+        let m = b.alloc_bit();
+        b.hmr(scratch, m);
+        b.cz_if(c1, c2, m);
+    } else {
+        b.ccx(c1, c2, scratch);
+    }
     if !p3 {
         b.x(c3);
     }

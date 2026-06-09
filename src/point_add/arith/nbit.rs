@@ -58,6 +58,22 @@ pub(crate) fn sub_nbit_qq(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     b.free(c_in);
 }
 
+/// Hybrid `acc += a mod 2^n`: low `k` bits measured-fast, high `n-k` coherent.
+pub(crate) fn add_nbit_qq_hybrid(b: &mut B, a: &[QubitId], acc: &[QubitId], k: usize) {
+    assert_eq!(a.len(), acc.len());
+    let c_in = b.alloc_qubit();
+    cuccaro_add_hybrid_lowfast(b, a, acc, c_in, k);
+    b.free(c_in);
+}
+
+/// Hybrid `acc -= a mod 2^n`: low `k` bits measured-fast, high `n-k` coherent.
+pub(crate) fn sub_nbit_qq_hybrid(b: &mut B, a: &[QubitId], acc: &[QubitId], k: usize) {
+    assert_eq!(a.len(), acc.len());
+    let c_in = b.alloc_qubit();
+    cuccaro_sub_hybrid_lowfast(b, a, acc, c_in, k);
+    b.free(c_in);
+}
+
 
 pub(crate) fn add_nbit_const(b: &mut B, acc: &[QubitId], c: U256) {
     let n = acc.len();

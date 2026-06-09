@@ -775,6 +775,82 @@ fn round84_sub_small(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     }
 }
 
+// Windowed big-fold lever: the BIG fold-step adders (225..257-bit) are left
+// coherent by ROUND84_FOLD_FAST_ADD because a full fast version needs ~256 carry
+// lanes and the fold phase has only ~76 of headroom under the 1297 peak.
+//
+// Two prototype routes, both stacked on the fold:
+//  * ROUND84_BIGFOLD_WINDOW=K  -> low-K-fast / high-coherent split via one threaded
+//    carry qubit (add_nbit_qq_hybrid). Peak ancilla = K. NOTE: this route leaves
+//    the threaded carry-out non-|0> at free => the R(reset) randomizes the global
+//    phase => eval phase-garbage on every batch (a VALIDITY FAILURE). Kept only for
+//    the peak/saving analysis; NOT a valid candidate.
+//  * ROUND84_BIGFOLD_BLOCKS=Bk -> the production carry-clean windowed fast adder
+//    (cuccaro_*_fast_windowed_low_to_ext): Bk fast blocks with inter-block carries
+//    uncomputed to |0> via cmp_lt. Phase-clean. Peak set by the cmp_lt uncompute.
+fn round84_bigfold_window() -> usize {
+    std::env::var("ROUND84_BIGFOLD_WINDOW")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+fn round84_bigfold_blocks() -> usize {
+    std::env::var("ROUND84_BIGFOLD_BLOCKS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+// Asymmetric 2-block split at SPLIT bits: low SPLIT fast / high (W-1-SPLIT) fast,
+// one cleaned carry boundary. Best peak-neutral big-fold lever (small SPLIT =>
+// cheap cmp uncompute, wide high block => most of the fast saving). 0 = disabled.
+fn round84_bigfold_split() -> usize {
+    std::env::var("ROUND84_BIGFOLD_SPLIT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+#[inline]
+fn round84_add_big(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
+    let split = round84_bigfold_split();
+    let blocks = round84_bigfold_blocks();
+    let k = round84_bigfold_window();
+    let w = a.len();
+    if split > 0 {
+        // acc(W) += a(W), a top bit known |0> => split2 on a[..W-1] into acc(W).
+        let c_in = b.alloc_qubit();
+        cuccaro_add_fast_split2_low_to_ext(b, &a[..w - 1], acc, c_in, split);
+        b.free(c_in);
+    } else if blocks > 0 {
+        let c_in = b.alloc_qubit();
+        cuccaro_add_fast_windowed_low_to_ext(b, &a[..w - 1], acc, c_in, blocks);
+        b.free(c_in);
+    } else if k > 0 {
+        add_nbit_qq_hybrid(b, a, acc, k);
+    } else {
+        add_nbit_qq(b, a, acc);
+    }
+}
+#[inline]
+fn round84_sub_big(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
+    let split = round84_bigfold_split();
+    let blocks = round84_bigfold_blocks();
+    let k = round84_bigfold_window();
+    let w = a.len();
+    if split > 0 {
+        let c_in = b.alloc_qubit();
+        cuccaro_sub_fast_split2_low_to_ext(b, &a[..w - 1], acc, c_in, split);
+        b.free(c_in);
+    } else if blocks > 0 {
+        let c_in = b.alloc_qubit();
+        cuccaro_sub_fast_windowed_low_to_ext(b, &a[..w - 1], acc, c_in, blocks);
+        b.free(c_in);
+    } else if k > 0 {
+        sub_nbit_qq_hybrid(b, a, acc, k);
+    } else {
+        sub_nbit_qq(b, a, acc);
+    }
+}
+
 fn round84_inplace_quotient_carry_trunc_window() -> usize {
     std::env::var("ROUND84_INPLACE_QUOTIENT_CARRY_TRUNC_W")
         .ok()
@@ -980,9 +1056,9 @@ fn round84_fold_hi_into_lo_aggregate(
         let mut source_ext = hi[..width].to_vec();
         source_ext.push(source_top);
         if add {
-            add_nbit_qq(b, &source_ext, &target_ext);
+            round84_add_big(b, &source_ext, &target_ext);
         } else {
-            sub_nbit_qq(b, &source_ext, &target_ext);
+            round84_sub_big(b, &source_ext, &target_ext);
         }
         b.free(source_top);
 
@@ -1021,9 +1097,9 @@ fn round84_unfold_hi_from_lo_aggregate(
         let mut source_ext = hi[..width].to_vec();
         source_ext.push(source_top);
         if step.add {
-            sub_nbit_qq(b, &source_ext, &target_ext);
+            round84_sub_big(b, &source_ext, &target_ext);
         } else {
-            add_nbit_qq(b, &source_ext, &target_ext);
+            round84_add_big(b, &source_ext, &target_ext);
         }
         b.free(source_top);
         b.free(step.wrap);
