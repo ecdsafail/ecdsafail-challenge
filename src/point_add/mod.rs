@@ -1284,7 +1284,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_STEPS", "8,9,10");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
-    set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
+    set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1,14:1");
     set_default_env(
         "DIALOG_GCD_SPECIAL_OVERFLOW_CLEAN_STEP_BITS",
         "113:21,131:21,142:22,187:23,205:22,210:21",
@@ -1406,9 +1406,9 @@ fn configure_ecdsafail_submission_route() {
     // 1309q x 1,497,795 T = 1,960,613,655.
     // K2-pair codec 6->3 CCX core encoder (peak-neutral -3,096 T). Re-hunted clean
     // Fiat-Shamir island:
-    // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
-    // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "800002627594");
+    // Re-rolled for the extended binder-notch map: nonce 39354 validates 0/0/0
+    // over all 9024 shots at 1285q x 1,381,110 T = 1,774,726,350.
+    set_default_env("DIALOG_TAIL_NONCE", "39354");
     set_default_env("ROUND84_FOLD_FAST_ADD", "1");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("ROUND84_BIGFOLD_SPLIT", "34");  // round84 BIG-fold adders -> asymmetric 2-block windowed measured (s=34 peak-neutral 1285, -2,124 exec-T)
     set_default_env("DIALOG_GCD_CTRL_LOWQ_MEASURED", "1");  // body stream-suffix ctrl-ride uncompute coherent->measured (-528 exec-T, peak-neutral 1285); island re-hunted to nonce above
