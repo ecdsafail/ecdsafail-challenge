@@ -1,5 +1,47 @@
 use super::*;
 
+#[inline]
+fn maj1_inputs_distinct(a: QubitId, k: QubitId, carry: QubitId, target: QubitId) -> bool {
+    a != k && a != carry && a != target && k != carry && k != target && carry != target
+}
+
+#[inline]
+fn fold_maj1_enabled() -> bool {
+    std::env::var("DIALOG_GCD_FOLD_MAJ1").ok().as_deref() == Some("1")
+}
+
+fn emit_fold_maj1(b: &mut B, a: QubitId, k: QubitId, carry: QubitId, target: QubitId) {
+    debug_assert!(maj1_inputs_distinct(a, k, carry, target));
+    b.cx(carry, target);
+    b.cx(carry, a);
+    b.cx(carry, k);
+    b.ccx(a, k, target);
+    b.cx(carry, k);
+    b.cx(carry, a);
+}
+
+fn emit_fold_majority(
+    b: &mut B,
+    a: QubitId,
+    k: QubitId,
+    carry: QubitId,
+    target: QubitId,
+    maj2: bool,
+) {
+    if fold_maj1_enabled() && maj1_inputs_distinct(a, k, carry, target) {
+        emit_fold_maj1(b, a, k, carry, target);
+    } else if maj2 {
+        b.ccx(a, carry, target);
+        b.cx(a, carry);
+        b.ccx(k, carry, target);
+        b.cx(a, carry);
+    } else {
+        b.ccx(a, carry, target);
+        b.ccx(k, a, target);
+        b.ccx(k, carry, target);
+    }
+}
+
 pub(crate) fn csub_nbit_const(b: &mut B, acc: &[QubitId], c: U256, ctrl: QubitId) {
     // acc -= (ctrl ? c : 0). Mirror of cadd_nbit_const.
     let n = acc.len();
@@ -84,9 +126,7 @@ pub(crate) fn csub_nbit_const_direct_fast(b: &mut B, acc: &[QubitId], c: U256, c
         if bit(c, i) {
             b.x(acc[i]);
             if let Some(bi) = borrow_in {
-                b.ccx(acc[i], bi, target);
-                b.ccx(ctrl, acc[i], target);
-                b.ccx(ctrl, bi, target);
+                emit_fold_majority(b, acc[i], ctrl, bi, target, false);
             } else {
                 b.ccx(acc[i], ctrl, target);
             }
@@ -169,9 +209,7 @@ pub(crate) fn cadd_nbit_const_direct_fast(b: &mut B, acc: &[QubitId], c: U256, c
         let carry_in = if i == 0 { None } else { Some(carries[i - 1]) };
         if bit(c, i) {
             if let Some(ci) = carry_in {
-                b.ccx(acc[i], ci, target);
-                b.ccx(ctrl, acc[i], target);
-                b.ccx(ctrl, ci, target);
+                emit_fold_majority(b, acc[i], ctrl, ci, target, false);
             } else {
                 b.ccx(acc[i], ctrl, target);
             }
@@ -513,16 +551,7 @@ pub(crate) fn cadd_nbit_const_direct_trunc_fast(
         let carry_in = if i == 0 { None } else { Some(carries[i - 1]) };
         if bit(c, i) {
             if let Some(ci) = carry_in {
-                if maj2 {
-                    b.ccx(acc[i], ci, target);
-                    b.cx(acc[i], ci);
-                    b.ccx(ctrl, ci, target);
-                    b.cx(acc[i], ci);
-                } else {
-                    b.ccx(acc[i], ci, target);
-                    b.ccx(ctrl, acc[i], target);
-                    b.ccx(ctrl, ci, target);
-                }
+                emit_fold_majority(b, acc[i], ctrl, ci, target, maj2);
             } else {
                 b.ccx(acc[i], ctrl, target);
             }
@@ -601,16 +630,7 @@ pub(crate) fn csub_nbit_const_direct_trunc_fast(
         if bit(c, i) {
             b.x(acc[i]);
             if let Some(bi) = borrow_in {
-                if maj2 {
-                    b.ccx(acc[i], bi, target);
-                    b.cx(acc[i], bi);
-                    b.ccx(ctrl, bi, target);
-                    b.cx(acc[i], bi);
-                } else {
-                    b.ccx(acc[i], bi, target);
-                    b.ccx(ctrl, acc[i], target);
-                    b.ccx(ctrl, bi, target);
-                }
+                emit_fold_majority(b, acc[i], ctrl, bi, target, maj2);
             } else {
                 b.ccx(acc[i], ctrl, target);
             }
@@ -679,17 +699,7 @@ pub(crate) fn cadd_per_position_controls_trunc(
         let carry_in = if i == 0 { None } else { Some(carries[i - 1]) };
         if let Some(kc) = kctrl(i) {
             if let Some(ci) = carry_in {
-                if maj2 {
-                    // 2-CCX ancilla-free majority (target ^= maj(acc,ci,kc)).
-                    b.ccx(acc[i], ci, target);
-                    b.cx(acc[i], ci);
-                    b.ccx(kc, ci, target);
-                    b.cx(acc[i], ci);
-                } else {
-                    b.ccx(acc[i], ci, target);
-                    b.ccx(kc, acc[i], target);
-                    b.ccx(kc, ci, target);
-                }
+                emit_fold_majority(b, acc[i], kc, ci, target, maj2);
             } else {
                 b.ccx(acc[i], kc, target);
             }
@@ -760,17 +770,7 @@ pub(crate) fn csub_per_position_controls_trunc(
         if let Some(kc) = kctrl(i) {
             b.x(acc[i]);
             if let Some(bi) = borrow_in {
-                if maj2 {
-                    // 2-CCX ancilla-free majority (target ^= maj(!acc,bi,kc)).
-                    b.ccx(acc[i], bi, target);
-                    b.cx(acc[i], bi);
-                    b.ccx(kc, bi, target);
-                    b.cx(acc[i], bi);
-                } else {
-                    b.ccx(acc[i], bi, target);
-                    b.ccx(kc, acc[i], target);
-                    b.ccx(kc, bi, target);
-                }
+                emit_fold_majority(b, acc[i], kc, bi, target, maj2);
             } else {
                 b.ccx(acc[i], kc, target);
             }

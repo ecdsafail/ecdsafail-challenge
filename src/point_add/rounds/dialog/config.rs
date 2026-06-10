@@ -187,6 +187,13 @@ pub(crate) fn dialog_gcd_apply_final_windowed_fast_blocks() -> Option<usize> {
         .filter(|&blocks| blocks >= 2)
 }
 
+pub(crate) fn dialog_gcd_apply_final_topclean_bits() -> usize {
+    std::env::var("DIALOG_GCD_APPLY_FINAL_TOPCLEAN")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
 pub(crate) fn dialog_gcd_apply_boundary_split() -> Option<usize> {
     std::env::var("DIALOG_GCD_APPLY_BOUNDARY_SPLIT")
         .ok()

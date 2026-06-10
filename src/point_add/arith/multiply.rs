@@ -989,6 +989,34 @@ fn round84_inplace_solinas_fold_enabled() -> bool {
         == Some("1")
 }
 
+// tofprof CAT-4 lever: the in-place Solinas fold/unfold build their adders from
+// the COHERENT cuccaro_add/sub (maj/uma, ~2 CCX/bit, 0 carry ancilla). The
+// fold/unfold phases run at active=1160, i.e. 137 qubits below the 1297 peak, so
+// the SMALL adders (quotient*c product = 33-bit, narrow correction = 66-bit,
+// quotient-update spill <=34-bit) can use the MEASURED cuccaro_*_fast (~1 CCX/bit
+// + Hmr-uncompute) peak-neutrally => ~1 CCX/bit saved on those. The BIG fold-step
+// adders (224..256-bit) are left coherent (a fast version would need ~256 carry
+// lanes -> 1160+256=1416 > 1297 = peak-positive). Default OFF (byte-identical).
+fn round84_fold_fast_add_enabled() -> bool {
+    std::env::var("ROUND84_FOLD_FAST_ADD").ok().as_deref() == Some("1")
+}
+#[inline]
+fn round84_add_small(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
+    if round84_fold_fast_add_enabled() {
+        add_nbit_qq_fast(b, a, acc);
+    } else {
+        add_nbit_qq(b, a, acc);
+    }
+}
+#[inline]
+fn round84_sub_small(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
+    if round84_fold_fast_add_enabled() {
+        sub_nbit_qq_fast(b, a, acc);
+    } else {
+        sub_nbit_qq(b, a, acc);
+    }
+}
+
 fn round84_inplace_quotient_carry_trunc_window() -> usize {
     std::env::var("ROUND84_INPLACE_QUOTIENT_CARRY_TRUNC_W")
         .ok()
@@ -1002,6 +1030,10 @@ fn round84_inplace_vent_carry_enabled() -> bool {
         .ok()
         .as_deref()
         == Some("1")
+}
+
+fn round84_qprod_naf_enabled() -> bool {
+    std::env::var("R84_QPROD_NAF").ok().as_deref() == Some("1")
 }
 
 struct Round84FoldStep {
@@ -1062,26 +1094,59 @@ fn round84_compute_quotient_c_product(b: &mut B, quotient: &[QubitId]) -> Vec<Qu
     for i in 0..q.len() {
         b.cx(q[i], product[i]);
     }
-    for shift in [4usize, 6, 7, 8, 9, 32] {
-        let target = &product[shift..];
-        let pad = b.alloc_qubits(target.len() - q.len());
-        let mut source = q.to_vec();
-        source.extend_from_slice(&pad);
-        add_nbit_qq(b, &source, target);
-        b.free_vec(&pad);
+    if round84_qprod_naf_enabled() {
+        for (shift, add) in [(10usize, true), (32, true), (5, false), (4, false)] {
+            let target = &product[shift..];
+            let pad = b.alloc_qubits(target.len() - q.len());
+            let mut source = q.to_vec();
+            source.extend_from_slice(&pad);
+            if add {
+                round84_add_small(b, &source, target);
+            } else {
+                round84_sub_small(b, &source, target);
+            }
+            b.free_vec(&pad);
+        }
+    } else {
+        for shift in [4usize, 6, 7, 8, 9, 32] {
+            let target = &product[shift..];
+            let pad = b.alloc_qubits(target.len() - q.len());
+            let mut source = q.to_vec();
+            source.extend_from_slice(&pad);
+            round84_add_small(b, &source, target);
+            b.free_vec(&pad);
+        }
     }
     product
 }
 
 fn round84_uncompute_quotient_c_product(b: &mut B, quotient: &[QubitId], product: &[QubitId]) {
     let q = &quotient[..33];
-    for shift in [4usize, 6, 7, 8, 9, 32].into_iter().rev() {
-        let target = &product[shift..];
-        let pad = b.alloc_qubits(target.len() - q.len());
-        let mut source = q.to_vec();
-        source.extend_from_slice(&pad);
-        sub_nbit_qq(b, &source, target);
-        b.free_vec(&pad);
+    if round84_qprod_naf_enabled() {
+        for (shift, add) in [(10usize, true), (32, true), (5, false), (4, false)]
+            .into_iter()
+            .rev()
+        {
+            let target = &product[shift..];
+            let pad = b.alloc_qubits(target.len() - q.len());
+            let mut source = q.to_vec();
+            source.extend_from_slice(&pad);
+            if add {
+                round84_sub_small(b, &source, target);
+            } else {
+                round84_add_small(b, &source, target);
+            }
+            b.free_vec(&pad);
+        }
+    } else {
+        for shift in [4usize, 6, 7, 8, 9, 32].into_iter().rev() {
+            let target = &product[shift..];
+            let pad = b.alloc_qubits(target.len() - q.len());
+            let mut source = q.to_vec();
+            source.extend_from_slice(&pad);
+            round84_sub_small(b, &source, target);
+            b.free_vec(&pad);
+        }
     }
     for i in 0..q.len() {
         b.cx(q[i], product[i]);
@@ -1101,7 +1166,7 @@ fn round84_add_narrow_correction(
     target_ext.push(wrap);
     let mut source_ext = product.to_vec();
     source_ext.push(source_top);
-    add_nbit_qq(b, &source_ext, &target_ext);
+    round84_add_small(b, &source_ext, &target_ext);
     b.free(source_top);
     let high = &lo[product.len()..];
     if round84_inplace_vent_carry_enabled() {
@@ -1156,7 +1221,7 @@ fn round84_sub_narrow_correction(
     target_ext.push(wrap);
     let mut source_ext = product.to_vec();
     source_ext.push(source_top);
-    sub_nbit_qq(b, &source_ext, &target_ext);
+    round84_sub_small(b, &source_ext, &target_ext);
     b.free(source_top);
     b.free(wrap);
 }
