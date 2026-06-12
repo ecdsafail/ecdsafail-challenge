@@ -355,6 +355,9 @@ pub(crate) fn dialog_gcd_compressed_sidecar_log_enabled() -> bool {
 }
 
 pub(crate) fn dialog_gcd_compressed_block_lifecycle_enabled() -> bool {
+    if dialog_gcd_k5_clean_block_enabled() {
+        return true;
+    }
     std::env::var(DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE_ENV)
         .ok()
         .as_deref()
@@ -370,13 +373,23 @@ pub(crate) fn dialog_gcd_k2_enabled() -> bool {
     std::env::var("DIALOG_GCD_K2").ok().as_deref() == Some("1")
 }
 
+pub(crate) fn dialog_gcd_k5_clean_block_enabled() -> bool {
+    dialog_gcd_k2_enabled()
+        && std::env::var("DIALOG_GCD_K5_CLEAN_BLOCK")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
 /// Compressed bits per transcript block. K=2 packs an extra `shift2` bit per step
 /// (GROUP_SIZE=3 steps) on top of the round763 6->5 base packing: 5 + 3 = 8.
 /// NOTE: the compile-time `DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS` const stays 5
 /// (it sizes fixed arrays in the high-tail machinery); this fn is for the dynamic
 /// compressed_log stride / indexing / runway only.
 pub(crate) fn dialog_gcd_block_bits() -> usize {
-    if dialog_gcd_k2_pair_compress_enabled() {
+    if dialog_gcd_k5_clean_block_enabled() {
+        12
+    } else if dialog_gcd_k2_pair_compress_enabled() {
         // Two K=2 steps have 6 raw transcript bits. The pair language has only
         // 30 reachable states: the first five bits compress 15 -> 4, while the
         // second shift2 bit stays raw. Total: 5 block bits for 2 steps.
@@ -503,6 +516,7 @@ pub(crate) fn dialog_gcd_odd_u_lowbit_fastpath_enabled() -> bool {
 
 pub(crate) fn dialog_gcd_k2_pair_compress_enabled() -> bool {
     dialog_gcd_k2_enabled()
+        && !dialog_gcd_k5_clean_block_enabled()
         && std::env::var("DIALOG_GCD_K2_PAIR_COMPRESS")
             .ok()
             .as_deref()
@@ -510,7 +524,9 @@ pub(crate) fn dialog_gcd_k2_pair_compress_enabled() -> bool {
 }
 
 pub(crate) fn dialog_gcd_sidecar_group_size() -> usize {
-    if dialog_gcd_k2_pair_compress_enabled() {
+    if dialog_gcd_k5_clean_block_enabled() {
+        5
+    } else if dialog_gcd_k2_pair_compress_enabled() {
         2
     } else {
         DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE
