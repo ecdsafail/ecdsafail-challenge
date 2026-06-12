@@ -901,6 +901,91 @@ pub(crate) fn fold_only_carry_trunc_window() -> Option<usize> {
         .filter(|&w| w > 0)
 }
 
+fn fold_park_low_carries() -> usize {
+    std::env::var("DIALOG_GCD_FOLD_PARK_LOW_CARRIES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn fold_postsum_carry_phase_uncompute(
+    b: &mut B,
+    acc: &[QubitId],
+    kctrl: Option<QubitId>,
+    carry_in: Option<QubitId>,
+    measured: BitId,
+    i: usize,
+    is_add: bool,
+) {
+    if is_add {
+        if let Some(kc) = kctrl {
+            b.x(acc[i]);
+            if let Some(ci) = carry_in {
+                b.cz_if(acc[i], kc, measured);
+                b.cz_if(acc[i], ci, measured);
+                b.x(acc[i]);
+                b.cz_if(kc, ci, measured);
+            } else {
+                b.cz_if(acc[i], kc, measured);
+                b.x(acc[i]);
+            }
+        } else if let Some(ci) = carry_in {
+            b.x(acc[i]);
+            b.cz_if(acc[i], ci, measured);
+            b.x(acc[i]);
+        }
+    } else if let Some(kc) = kctrl {
+        if let Some(ci) = carry_in {
+            b.cz_if(acc[i], kc, measured);
+            b.cz_if(acc[i], ci, measured);
+            b.cz_if(kc, ci, measured);
+        } else {
+            b.cz_if(acc[i], kc, measured);
+        }
+    } else if let Some(ci) = carry_in {
+        b.cz_if(acc[i], ci, measured);
+    }
+}
+
+fn fold_postsum_carry_compute(
+    b: &mut B,
+    acc: &[QubitId],
+    kctrl: Option<QubitId>,
+    carry_in: Option<QubitId>,
+    target: QubitId,
+    i: usize,
+    is_add: bool,
+) {
+    if is_add {
+        if let Some(kc) = kctrl {
+            b.x(acc[i]);
+            if let Some(ci) = carry_in {
+                b.ccx(acc[i], kc, target);
+                b.ccx(acc[i], ci, target);
+                b.x(acc[i]);
+                b.ccx(kc, ci, target);
+            } else {
+                b.ccx(acc[i], kc, target);
+                b.x(acc[i]);
+            }
+        } else if let Some(ci) = carry_in {
+            b.x(acc[i]);
+            b.ccx(acc[i], ci, target);
+            b.x(acc[i]);
+        }
+    } else if let Some(kc) = kctrl {
+        if let Some(ci) = carry_in {
+            b.ccx(acc[i], kc, target);
+            b.ccx(acc[i], ci, target);
+            b.ccx(kc, ci, target);
+        } else {
+            b.ccx(acc[i], kc, target);
+        }
+    } else if let Some(ci) = carry_in {
+        b.ccx(acc[i], ci, target);
+    }
+}
+
 /// Build the secp256k1 fold per-position control vector `δ = c·e + 2c·d`
 /// (`c = 2^32+977`) from the base controls `e,d` and the four derived controls
 /// `h = e&d`, `xed = e^d`, `eord = e|d`, `n10 = ¬e&d`. Shared by the baseline
@@ -985,6 +1070,7 @@ pub(crate) fn fold_ripple_freed_tail_ed(
     let controls = secp_fold_controls(e, d, h, xed, eord, n10, hi_delta, hi_c);
     let kctrl = |i: usize| controls.get(i).copied().flatten();
     let maj2 = perpos_maj2_enabled();
+    let park_low = core::cmp::min(fold_park_low_carries(), hi_delta);
 
     // Carry lane is split so the WIDE tail is allocated only AFTER the four
     // derived controls are freed (the peak instant). `low` = active-region
@@ -1029,6 +1115,21 @@ pub(crate) fn fold_ripple_freed_tail_ed(
         }
         if i > 0 {
             b.cx(low[i - 1], acc[i]);
+        }
+    }
+
+    // Optional peak lever: the tail only needs low[hi_delta] as its carry-in.
+    // The lower parked carries are needed again later for low-carry cleanup, so
+    // measurement-uncompute them now and recompute from the post-sum bits after
+    // the tail has been freed. Parking just one carry is enough to drop the
+    // fused double/halve high-water by one qubit.
+    if park_low > 0 {
+        for i in (0..park_low).rev() {
+            let m = b.alloc_bit();
+            b.hmr(low[i], m);
+            let carry_in = if i == 0 { None } else { Some(low[i - 1]) };
+            fold_postsum_carry_phase_uncompute(b, acc, kctrl(i), carry_in, m, i, is_add);
+            b.free(low[i]);
         }
     }
 
@@ -1144,39 +1245,20 @@ pub(crate) fn fold_ripple_freed_tail_ed(
     b.cx(d, n10);
     b.cx(h, n10);
 
+    if park_low > 0 {
+        for i in 0..park_low {
+            b.reacquire(low[i]);
+            let carry_in = if i == 0 { None } else { Some(low[i - 1]) };
+            fold_postsum_carry_compute(b, acc, kctrl(i), carry_in, low[i], i, is_add);
+        }
+    }
+
     // ── 7. reverse uncompute the active carries [0..=hi_delta] ──
     for i in (0..=hi_delta).rev() {
         let m = b.alloc_bit();
         b.hmr(low[i], m);
         let carry_in = if i == 0 { None } else { Some(low[i - 1]) };
-        if is_add {
-            if let Some(kc) = kctrl(i) {
-                b.x(acc[i]);
-                if let Some(ci) = carry_in {
-                    b.cz_if(acc[i], kc, m);
-                    b.cz_if(acc[i], ci, m);
-                    b.x(acc[i]);
-                    b.cz_if(kc, ci, m);
-                } else {
-                    b.cz_if(acc[i], kc, m);
-                    b.x(acc[i]);
-                }
-            } else if let Some(ci) = carry_in {
-                b.x(acc[i]);
-                b.cz_if(acc[i], ci, m);
-                b.x(acc[i]);
-            }
-        } else if let Some(kc) = kctrl(i) {
-            if let Some(ci) = carry_in {
-                b.cz_if(acc[i], kc, m);
-                b.cz_if(acc[i], ci, m);
-                b.cz_if(kc, ci, m);
-            } else {
-                b.cz_if(acc[i], kc, m);
-            }
-        } else if let Some(ci) = carry_in {
-            b.cz_if(acc[i], ci, m);
-        }
+        fold_postsum_carry_phase_uncompute(b, acc, kctrl(i), carry_in, m, i, is_add);
         b.free(low[i]);
     }
     drop(low);
