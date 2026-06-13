@@ -1,0 +1,256 @@
+diff --git a/src/point_add/mod.rs b/src/point_add/mod.rs
+index 9d795de..b995298 100644
+--- a/src/point_add/mod.rs
++++ b/src/point_add/mod.rs
+@@ -117,6 +117,17 @@ pub(crate) struct B {
+     // tobitvector (compute/uncompute) and apply (conditional 2nd double/halve).
+     // Empty when K=2 is disabled (frontier path byte-identical).
+     pub k2_shift2_log: Vec<QubitId>,
++    pub qmap_on: bool,
++    pub qmap_stride: u64,
++    pub qmap_ops: u64,
++    pub qmap_out: Option<std::fs::File>,
++    pub qmap_role: Vec<u8>,
++    pub qmap_cur_role: u8,
++    pub qmap_win_start: u64,
++    pub qmap_win_end: u64,
++    pub qmap_live: [u32; 5],        // running live count per role (O(1) snapshots)
++    pub qmap_bpeak: u32,            // max active in the current bucket (anti-alias)
++    pub qmap_bpeak_live: [u32; 5],  // role breakdown at that bucket peak
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -169,6 +180,20 @@ impl B {
+             current_phase_active_max: 0,
+             phase_transitions: Vec::new(),
+             k2_shift2_log: Vec::new(),
++            qmap_on: std::env::var("QMAP").is_ok(),
++            qmap_stride: std::env::var("QMAP_STRIDE")
++                .ok()
++                .and_then(|s| s.parse().ok())
++                .unwrap_or(15000),
++            qmap_ops: 0,
++            qmap_out: None,
++            qmap_role: Vec::new(),
++            qmap_cur_role: 0,
++            qmap_win_start: std::env::var("QMAP_OP_START").ok().and_then(|s| s.parse().ok()).unwrap_or(0),
++            qmap_win_end: std::env::var("QMAP_OP_END").ok().and_then(|s| s.parse().ok()).unwrap_or(0),
++            qmap_live: [0; 5],
++            qmap_bpeak: 0,
++            qmap_bpeak_live: [0; 5],
+         }
+     }
+     fn new_count_only() -> Self {
+@@ -180,6 +205,19 @@ impl B {
+         self.counted_ops += 1;
+         self.counted_kind_ops[op.kind as usize] += 1;
+         self.counted_phase_kind_ops[op.kind as usize] += 1;
++        if self.qmap_on && !self.count_only {
++            self.qmap_ops += 1;
++            let trig = if self.qmap_win_end > 0 {
++                // window mode: snapshot EVERY op inside [start,end) — true 1-op resolution
++                let op = self.current_ops_len() as u64;
++                op >= self.qmap_win_start && op < self.qmap_win_end
++            } else {
++                self.qmap_ops % self.qmap_stride == 0
++            };
++            if trig {
++                self.qmap_snapshot();
++            }
++        }
+         if !self.count_only {
+             self.ops.push(op);
+         }
+@@ -298,13 +336,56 @@ impl B {
+             self.peak_log
+                 .push((self.active_qubits, self.phase, self.current_ops_len()));
+         }
+-        if let Some(q) = self.free_qubits.pop() {
+-            QubitId(q.into())
++        let id = if let Some(q) = self.free_qubits.pop() {
++            q
+         } else {
+             let q = self.next_qubit;
+             self.next_qubit += 1;
+-            QubitId(q.into())
++            q
++        };
++        if self.qmap_on {
++            let i = id as usize;
++            if i >= self.qmap_role.len() {
++                self.qmap_role.resize(i + 1, 0);
++            }
++            self.qmap_role[i] = self.qmap_cur_role;
++            let role = (self.qmap_cur_role as usize).min(4);
++            self.qmap_live[role] += 1;
++            if self.active_qubits > self.qmap_bpeak {
++                self.qmap_bpeak = self.active_qubits;
++                self.qmap_bpeak_live = self.qmap_live;
++            }
++        }
++        QubitId(id.into())
++    }
++    fn set_role(&mut self, r: u8) {
++        self.qmap_cur_role = r;
++    }
++    fn qmap_snapshot(&mut self) {
++        use std::io::Write;
++        if self.qmap_out.is_none() {
++            let path = std::env::var("QMAP_OUT").unwrap_or_else(|_| "/tmp/qmap.tsv".to_string());
++            self.qmap_out = std::fs::File::create(&path).ok();
++            if let Some(f) = self.qmap_out.as_mut() {
++                let _ = writeln!(f, "# op_idx\tphase\tactive\tscr_res\tscr_live\ttx_res\ttx_live\tty_res\tty_live\tu_res\tu_live\ttr_res\ttr_live");
++            }
++        }
++        // O(1): emit the bucket PEAK (max active since last snapshot) + its role
++        // breakdown — anti-aliased, no per-snapshot rescan.
++        let c = self.qmap_bpeak_live;
++        let op_idx = self.current_ops_len();
++        let phase = self.phase;
++        let active = self.qmap_bpeak;
++        if let Some(f) = self.qmap_out.as_mut() {
++            let _ = writeln!(
++                f,
++                "{op_idx}\t{phase}\t{active}\t0\t{}\t0\t{}\t0\t{}\t0\t{}\t0\t{}",
++                c[0], c[1], c[2], c[3], c[4]
++            );
+         }
++        // reset the bucket tracker to the current live state
++        self.qmap_bpeak = self.active_qubits;
++        self.qmap_bpeak_live = self.qmap_live;
+     }
+     fn alloc_qubits(&mut self, n: usize) -> Vec<QubitId> {
+         (0..n).map(|_| self.alloc_qubit()).collect()
+@@ -318,6 +399,15 @@ impl B {
+         (0..n).map(|_| self.alloc_bit()).collect()
+     }
+     fn free(&mut self, q: QubitId) {
++        if self.qmap_on {
++            let i = q.0 as usize;
++            if i < self.qmap_role.len() {
++                let role = (self.qmap_role[i] as usize).min(4);
++                if self.qmap_live[role] > 0 {
++                    self.qmap_live[role] -= 1;
++                }
++            }
++        }
+         self.r(q);
+         self.free_qubits
+             .push(q.0.try_into().expect("qubit id fits in u32"));
+@@ -338,6 +428,17 @@ impl B {
+             .expect("reacquire qubit that is not currently free");
+         self.free_qubits.swap_remove(pos);
+         self.active_qubits += 1;
++        if self.qmap_on {
++            let i = q.0 as usize;
++            if i < self.qmap_role.len() {
++                let role = (self.qmap_role[i] as usize).min(4);
++                self.qmap_live[role] += 1;
++                if self.active_qubits > self.qmap_bpeak {
++                    self.qmap_bpeak = self.active_qubits;
++                    self.qmap_bpeak_live = self.qmap_live;
++                }
++            }
++        }
+         self.record_phase_active();
+         if self.active_qubits > self.peak_qubits {
+             self.peak_qubits = self.active_qubits;
+@@ -1378,10 +1479,14 @@ fn build_builder() -> B {
+     };
+     let b = &mut builder;
+     // Register 0: target_x (quantum)
++    b.set_role(1);
+     let tx = b.alloc_qubits(N);
++    b.set_role(0);
+     b.declare_qubit_register(&tx);
+     // Register 1: target_y (quantum)
++    b.set_role(2);
+     let ty = b.alloc_qubits(N);
++    b.set_role(0);
+     b.declare_qubit_register(&ty);
+     // Register 2: offset_x (classical bits)
+     let ox = b.alloc_bits(N);
+diff --git a/src/point_add/rounds/dialog/compressed.rs b/src/point_add/rounds/dialog/compressed.rs
+index 9e06004..fe07dab 100644
+--- a/src/point_add/rounds/dialog/compressed.rs
++++ b/src/point_add/rounds/dialog/compressed.rs
+@@ -1431,13 +1431,13 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_ipmul_block_lifecycle(
+     assert_eq!(factor.len(), N);
+     assert_eq!(target.len(), N);
+ 
+-    let compressed_log = b.alloc_qubits(dialog_gcd_allocated_compressed_sidecar_bits());
++    b.set_role(4); let compressed_log = b.alloc_qubits(dialog_gcd_allocated_compressed_sidecar_bits()); b.set_role(0);
+     let raw_block = if dialog_gcd_host_reverse_raw_block_enabled() {
+         Vec::new()
+     } else {
+         b.alloc_qubits(dialog_gcd_raw_block_len())
+     };
+-    let u = b.alloc_qubits(N);
++    b.set_role(3); let u = b.alloc_qubits(N); b.set_role(0);
+     let runway = dialog_gcd_build_compressed_log_u_high_runway(&u, &compressed_log);
+     let replay_log = runway
+         .as_ref()
+@@ -1571,10 +1571,10 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_ipmul(
+         return;
+     }
+ 
+-    let compressed_log = b.alloc_qubits(dialog_gcd_compressed_sidecar_bits());
++    b.set_role(4); let compressed_log = b.alloc_qubits(dialog_gcd_compressed_sidecar_bits()); b.set_role(0);
+     let pair = b.alloc_qubits(2);
+     let compressor_scratch = b.alloc_qubit();
+-    let u = b.alloc_qubits(N);
++    b.set_role(3); let u = b.alloc_qubits(N); b.set_role(0);
+     b.set_phase("dialog_gcd_compressed_sidecar_ipmul_load_p");
+     for i in 0..N {
+         if bit(p, i) {
+@@ -1701,13 +1701,13 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_quotient_block_lifecycle(
+     assert_eq!(factor.len(), N);
+     assert_eq!(target.len(), N);
+ 
+-    let compressed_log = b.alloc_qubits(dialog_gcd_allocated_compressed_sidecar_bits());
++    b.set_role(4); let compressed_log = b.alloc_qubits(dialog_gcd_allocated_compressed_sidecar_bits()); b.set_role(0);
+     let raw_block = if dialog_gcd_host_reverse_raw_block_enabled() {
+         Vec::new()
+     } else {
+         b.alloc_qubits(dialog_gcd_raw_block_len())
+     };
+-    let u = b.alloc_qubits(N);
++    b.set_role(3); let u = b.alloc_qubits(N); b.set_role(0);
+     let runway = dialog_gcd_build_compressed_log_u_high_runway(&u, &compressed_log);
+     let replay_log = runway
+         .as_ref()
+@@ -1823,10 +1823,10 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_quotient(
+         return;
+     }
+ 
+-    let compressed_log = b.alloc_qubits(dialog_gcd_compressed_sidecar_bits());
++    b.set_role(4); let compressed_log = b.alloc_qubits(dialog_gcd_compressed_sidecar_bits()); b.set_role(0);
+     let pair = b.alloc_qubits(2);
+     let compressor_scratch = b.alloc_qubit();
+-    let u = b.alloc_qubits(N);
++    b.set_role(3); let u = b.alloc_qubits(N); b.set_role(0);
+     b.set_phase("dialog_gcd_compressed_sidecar_quotient_load_p");
+     for i in 0..N {
+         if bit(p, i) {
+diff --git a/src/point_add/rounds/dialog/mod.rs b/src/point_add/rounds/dialog/mod.rs
+index 4ecb794..4daf650 100644
+--- a/src/point_add/rounds/dialog/mod.rs
++++ b/src/point_add/rounds/dialog/mod.rs
+@@ -1594,7 +1594,7 @@ pub(crate) fn emit_dialog_gcd_raw_ipmul(b: &mut B, factor: &[QubitId], target: &
+     }
+ 
+     let dialog_log = b.alloc_qubits(DIALOG_GCD_RAW_LOG_BITS);
+-    let u = b.alloc_qubits(N);
++    b.set_role(3); let u = b.alloc_qubits(N); b.set_role(0);
+     b.set_phase("dialog_gcd_raw_ipmul_load_p");
+     for i in 0..N {
+         if bit(p, i) {
+@@ -1681,7 +1681,7 @@ pub(crate) fn emit_dialog_gcd_raw_quotient(b: &mut B, factor: &[QubitId], target
+     }
+ 
+     let dialog_log = b.alloc_qubits(DIALOG_GCD_RAW_LOG_BITS);
+-    let u = b.alloc_qubits(N);
++    b.set_role(3); let u = b.alloc_qubits(N); b.set_role(0);
+     b.set_phase("dialog_gcd_raw_quotient_load_p");
+     for i in 0..N {
+         if bit(p, i) {
