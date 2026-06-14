@@ -175,54 +175,6 @@ pub(crate) fn dialog_gcd_cmp_gt_truncated_phase_conditioned_hosted(
     }
 }
 
-fn dialog_gcd_cmp_lt_phase_conditioned_hosted(
-    b: &mut B,
-    u: &[QubitId],
-    v: &[QubitId],
-    ctrl: QubitId,
-    phase: BitId,
-    borrowed: Option<&[QubitId]>,
-) {
-    let n = u.len();
-    assert_eq!(v.len(), n);
-    assert!(n > 0);
-    let need = n + 1;
-    let avail = borrowed.map_or(0, <[QubitId]>::len);
-    if dialog_gcd_partial_host_comparator_enabled() && avail > 0 && avail < need {
-        let borrowed = borrowed.expect("avail > 0");
-        let owned = b.alloc_qubits(need - avail);
-        let mut clean = Vec::with_capacity(need);
-        clean.extend_from_slice(borrowed);
-        clean.extend_from_slice(&owned);
-        let (c_in, carries) = clean.split_first().expect("need >= 1");
-        cmp_lt_phase_conditioned_borrowed_carries(
-            b,
-            u,
-            v,
-            *c_in,
-            &carries[..n],
-            ctrl,
-            phase,
-        );
-        b.free_vec(&owned);
-    } else if let Some(borrowed) = borrowed.filter(|slice| slice.len() >= need) {
-        let (c_in, carries) = borrowed.split_first().expect("borrowed len >= n + 1");
-        cmp_lt_phase_conditioned_borrowed_carries(
-            b,
-            u,
-            v,
-            *c_in,
-            &carries[..n],
-            ctrl,
-            phase,
-        );
-    } else {
-        let c_in = b.alloc_qubit();
-        cmp_lt_phase_conditioned_with_cin(b, u, v, c_in, ctrl, phase);
-        b.free(c_in);
-    }
-}
-
 pub(crate) fn dialog_gcd_partial_host_comparator_enabled() -> bool {
     std::env::var("DIALOG_GCD_PARTIAL_HOST_COMPARATOR")
         .ok()
@@ -1299,14 +1251,13 @@ pub(crate) fn dialog_gcd_apply_window_blocks() -> Option<usize> {
         .filter(|&w| w >= 2)
 }
 
-fn dialog_gcd_clean_truncated_underflow_with_borrowed(
+pub(crate) fn dialog_gcd_clean_truncated_underflow(
     b: &mut B,
     acc: &[QubitId],
     a: &[QubitId],
     ctrl: QubitId,
     acc_ovf: QubitId,
     step: Option<usize>,
-    borrowed: Option<&[QubitId]>,
 ) {
     let compare_start = N - dialog_gcd_special_underflow_clean_compare_bits(step);
     for &q in &a[compare_start..] {
@@ -1316,14 +1267,16 @@ fn dialog_gcd_clean_truncated_underflow_with_borrowed(
         let phase = b.alloc_bit();
         b.hmr(acc_ovf, phase);
         b.z_if(ctrl, phase);
-        dialog_gcd_cmp_lt_phase_conditioned_hosted(
+        let c_in = b.alloc_qubit();
+        cmp_lt_phase_conditioned_with_cin(
             b,
             &acc[compare_start..],
             &a[compare_start..],
+            c_in,
             ctrl,
             phase,
-            borrowed,
         );
+        b.free(c_in);
     } else {
         b.cx(ctrl, acc_ovf);
         ccx_cmp_lt_into_fast(b, &acc[compare_start..], &a[compare_start..], ctrl, acc_ovf);
@@ -1331,25 +1284,6 @@ fn dialog_gcd_clean_truncated_underflow_with_borrowed(
     for &q in &a[compare_start..] {
         b.x(q);
     }
-}
-
-pub(crate) fn dialog_gcd_clean_truncated_underflow(
-    b: &mut B,
-    acc: &[QubitId],
-    a: &[QubitId],
-    ctrl: QubitId,
-    acc_ovf: QubitId,
-    step: Option<usize>,
-) {
-    dialog_gcd_clean_truncated_underflow_with_borrowed(
-        b,
-        acc,
-        a,
-        ctrl,
-        acc_ovf,
-        step,
-        None,
-    );
 }
 
 pub(crate) fn dialog_gcd_special_underflow_clean_compare_bits(step: Option<usize>) -> usize {
@@ -1574,6 +1508,7 @@ fn dialog_gcd_conditional_boundary_replay(
 ) {
     assert!(!targets.is_empty());
     assert!(targets.windows(2).all(|w| w[0].1 < w[1].1));
+    let mut cleaned_targets: Vec<QubitId> = Vec::new();
     for index in (0..targets.len()).rev() {
         let (target, p) = targets[index];
         let (start, carry_in) = if index == 0 {
@@ -1583,14 +1518,38 @@ fn dialog_gcd_conditional_boundary_replay(
         };
         let phase = b.alloc_bit();
         b.hmr(target, phase);
-        cmp_lt_phase_conditioned_with_cin(
-            b,
-            &u[start..p],
-            &v[start..p],
-            carry_in,
-            ctrl,
-            phase,
-        );
+        cleaned_targets.push(target);
+        if std::env::var("DIALOG_GCD_BOUNDARY_REPLAY_BORROW_CLEANED")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            let n = p - start;
+            let borrowed = cleaned_targets.len().min(n);
+            let owned = b.alloc_qubits(n - borrowed);
+            let mut carries = Vec::with_capacity(n);
+            carries.extend_from_slice(&cleaned_targets[..borrowed]);
+            carries.extend_from_slice(&owned);
+            cmp_lt_phase_conditioned_borrowed_carries(
+                b,
+                &u[start..p],
+                &v[start..p],
+                carry_in,
+                &carries,
+                ctrl,
+                phase,
+            );
+            b.free_vec(&owned);
+        } else {
+            cmp_lt_phase_conditioned_with_cin(
+                b,
+                &u[start..p],
+                &v[start..p],
+                carry_in,
+                ctrl,
+                phase,
+            );
+        }
     }
 }
 
@@ -1624,7 +1583,7 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         .flatten();
     let boundary_hosts = &clean_scratch
         [usize::from(!implicit_high_zero && zero_host.is_some())..];
-    let mut couts: Vec<(QubitId, usize, bool)> = Vec::new();
+    let mut couts: Vec<(QubitId, usize, bool, bool)> = Vec::new();
 
     for blk in 0..blocks {
         let hi = dialog_gcd_chunk_hi(blocks, blk, ext_n);
@@ -1682,8 +1641,57 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         } else {
             &[]
         };
+        if std::env::var("TRACE_APPLY_CHUNKS").is_ok() {
+            eprintln!(
+                "TRACE apply_add block={blk} lo={lo} hi={hi} width={} boundary_live={} future_borrow={} active_before_ripple={}",
+                hi - lo,
+                couts.len(),
+                future_boundary_carries.len(),
+                b.active_qubits
+            );
+        }
         b.set_phase("dialog_gcd_apply_chunk_add_ripple");
-        if implicit_high_zero {
+        if implicit_high_zero
+            && implicit_high_zero
+            && (std::env::var("DIALOG_GCD_APPLY_FIRST_DIRTY_QOFFSET")
+                .ok()
+                .as_deref()
+                == Some("1")
+                || std::env::var("DIALOG_GCD_APPLY_ALL_DIRTY_QOFFSET")
+                    .ok()
+                    .as_deref()
+                    == Some("1"))
+            && (blk == 0
+                || std::env::var("DIALOG_GCD_APPLY_ALL_DIRTY_QOFFSET")
+                    .ok()
+                    .as_deref()
+                    == Some("1"))
+            && future_boundary_carries.len() >= 3
+            && source.len().saturating_sub(hi) >= acc_block.len().saturating_sub(2)
+        {
+            let clean2 = [future_boundary_carries[0], future_boundary_carries[1]];
+            let mut f_ext = f.clone();
+            f_ext.push(future_boundary_carries[2]);
+            if blk == 0 {
+                super::venting::iadd_dirty_2clean_qoffset(
+                    b,
+                    &acc_block,
+                    &source[hi..],
+                    &clean2,
+                    &f_ext,
+                    false,
+                );
+            } else {
+                super::venting::iadd_dirty_2clean_qoffset_carry_q(
+                    b,
+                    &acc_block,
+                    &source[hi..],
+                    &clean2,
+                    &f_ext,
+                    carry,
+                );
+            }
+        } else if implicit_high_zero {
             dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
                 b,
                 &f,
@@ -1708,23 +1716,36 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         b.set_phase("dialog_gcd_apply_chunk_add_clear");
         dialog_gcd_clear_controlled_slice_hmr(b, ctrl, source, lo, &f);
         b.free_vec(&f);
-        couts.push((cout, hi, owned_cout));
+        if dialog_gcd_apply_eager_boundary_clear_enabled() {
+            if let Some((prev_cout, prev_p, prev_owned, prev_cleared)) = couts.last_mut() {
+                if !*prev_cleared {
+                    b.set_phase("dialog_gcd_apply_chunk_add_eager_boundary_clear");
+                    ccx_cmp_lt_into_fast(b, &acc_ext[..*prev_p], &source[..*prev_p], ctrl, *prev_cout);
+                    *prev_cleared = true;
+                    if *prev_owned {
+                        b.free(*prev_cout);
+                    }
+                }
+            }
+        }
+        couts.push((cout, hi, owned_cout, false));
         carry = cout;
         lo = hi;
     }
 
     if dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() {
-        if let Some(&(_, p, _)) = couts.last() {
+        if let Some((_, p, _, _)) = couts.iter().rev().find(|&&(_, _, _, cleared)| !cleared) {
             b.set_phase("dialog_gcd_apply_chunk_add_boundary_clear");
             let targets = couts
                 .iter()
-                .map(|&(cout, p, _)| (cout, p))
+                .filter(|&&(_, _, _, cleared)| !cleared)
+                .map(|&(cout, p, _, _)| (cout, p))
                 .collect::<Vec<_>>();
             if dialog_gcd_apply_boundary_conditional_replay_enabled() {
                 dialog_gcd_conditional_boundary_replay(
                     b,
-                    &acc_ext[..p],
-                    &source[..p],
+                    &acc_ext[..*p],
+                    &source[..*p],
                     ctrl,
                     c_in,
                     &targets,
@@ -1732,24 +1753,27 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
             } else if let Some(split) = dialog_gcd_apply_boundary_split() {
                 ccx_cmp_lt_into_fast_prefix_targets_split(
                     b,
-                    &acc_ext[..p],
-                    &source[..p],
+                    &acc_ext[..*p],
+                    &source[..*p],
                     ctrl,
                     &targets,
                     split.min(p.saturating_sub(1)),
                 );
             } else {
-                ccx_cmp_lt_into_fast_prefix_targets(b, &acc_ext[..p], &source[..p], ctrl, &targets);
+                ccx_cmp_lt_into_fast_prefix_targets(b, &acc_ext[..*p], &source[..*p], ctrl, &targets);
             }
         }
     } else {
-        for &(cout, p, _) in couts.iter().rev() {
+        for &(cout, p, _, cleared) in couts.iter().rev() {
+            if cleared {
+                continue;
+            }
             b.set_phase("dialog_gcd_apply_chunk_add_boundary_clear");
             ccx_cmp_lt_into_fast(b, &acc_ext[..p], &source[..p], ctrl, cout);
         }
     }
-    for &(cout, _, owned_cout) in couts.iter().rev() {
-        if owned_cout {
+    for &(cout, _, owned_cout, cleared) in couts.iter().rev() {
+        if owned_cout && !cleared {
             b.free(cout);
         }
     }
@@ -1783,7 +1807,7 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         .flatten();
     let boundary_hosts = &clean_scratch
         [usize::from(!implicit_high_zero && zero_host.is_some())..];
-    let mut bouts: Vec<(QubitId, usize, bool)> = Vec::new();
+    let mut bouts: Vec<(QubitId, usize, bool, bool)> = Vec::new();
 
     for blk in 0..blocks {
         let hi = dialog_gcd_chunk_hi(blocks, blk, ext_n);
@@ -1841,8 +1865,56 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         } else {
             &[]
         };
+        if std::env::var("TRACE_APPLY_CHUNKS").is_ok() {
+            eprintln!(
+                "TRACE apply_sub block={blk} lo={lo} hi={hi} width={} boundary_live={} future_borrow={} active_before_ripple={}",
+                hi - lo,
+                bouts.len(),
+                future_boundary_carries.len(),
+                b.active_qubits
+            );
+        }
         b.set_phase("dialog_gcd_apply_chunk_sub_ripple");
-        if implicit_high_zero {
+        if implicit_high_zero
+            && implicit_high_zero
+            && (std::env::var("DIALOG_GCD_APPLY_FIRST_DIRTY_QOFFSET")
+                .ok()
+                .as_deref()
+                == Some("1")
+                || std::env::var("DIALOG_GCD_APPLY_ALL_DIRTY_QOFFSET")
+                    .ok()
+                    .as_deref()
+                    == Some("1"))
+            && (blk == 0
+                || std::env::var("DIALOG_GCD_APPLY_ALL_DIRTY_QOFFSET")
+                    .ok()
+                    .as_deref()
+                    == Some("1"))
+            && future_boundary_carries.len() >= 3
+            && source.len().saturating_sub(hi) >= acc_block.len().saturating_sub(2)
+        {
+            let clean2 = [future_boundary_carries[0], future_boundary_carries[1]];
+            let mut f_ext = f.clone();
+            f_ext.push(future_boundary_carries[2]);
+            if blk == 0 {
+                super::venting::isub_dirty_2clean_qoffset(
+                    b,
+                    &acc_block,
+                    &source[hi..],
+                    &clean2,
+                    &f_ext,
+                );
+            } else {
+                super::venting::isub_dirty_2clean_qoffset_borrow_q(
+                    b,
+                    &acc_block,
+                    &source[hi..],
+                    &clean2,
+                    &f_ext,
+                    borrow,
+                );
+            }
+        } else if implicit_high_zero {
             dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
                 b,
                 &f,
@@ -1867,26 +1939,45 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         b.set_phase("dialog_gcd_apply_chunk_sub_clear");
         dialog_gcd_clear_controlled_slice_hmr(b, ctrl, source, lo, &f);
         b.free_vec(&f);
-        bouts.push((bout, hi, owned_bout));
+        if dialog_gcd_apply_eager_boundary_clear_enabled() {
+            if let Some((prev_bout, prev_p, prev_owned, prev_cleared)) = bouts.last_mut() {
+                if !*prev_cleared {
+                    b.set_phase("dialog_gcd_apply_chunk_sub_eager_boundary_clear");
+                    for i in 0..*prev_p {
+                        b.x(source[i]);
+                    }
+                    ccx_cmp_lt_into_fast(b, &source[..*prev_p], &acc_ext[..*prev_p], ctrl, *prev_bout);
+                    for i in 0..*prev_p {
+                        b.x(source[i]);
+                    }
+                    *prev_cleared = true;
+                    if *prev_owned {
+                        b.free(*prev_bout);
+                    }
+                }
+            }
+        }
+        bouts.push((bout, hi, owned_bout, false));
         borrow = bout;
         lo = hi;
     }
 
     if dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() {
-        if let Some(&(_, p, _)) = bouts.last() {
+        if let Some((_, p, _, _)) = bouts.iter().rev().find(|&&(_, _, _, cleared)| !cleared) {
             b.set_phase("dialog_gcd_apply_chunk_sub_boundary_clear");
-            for i in 0..p {
+            for i in 0..*p {
                 b.x(source[i]);
             }
             let targets = bouts
                 .iter()
-                .map(|&(bout, p, _)| (bout, p))
+                .filter(|&&(_, _, _, cleared)| !cleared)
+                .map(|&(bout, p, _, _)| (bout, p))
                 .collect::<Vec<_>>();
             if dialog_gcd_apply_boundary_conditional_replay_enabled() {
                 dialog_gcd_conditional_boundary_replay(
                     b,
-                    &source[..p],
-                    &acc_ext[..p],
+                    &source[..*p],
+                    &acc_ext[..*p],
                     ctrl,
                     c_in,
                     &targets,
@@ -1894,21 +1985,24 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
             } else if let Some(split) = dialog_gcd_apply_boundary_split() {
                 ccx_cmp_lt_into_fast_prefix_targets_split(
                     b,
-                    &source[..p],
-                    &acc_ext[..p],
+                    &source[..*p],
+                    &acc_ext[..*p],
                     ctrl,
                     &targets,
                     split.min(p.saturating_sub(1)),
                 );
             } else {
-                ccx_cmp_lt_into_fast_prefix_targets(b, &source[..p], &acc_ext[..p], ctrl, &targets);
+                ccx_cmp_lt_into_fast_prefix_targets(b, &source[..*p], &acc_ext[..*p], ctrl, &targets);
             }
-            for i in 0..p {
+            for i in 0..*p {
                 b.x(source[i]);
             }
         }
     } else {
-        for &(bout, p, _) in bouts.iter().rev() {
+        for &(bout, p, _, cleared) in bouts.iter().rev() {
+            if cleared {
+                continue;
+            }
             b.set_phase("dialog_gcd_apply_chunk_sub_boundary_clear");
             for i in 0..p {
                 b.x(source[i]);
@@ -1919,8 +2013,8 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
             }
         }
     }
-    for &(bout, _, owned_bout) in bouts.iter().rev() {
-        if owned_bout {
+    for &(bout, _, owned_bout, cleared) in bouts.iter().rev() {
+        if owned_bout && !cleared {
             b.free(bout);
         }
     }
@@ -1985,14 +2079,13 @@ pub(crate) fn dialog_gcd_cmod_add_materialized_pseudomersenne_chunked(
                 Some("1"),
                 "special-fold scratch release requires owned in-place apply scratch"
             );
-            cadd_nbit_const_direct_trunc_fast_releasing_scratch_at_step(
+            cadd_nbit_const_direct_trunc_fast_releasing_scratch(
                 b,
                 &acc[..DIALOG_GCD_SPECIAL_ADD_LSBS],
                 c,
                 acc_ovf,
                 w,
                 borrowed_carries,
-                step,
             );
         } else {
             cadd_nbit_const_direct_trunc_fast_borrowed_carries(
@@ -2013,14 +2106,16 @@ pub(crate) fn dialog_gcd_cmod_add_materialized_pseudomersenne_chunked(
     if dialog_gcd_special_clean_conditional_replay_enabled() {
         let phase = b.alloc_bit();
         b.hmr(acc_ovf, phase);
-        dialog_gcd_cmp_lt_phase_conditioned_hosted(
+        let c_in = b.alloc_qubit();
+        cmp_lt_phase_conditioned_with_cin(
             b,
             &acc[compare_start..],
             &a[compare_start..],
+            c_in,
             ctrl,
             phase,
-            Some(clean_scratch),
         );
+        b.free(c_in);
     } else {
         ccx_cmp_lt_into_fast(b, &acc[compare_start..], &a[compare_start..], ctrl, acc_ovf);
     }
@@ -2085,14 +2180,13 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_chunked(
                 Some("1"),
                 "special-fold scratch release requires owned in-place apply scratch"
             );
-            csub_nbit_const_direct_trunc_fast_releasing_scratch_at_step(
+            csub_nbit_const_direct_trunc_fast_releasing_scratch(
                 b,
                 &acc[..DIALOG_GCD_SPECIAL_ADD_LSBS],
                 c,
                 acc_ovf,
                 w,
                 borrowed_carries,
-                step,
             );
         } else {
             csub_nbit_const_direct_trunc_fast_borrowed_carries(
@@ -2109,15 +2203,7 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_chunked(
     }
 
     b.set_phase("dialog_gcd_materialized_special_underflow_clean");
-    dialog_gcd_clean_truncated_underflow_with_borrowed(
-        b,
-        acc,
-        a,
-        ctrl,
-        acc_ovf,
-        step,
-        Some(clean_scratch),
-    );
+    dialog_gcd_clean_truncated_underflow(b, acc, a, ctrl, acc_ovf, step);
     unext_reg(b, acc_ovf);
 }
 

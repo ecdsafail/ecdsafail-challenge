@@ -900,6 +900,28 @@ pub(crate) fn add_vented_2clean_qoffset(
     vent_keys: &[BitId],
     carry_xor_target: Option<&[Option<QubitId>]>,
 ) {
+    add_vented_2clean_qoffset_with_carry_q(
+        b,
+        q_target,
+        q_clean2,
+        q_offset,
+        carry_in,
+        None,
+        vent_keys,
+        carry_xor_target,
+    );
+}
+
+pub(crate) fn add_vented_2clean_qoffset_with_carry_q(
+    b: &mut B,
+    q_target: &[QubitId],
+    q_clean2: &[QubitId; 2],
+    q_offset: &[QubitId],
+    carry_in: bool,
+    carry_in_q: Option<QubitId>,
+    vent_keys: &[BitId],
+    carry_xor_target: Option<&[Option<QubitId>]>,
+) {
     let n = q_target.len();
     assert_eq!(q_offset.len(), n, "q_offset length must match q_target");
     if n == 0 {
@@ -908,6 +930,9 @@ pub(crate) fn add_vented_2clean_qoffset(
     if n == 1 {
         if carry_in {
             b.x(q_target[0]);
+        }
+        if let Some(cq) = carry_in_q {
+            b.cx(cq, q_target[0]);
         }
         b.cx(q_offset[0], q_target[0]);
         return;
@@ -945,12 +970,18 @@ pub(crate) fn add_vented_2clean_qoffset(
         if k == 0 {
             let next = get_carry_qubit(1);
             if let Some(next_q) = next {
+                if let Some(cq) = carry_in_q {
+                    b.cx(cq, q_offset[0]);
+                }
                 if carry_in {
                     b.x(q_offset[0]);
-                    b.ccx(q_target[0], q_offset[0], next_q);
+                }
+                b.ccx(q_target[0], q_offset[0], next_q);
+                if carry_in {
                     b.x(q_offset[0]);
-                } else {
-                    b.ccx(q_target[0], q_offset[0], next_q);
+                }
+                if let Some(cq) = carry_in_q {
+                    b.cx(cq, q_offset[0]);
                 }
             }
         } else {
@@ -968,6 +999,9 @@ pub(crate) fn add_vented_2clean_qoffset(
             if carry_in {
                 b.x(q_target[0]);
             }
+            if let Some(cq) = carry_in_q {
+                b.cx(cq, q_target[0]);
+            }
         } else {
             let cur = get_carry_qubit(k).expect("non-boundary carry");
             b.cx(cur, q_target[k]);
@@ -980,6 +1014,9 @@ pub(crate) fn add_vented_2clean_qoffset(
                     if k == 0 {
                         if carry_in {
                             b.x(dst);
+                        }
+                        if let Some(cq) = carry_in_q {
+                            b.cx(cq, dst);
                         }
                     } else {
                         let cur = get_carry_qubit(k).expect("non-boundary carry");
@@ -1010,6 +1047,19 @@ pub(crate) fn xor_right_shifted_carries_into_qoffset(
     q_offset: &[QubitId],
     q_dst: &[QubitId],
     carry_in: bool,
+) {
+    xor_right_shifted_carries_into_qoffset_with_carry_q(
+        b, q_src, q_offset, q_dst, carry_in, None,
+    );
+}
+
+pub(crate) fn xor_right_shifted_carries_into_qoffset_with_carry_q(
+    b: &mut B,
+    q_src: &[QubitId],
+    q_offset: &[QubitId],
+    q_dst: &[QubitId],
+    carry_in: bool,
+    carry_in_q: Option<QubitId>,
 ) {
     let n = q_dst.len();
     assert!(n <= q_src.len() && q_src.len() <= n + 1, "len mismatch");
@@ -1049,12 +1099,18 @@ pub(crate) fn xor_right_shifted_carries_into_qoffset(
     // ccx(q_src[0] XOR q_offset[0], cin XOR q_offset[0], q_dst[0]).
     // For classical cin: if cin=1, the second control is NOT q_offset[0].
     b.cx(q_offset[0], q_src[0]);
+    if let Some(cq) = carry_in_q {
+        b.cx(cq, q_offset[0]);
+    }
     if carry_in {
         b.x(q_offset[0]);
     }
     b.ccx(q_src[0], q_offset[0], q_dst[0]);
     if carry_in {
         b.x(q_offset[0]);
+    }
+    if let Some(cq) = carry_in_q {
+        b.cx(cq, q_offset[0]);
     }
     b.cx(q_offset[0], q_src[0]);
 
@@ -1080,6 +1136,18 @@ pub(crate) fn iadd_dirty_2clean_qoffset(
     q_offset: &[QubitId],
     carry_in: bool,
 ) {
+    iadd_dirty_2clean_qoffset_with_carry_q(b, q_target, q_dirty, q_clean2, q_offset, carry_in, None);
+}
+
+pub(crate) fn iadd_dirty_2clean_qoffset_with_carry_q(
+    b: &mut B,
+    q_target: &[QubitId],
+    q_dirty: &[QubitId],
+    q_clean2: &[QubitId; 2],
+    q_offset: &[QubitId],
+    carry_in: bool,
+    carry_in_q: Option<QubitId>,
+) {
     let n = q_target.len();
     assert_eq!(q_offset.len(), n);
     if n == 0 {
@@ -1102,12 +1170,13 @@ pub(crate) fn iadd_dirty_2clean_qoffset(
         })
         .collect();
 
-    add_vented_2clean_qoffset(
+    add_vented_2clean_qoffset_with_carry_q(
         b,
         q_target,
         q_clean2,
         q_offset,
         carry_in,
+        carry_in_q,
         &vent_keys,
         Some(&cxt),
     );
@@ -1122,7 +1191,85 @@ pub(crate) fn iadd_dirty_2clean_qoffset(
         op.c_condition = vent_keys[k + 1];
         b.ops.push(op);
     }
-    xor_right_shifted_carries_into_qoffset(b, &q_target[..n - 1], q_offset, q_dirty, carry_in);
+    xor_right_shifted_carries_into_qoffset_with_carry_q(
+        b,
+        &q_target[..n - 1],
+        q_offset,
+        q_dirty,
+        carry_in,
+        carry_in_q,
+    );
+    for k in 0..n - 2 {
+        let mut op = Op::empty();
+        op.kind = OperationType::Z;
+        op.q_target = q_dirty[k];
+        op.c_condition = vent_keys[k + 1];
+        b.ops.push(op);
+    }
+    for k in 0..n {
+        b.x(q_target[k]);
+    }
+}
+
+pub(crate) fn iadd_dirty_2clean_qoffset_carry_q(
+    b: &mut B,
+    q_target: &[QubitId],
+    q_dirty: &[QubitId],
+    q_clean2: &[QubitId; 2],
+    q_offset: &[QubitId],
+    carry_in_q: QubitId,
+) {
+    let n = q_target.len();
+    assert_eq!(q_offset.len(), n);
+    if n == 0 {
+        return;
+    }
+    if n <= 4 {
+        panic!("iadd_dirty_2clean_qoffset_carry_q: n<=4 not supported yet, use cuccaro_add");
+    }
+    assert!(q_dirty.len() >= n - 2, "need n-2 dirty qubits");
+    let q_dirty = &q_dirty[..n - 2];
+
+    let vent_keys: Vec<BitId> = (0..n).map(|_| b.alloc_bit()).collect();
+    let cxt: Vec<Option<QubitId>> = (0..n)
+        .map(|k| {
+            if k == 0 {
+                None
+            } else {
+                q_dirty.get(k - 1).copied()
+            }
+        })
+        .collect();
+
+    add_vented_2clean_qoffset_with_carry_q(
+        b,
+        q_target,
+        q_clean2,
+        q_offset,
+        false,
+        Some(carry_in_q),
+        &vent_keys,
+        Some(&cxt),
+    );
+
+    for k in 0..n {
+        b.x(q_target[k]);
+    }
+    for k in 0..n - 2 {
+        let mut op = Op::empty();
+        op.kind = OperationType::Z;
+        op.q_target = q_dirty[k];
+        op.c_condition = vent_keys[k + 1];
+        b.ops.push(op);
+    }
+    xor_right_shifted_carries_into_qoffset_with_carry_q(
+        b,
+        &q_target[..n - 1],
+        q_offset,
+        q_dirty,
+        false,
+        Some(carry_in_q),
+    );
     for k in 0..n - 2 {
         let mut op = Op::empty();
         op.kind = OperationType::Z;
@@ -1160,6 +1307,24 @@ pub(crate) fn isub_dirty_2clean_qoffset(
         b.x(q_target[k]);
     }
     iadd_dirty_2clean_qoffset(b, q_target, q_dirty, q_clean2, q_offset, false);
+    for k in 0..n {
+        b.x(q_target[k]);
+    }
+}
+
+pub(crate) fn isub_dirty_2clean_qoffset_borrow_q(
+    b: &mut B,
+    q_target: &[QubitId],
+    q_dirty: &[QubitId],
+    q_clean2: &[QubitId; 2],
+    q_offset: &[QubitId],
+    borrow_q: QubitId,
+) {
+    let n = q_target.len();
+    for k in 0..n {
+        b.x(q_target[k]);
+    }
+    iadd_dirty_2clean_qoffset_carry_q(b, q_target, q_dirty, q_clean2, q_offset, borrow_q);
     for k in 0..n {
         b.x(q_target[k]);
     }

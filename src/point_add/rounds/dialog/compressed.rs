@@ -85,34 +85,6 @@ pub(crate) fn emit_dialog_gcd_round763_compressor_inverse(b: &mut B, block: &[Qu
 const DIALOG_GCD_K5_DATA_WIRES: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12];
 const DIALOG_GCD_K5_HEAD11_DATA_WIRES: [usize; 11] =
     [0, 1, 2, 4, 5, 6, 7, 8, 9, 11, 12];
-const DIALOG_GCD_K5_TAIL3_DATA_WIRES: [usize; 5] = [1, 10, 2, 3, 11];
-const DIALOG_GCD_K5_TAIL3_TOP32_RAW_WIRES: [usize; 9] = [0, 1, 2, 3, 4, 5, 10, 11, 12];
-const DIALOG_GCD_K5_TAIL3_TOP32_STREAM_SCRATCH_WIRES: [usize; 5] = [6, 7, 8, 9, 13];
-const DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT: u8 = 29;
-const DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF: [&[u16]; 5] = [
-    &[1, 2, 4, 8, 16, 32, 64, 128, 5, 24],
-    &[1, 4, 8, 16, 32, 64, 256, 18, 34, 264],
-    &[1, 2, 16, 256, 18, 258, 132],
-    &[8, 32, 64, 128, 256, 65],
-    &[16, 256, 34, 72, 80],
-];
-const DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF: [&[u16]; 9] = [
-    &[0, 1, 5, 6, 7, 9, 14, 17, 18, 19, 20, 22, 24, 31],
-    &[4, 6, 7, 9, 10, 14, 16, 17, 18, 21, 22, 24, 27, 28],
-    &[2, 5, 8, 10, 13, 14, 15, 16, 18, 23, 24, 26, 30],
-    &[3, 7, 11, 15, 18, 19, 20, 21, 24, 26, 30],
-    &[0, 1, 3, 5, 6, 8, 9, 11, 12, 16, 18, 20, 23, 24, 25, 27, 28],
-    &[4, 5, 6, 7, 12, 13, 14, 15, 20, 22, 28, 30],
-    &[0, 3, 7, 10, 11, 12, 16, 19, 20, 22, 23, 29],
-    &[1, 3, 5, 6, 8, 9, 11, 12, 16, 20, 22, 23, 24, 25, 26, 29],
-    &[0, 3, 4, 5, 6, 11, 16, 17, 18, 21, 27, 29, 31],
-];
-pub(crate) const DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT: [u16; 32] = [
-    0x124, 0x125, 0x12b, 0x129, 0x128, 0x12f, 0x12d, 0x14b,
-    0x149, 0x158, 0x15b, 0x159, 0x147, 0x145, 0x12c, 0x16b,
-    0x169, 0x15f, 0x15d, 0x178, 0x14f, 0x04b, 0x15c, 0x049,
-    0x058, 0x14d, 0x148, 0x0c5, 0x0c7, 0x17b, 0x038, 0x02b,
-];
 #[derive(Clone, Copy)]
 enum DialogGcdK5FableGate {
     X(usize),
@@ -293,38 +265,9 @@ fn dialog_gcd_k5_head11_enabled() -> bool {
             == Some("1")
 }
 
-fn dialog_gcd_k5_tight_partial_block_enabled() -> bool {
-    dialog_gcd_k5_clean_block_enabled()
-        && std::env::var("DIALOG_GCD_K5_TIGHT_PARTIAL_BLOCK")
-            .ok()
-            .as_deref()
-            == Some("1")
-}
-
-fn dialog_gcd_k5_tail3_fixed_last_enabled() -> bool {
-    dialog_gcd_k5_clean_block_enabled()
-        && dialog_gcd_active_iterations() >= 3
-        && dialog_gcd_active_iterations() % dialog_gcd_sidecar_group_size() == 3
-        && std::env::var("DIALOG_GCD_K5_TAIL3_FIXED_LAST")
-            .ok()
-            .as_deref()
-            == Some("1")
-}
-
-fn dialog_gcd_k5_tail3_top32_enabled() -> bool {
-    dialog_gcd_k5_clean_block_enabled()
-        && dialog_gcd_active_iterations() >= 3
-        && dialog_gcd_active_iterations() % dialog_gcd_sidecar_group_size() == 3
-        && std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_CODEC")
-            .ok()
-            .as_deref()
-            == Some("1")
-}
-
-fn dialog_gcd_k5_tail3_top32_stream_apply_enabled() -> bool {
-    dialog_gcd_k5_tail3_top32_enabled()
-        && dialog_gcd_apply_replay_swap_host_enabled()
-        && std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_STREAM_APPLY")
+fn dialog_gcd_k5_head11_apply_step_frame_enabled() -> bool {
+    dialog_gcd_k5_head11_enabled()
+        && std::env::var("DIALOG_GCD_K5_HEAD11_APPLY_STEP_FRAME")
             .ok()
             .as_deref()
             == Some("1")
@@ -444,39 +387,6 @@ fn dialog_gcd_k5_data_from_raw(raw_block: &[QubitId]) -> [QubitId; 13] {
     ]
 }
 
-fn dialog_gcd_k5_partial_raw_clean_scratch(
-    raw_block: &[QubitId],
-    steps: usize,
-) -> Vec<QubitId> {
-    if !dialog_gcd_k5_clean_block_enabled()
-        || dialog_gcd_k5_tail_pair1_enabled()
-        || steps >= dialog_gcd_sidecar_group_size()
-    {
-        return Vec::new();
-    }
-    assert_eq!(raw_block.len(), 15);
-    assert!(steps <= DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE);
-    let branch_end = 2 * dialog_gcd_sidecar_group_size();
-    let fixed_tail_branch = if dialog_gcd_k5_tail3_fixed_last_enabled() && steps == 3 {
-        &raw_block[2 * (steps - 1)..2 * steps]
-    } else {
-        &[][..]
-    };
-    fixed_tail_branch
-        .iter()
-        .chain(raw_block[2 * steps..branch_end].iter())
-        .chain(raw_block[branch_end + steps..].iter())
-        .copied()
-        .collect()
-}
-
-fn dialog_gcd_k5_partial_raw_release_bits() -> usize {
-    std::env::var("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0)
-}
-
 fn dialog_gcd_k5_transfer_survivors(
     b: &mut B,
     compressed_block: &[QubitId],
@@ -543,6 +453,84 @@ fn dialog_gcd_k5_head11_decompress_block_to_raw(
     emit_dialog_gcd_k5_head11_preconditioner_inverse(b, &data);
     emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair23(raw_block));
     emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair01(raw_block));
+}
+
+fn dialog_gcd_k5_head11_data_from_inplace_block(
+    compressed_block: &[QubitId],
+    data3: QubitId,
+    data10: QubitId,
+) -> [QubitId; 13] {
+    assert_eq!(compressed_block.len(), DIALOG_GCD_K5_HEAD11_DATA_WIRES.len());
+    let mut data = [data3; 13];
+    for (i, &wire) in DIALOG_GCD_K5_HEAD11_DATA_WIRES.iter().enumerate() {
+        data[wire] = compressed_block[i];
+    }
+    data[3] = data3;
+    data[10] = data10;
+    data
+}
+
+fn dialog_gcd_k5_copy_slot_to_frame(
+    b: &mut B,
+    frame: &[QubitId],
+    b0: QubitId,
+    b0_and_b1: QubitId,
+    s2: QubitId,
+) {
+    assert_eq!(frame.len(), 3);
+    b.cx(b0, frame[0]);
+    b.cx(b0_and_b1, frame[1]);
+    b.cx(s2, frame[2]);
+}
+
+fn dialog_gcd_k5_head11_toggle_step_frame(
+    b: &mut B,
+    compressed_block: &[QubitId],
+    frame: &[QubitId],
+    slot: usize,
+) {
+    assert_eq!(compressed_block.len(), DIALOG_GCD_K5_HEAD11_DATA_WIRES.len());
+    assert_eq!(frame.len(), 3);
+    assert!(slot < 5);
+    let data3 = b.alloc_qubit();
+    let data10 = b.alloc_qubit();
+    let pair0 = b.alloc_qubit();
+    let ancilla = b.alloc_qubit();
+    let data = dialog_gcd_k5_head11_data_from_inplace_block(compressed_block, data3, data10);
+    emit_dialog_gcd_k5_clean_compressor_inverse(b, &data, ancilla);
+    emit_dialog_gcd_k5_head11_preconditioner_inverse(b, &data);
+    match slot {
+        0 | 1 => {
+            let pair = [pair0, data[0], data[2], data[3], data[1], data[4]];
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &pair);
+            if slot == 0 {
+                dialog_gcd_k5_copy_slot_to_frame(b, frame, pair[0], pair[0], pair[4]);
+            } else {
+                dialog_gcd_k5_copy_slot_to_frame(b, frame, pair[2], pair[3], pair[5]);
+            }
+            emit_dialog_gcd_k5_pair_encoder(b, &pair);
+        }
+        2 | 3 => {
+            let pair = [pair0, data[5], data[7], data[8], data[6], data[9]];
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &pair);
+            if slot == 2 {
+                dialog_gcd_k5_copy_slot_to_frame(b, frame, pair[0], pair[1], pair[4]);
+            } else {
+                dialog_gcd_k5_copy_slot_to_frame(b, frame, pair[2], pair[3], pair[5]);
+            }
+            emit_dialog_gcd_k5_pair_encoder(b, &pair);
+        }
+        4 => {
+            dialog_gcd_k5_copy_slot_to_frame(b, frame, data[10], data[11], data[12]);
+        }
+        _ => unreachable!(),
+    }
+    emit_dialog_gcd_k5_head11_preconditioner(b, &data);
+    emit_dialog_gcd_k5_clean_compressor(b, &data, ancilla);
+    b.free(ancilla);
+    b.free(pair0);
+    b.free(data10);
+    b.free(data3);
 }
 
 fn dialog_gcd_k5_head11_pair_encode_word(bits: &mut [bool; 15], slots: [usize; 2]) {
@@ -775,12 +763,9 @@ fn dialog_gcd_k5_compress_partial_raw_to_block(
     swap_host: bool,
 ) {
     assert!(steps <= DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE);
+    assert_eq!(compressed_block.len(), 12);
     assert_eq!(raw_block.len(), 15);
     let base_bits = DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS;
-    assert!(
-        compressed_block.len() == dialog_gcd_block_bits()
-            || compressed_block.len() == base_bits + steps
-    );
     let raw_base = 2 * DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE;
     emit_dialog_gcd_round763_compressor(b, &raw_block[0..raw_base]);
     for i in 0..base_bits {
@@ -800,12 +785,9 @@ fn dialog_gcd_k5_decompress_partial_block_to_raw(
     swap_host: bool,
 ) {
     assert!(steps <= DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE);
+    assert_eq!(compressed_block.len(), 12);
     assert_eq!(raw_block.len(), 15);
     let base_bits = DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS;
-    assert!(
-        compressed_block.len() == dialog_gcd_block_bits()
-            || compressed_block.len() == base_bits + steps
-    );
     let raw_base = 2 * DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE;
     for i in 0..base_bits {
         if swap_host { b.swap(compressed_block[i], raw_block[i]); } else { b.cx(compressed_block[i], raw_block[i]); }
@@ -1526,437 +1508,6 @@ fn dialog_gcd_k5_tail7_decompress_block_to_raw(
     dialog_gcd_k5_tail7_toggle_code_from_raw(b, code, raw_block);
 }
 
-fn dialog_gcd_k5_tail3_transfer_survivors(
-    b: &mut B,
-    compressed_block: &[QubitId],
-    raw_block: &[QubitId],
-    swap_host: bool,
-) {
-    assert_eq!(compressed_block.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-    assert_eq!(raw_block.len(), 15);
-    for (index, &wire) in DIALOG_GCD_K5_TAIL3_DATA_WIRES.iter().enumerate() {
-        if swap_host {
-            b.swap(compressed_block[index], raw_block[wire]);
-        } else {
-            b.cx(compressed_block[index], raw_block[wire]);
-        }
-    }
-}
-
-fn dialog_gcd_k5_tail3_top32_raw(raw_block: &[QubitId]) -> [QubitId; 9] {
-    assert_eq!(raw_block.len(), 15);
-    DIALOG_GCD_K5_TAIL3_TOP32_RAW_WIRES.map(|wire| raw_block[wire])
-}
-
-fn dialog_gcd_k5_tail3_top32_toggle_code_from_raw(
-    b: &mut B,
-    code: &[QubitId],
-    raw_block: &[QubitId],
-) {
-    assert_eq!(code.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-    let raw = dialog_gcd_k5_tail3_top32_raw(raw_block);
-    for (code_index, terms) in DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF
-        .iter()
-        .enumerate()
-    {
-        if (DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT >> code_index) & 1 != 0 {
-            b.x(code[code_index]);
-        }
-        for &mask in *terms {
-            let controls = raw
-                .iter()
-                .enumerate()
-                .filter_map(|(index, &q)| ((mask >> index) & 1 != 0).then_some(q))
-                .collect::<Vec<_>>();
-            assert!(controls.len() <= 2);
-            dialog_gcd_toggle_mcx_with_dirty(b, &controls, raw_block, code[code_index]);
-        }
-    }
-}
-
-fn dialog_gcd_k5_tail3_top32_toggle_raw_from_code(
-    b: &mut B,
-    code: &[QubitId],
-    raw_block: &[QubitId],
-) {
-    assert_eq!(code.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-    let raw = dialog_gcd_k5_tail3_top32_raw(raw_block);
-    for (raw_index, terms) in DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF
-        .iter()
-        .enumerate()
-    {
-        dialog_gcd_toggle_anf_with_dirty(b, code, raw[raw_index], raw_block, terms);
-    }
-}
-
-fn dialog_gcd_k5_tail3_top32_slot_raw(
-    raw_block: &[QubitId],
-    slot: usize,
-) -> [QubitId; 3] {
-    assert_eq!(raw_block.len(), 15);
-    assert!(slot < 3);
-    [raw_block[2 * slot], raw_block[2 * slot + 1], raw_block[10 + slot]]
-}
-
-fn dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-    b: &mut B,
-    code: &[QubitId],
-    raw_block: &[QubitId],
-    slot: usize,
-) {
-    let raw = dialog_gcd_k5_tail3_top32_raw(raw_block);
-    for raw_index in [2 * slot, 2 * slot + 1, 6 + slot] {
-        dialog_gcd_toggle_anf_with_dirty(
-            b,
-            code,
-            raw[raw_index],
-            raw_block,
-            DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF[raw_index],
-        );
-    }
-}
-
-fn dialog_gcd_k5_tail3_top32_stream_scratch(raw_block: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw_block.len(), 15);
-    DIALOG_GCD_K5_TAIL3_TOP32_STREAM_SCRATCH_WIRES
-        .iter()
-        .map(|&wire| raw_block[wire])
-        .collect()
-}
-
-fn dialog_gcd_k5_tail3_top32_stream_dynamic(raw_block: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw_block.len(), 15);
-    raw_block
-        .iter()
-        .enumerate()
-        .filter_map(|(wire, &q)| {
-            (!DIALOG_GCD_K5_TAIL3_TOP32_STREAM_SCRATCH_WIRES.contains(&wire)).then_some(q)
-        })
-        .collect()
-}
-
-fn dialog_gcd_k5_tail3_top32_compress_raw_to_block(
-    b: &mut B,
-    code: &[QubitId],
-    raw_block: &[QubitId],
-    swap_host: bool,
-) {
-    if swap_host {
-        dialog_gcd_k5_tail3_top32_toggle_code_from_raw(b, code, raw_block);
-    }
-    dialog_gcd_k5_tail3_top32_toggle_raw_from_code(b, code, raw_block);
-}
-
-fn dialog_gcd_k5_tail3_top32_decompress_block_to_raw(
-    b: &mut B,
-    code: &[QubitId],
-    raw_block: &[QubitId],
-    swap_host: bool,
-) {
-    dialog_gcd_k5_tail3_top32_toggle_raw_from_code(b, code, raw_block);
-    if swap_host {
-        dialog_gcd_k5_tail3_top32_toggle_code_from_raw(b, code, raw_block);
-    }
-}
-
-fn dialog_gcd_k5_tail3_top32_raw_word(pattern: u16) -> u16 {
-    (0..3).fold(0u16, |raw, slot| {
-        let digit = (pattern >> (3 * slot)) & 7;
-        raw
-            | ((digit & 1) << (2 * slot))
-            | (((digit >> 1) & 1) << (2 * slot + 1))
-            | (((digit >> 2) & 1) << (6 + slot))
-    })
-}
-
-fn dialog_gcd_k5_tail3_top32_code_word(raw: u16) -> u8 {
-    DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF
-        .iter()
-        .enumerate()
-        .fold(DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT, |code, (index, terms)| {
-            let bit = terms
-                .iter()
-                .fold(0u8, |value, &mask| value ^ u8::from(raw & mask == mask));
-            code ^ (bit << index)
-        })
-}
-
-fn dialog_gcd_k5_tail3_top32_decode_word(code: u8) -> u16 {
-    DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF
-        .iter()
-        .enumerate()
-        .fold(0u16, |raw, (index, terms)| {
-            let bit = terms.iter().fold(0u16, |value, &mask| {
-                value ^ u16::from((u16::from(code) & mask) == mask)
-            });
-            raw ^ (bit << index)
-        })
-}
-
-pub(crate) fn dialog_gcd_k5_tail3_top32_supports(pattern: u16) -> bool {
-    DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT.contains(&pattern)
-}
-
-pub(crate) fn dialog_gcd_k5_tail3_top32_codec_selftest() -> Result<(), String> {
-    use sha3::digest::{ExtendableOutput, Update};
-
-    let mut seen_codes = [false; 1 << DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()];
-    for &pattern in &DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT {
-        let raw = dialog_gcd_k5_tail3_top32_raw_word(pattern);
-        let code = dialog_gcd_k5_tail3_top32_code_word(raw);
-        if std::mem::replace(&mut seen_codes[code as usize], true) {
-            return Err(format!(
-                "duplicate top32 code for pattern 0x{pattern:03x}: 0x{code:02x}"
-            ));
-        }
-        let decoded = dialog_gcd_k5_tail3_top32_decode_word(code);
-        if decoded != raw {
-            return Err(format!(
-                "top32 word mismatch for pattern 0x{pattern:03x}: got 0x{decoded:03x}, want 0x{raw:03x}"
-            ));
-        }
-    }
-    if seen_codes.iter().any(|seen| !seen) {
-        return Err("top32 codec does not cover all 32 code words".to_string());
-    }
-
-    let mut raw_masks = [0u64; 15];
-    let mut code_masks = [0u64; DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()];
-    for shot in 0..64 {
-        let pattern = DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT
-            [shot % DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT.len()];
-        let raw = dialog_gcd_k5_tail3_top32_raw_word(pattern);
-        let code = dialog_gcd_k5_tail3_top32_code_word(raw);
-        let shot_bit = 1u64 << shot;
-        for (index, &wire) in DIALOG_GCD_K5_TAIL3_TOP32_RAW_WIRES
-            .iter()
-            .enumerate()
-        {
-            if (raw >> index) & 1 != 0 {
-                raw_masks[wire] |= shot_bit;
-            }
-        }
-        for (index, mask) in code_masks.iter_mut().enumerate() {
-            if (code >> index) & 1 != 0 {
-                *mask |= shot_bit;
-            }
-        }
-    }
-
-    let build_codec = |decompress: bool| {
-        let mut b = B::new();
-        let code = b.alloc_qubits(DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-        let raw = b.alloc_qubits(15);
-        if decompress {
-            dialog_gcd_k5_tail3_top32_decompress_block_to_raw(&mut b, &code, &raw, true);
-        } else {
-            dialog_gcd_k5_tail3_top32_compress_raw_to_block(&mut b, &code, &raw, true);
-        }
-        (b.ops, code, raw, b.next_qubit as usize, b.next_bit as usize)
-    };
-
-    let run = |decompress: bool, source: &[u64]| {
-        let (ops, code, raw, num_qubits, num_bits) = build_codec(decompress);
-        let mut seed = sha3::Shake128::default();
-        seed.update(b"dialog-gcd-k5-tail3-top32-codec-selftest");
-        seed.update(&[u8::from(decompress)]);
-        let mut xof = seed.finalize_xof();
-        let mut sim = Simulator::new(num_qubits, num_bits, &mut xof);
-        sim.clear_for_shot();
-        let targets = if decompress { &code[..] } else { &raw[..] };
-        for (&qubit, &mask) in targets.iter().zip(source.iter()) {
-            *sim.qubit_mut(qubit) = mask;
-        }
-        sim.apply_iter(ops.iter());
-        (
-            code.iter().map(|&q| sim.qubit(q)).collect::<Vec<_>>(),
-            raw.iter().map(|&q| sim.qubit(q)).collect::<Vec<_>>(),
-            sim.phase,
-        )
-    };
-
-    let (forward_code, forward_raw, forward_phase) = run(false, &raw_masks);
-    if forward_phase != 0 {
-        return Err(format!("top32 forward phase garbage 0x{forward_phase:x}"));
-    }
-    if forward_code != code_masks {
-        return Err(format!(
-            "top32 forward code mismatch: got {forward_code:x?}, want {code_masks:x?}"
-        ));
-    }
-    if forward_raw.iter().any(|&mask| mask != 0) {
-        return Err(format!("top32 forward raw garbage: {forward_raw:x?}"));
-    }
-
-    let (reverse_code, reverse_raw, reverse_phase) = run(true, &code_masks);
-    if reverse_phase != 0 {
-        return Err(format!("top32 reverse phase garbage 0x{reverse_phase:x}"));
-    }
-    if reverse_code.iter().any(|&mask| mask != 0) {
-        return Err(format!("top32 reverse code garbage: {reverse_code:x?}"));
-    }
-    if reverse_raw != raw_masks {
-        return Err(format!(
-            "top32 reverse raw mismatch: got {reverse_raw:x?}, want {raw_masks:x?}"
-        ));
-    }
-    Ok(())
-}
-
-fn dialog_gcd_k5_tail3_compress_raw_to_block(
-    b: &mut B,
-    compressed_block: &[QubitId],
-    raw_block: &[QubitId],
-    swap_host: bool,
-) {
-    assert_eq!(compressed_block.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-    assert_eq!(raw_block.len(), 15);
-    emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair01(raw_block));
-    dialog_gcd_k5_tail3_transfer_survivors(b, compressed_block, raw_block, swap_host);
-}
-
-fn dialog_gcd_k5_tail3_decompress_block_to_raw(
-    b: &mut B,
-    compressed_block: &[QubitId],
-    raw_block: &[QubitId],
-    swap_host: bool,
-) {
-    assert_eq!(compressed_block.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-    assert_eq!(raw_block.len(), 15);
-    dialog_gcd_k5_tail3_transfer_survivors(b, compressed_block, raw_block, swap_host);
-    emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair01(raw_block));
-}
-
-fn dialog_gcd_k5_tail3_code_word(left: u8, right: u8) -> Option<u8> {
-    let mut raw = [false; 15];
-    for (slot, digit) in [left, right].into_iter().enumerate() {
-        raw[3 * slot] = digit & 1 != 0;
-        raw[3 * slot + 1] = digit & 2 != 0;
-        raw[3 * slot + 2] = digit & 4 != 0;
-    }
-    dialog_gcd_k5_head11_pair_encode_word(&mut raw, [0, 1]);
-    if raw[0] {
-        return None;
-    }
-    Some(
-        [1usize, 2, 3, 4, 5]
-            .iter()
-            .enumerate()
-            .fold(0u8, |code, (index, &wire)| {
-                code | (u8::from(raw[wire]) << index)
-            }),
-    )
-}
-
-pub(crate) fn dialog_gcd_k5_tail3_codec_selftest() -> Result<(), String> {
-    use sha3::digest::{ExtendableOutput, Update};
-
-    const DIGITS: [u8; 6] = [0, 1, 3, 4, 5, 7];
-    let supported = DIGITS
-        .into_iter()
-        .flat_map(|left| DIGITS.into_iter().map(move |right| (left, right)))
-        .filter(|&(left, right)| dialog_gcd_k5_tail3_code_word(left, right).is_some())
-        .collect::<Vec<_>>();
-    if supported.len() != 30 {
-        return Err(format!(
-            "expected 30 supported tail pairs, got {}",
-            supported.len()
-        ));
-    }
-    let mut seen_codes = [false; 1 << DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()];
-    for &(left, right) in &supported {
-        let code = dialog_gcd_k5_tail3_code_word(left, right).expect("filtered support");
-        if std::mem::replace(&mut seen_codes[code as usize], true) {
-            return Err(format!(
-                "duplicate tail-pair code for digits ({left}, {right}): 0x{code:02x}"
-            ));
-        }
-    }
-
-    let mut raw_masks = [0u64; 15];
-    let mut code_masks = [0u64; DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()];
-    for shot in 0..64 {
-        let (left, right) = supported[shot % supported.len()];
-        let shot_bit = 1u64 << shot;
-        for (slot, digit) in [left, right].into_iter().enumerate() {
-            if digit & 1 != 0 {
-                raw_masks[2 * slot] |= shot_bit;
-            }
-            if digit & 2 != 0 {
-                raw_masks[2 * slot + 1] |= shot_bit;
-            }
-            if digit & 4 != 0 {
-                raw_masks[10 + slot] |= shot_bit;
-            }
-        }
-        let code = dialog_gcd_k5_tail3_code_word(left, right).expect("supported pair");
-        for (index, mask) in code_masks.iter_mut().enumerate() {
-            if (code >> index) & 1 != 0 {
-                *mask |= shot_bit;
-            }
-        }
-    }
-
-    let build_codec = |decompress: bool| {
-        let mut b = B::new();
-        let code = b.alloc_qubits(DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
-        let raw = b.alloc_qubits(15);
-        if decompress {
-            dialog_gcd_k5_tail3_decompress_block_to_raw(&mut b, &code, &raw, true);
-        } else {
-            dialog_gcd_k5_tail3_compress_raw_to_block(&mut b, &code, &raw, true);
-        }
-        (b.ops, code, raw, b.next_qubit as usize, b.next_bit as usize)
-    };
-
-    let run = |decompress: bool, source: &[u64]| {
-        let (ops, code, raw, num_qubits, num_bits) = build_codec(decompress);
-        let mut seed = sha3::Shake128::default();
-        seed.update(b"dialog-gcd-k5-tail3-codec-selftest");
-        seed.update(&[u8::from(decompress)]);
-        let mut xof = seed.finalize_xof();
-        let mut sim = Simulator::new(num_qubits, num_bits, &mut xof);
-        sim.clear_for_shot();
-        let targets = if decompress { &code[..] } else { &raw[..] };
-        for (&qubit, &mask) in targets.iter().zip(source.iter()) {
-            *sim.qubit_mut(qubit) = mask;
-        }
-        sim.apply_iter(ops.iter());
-        (
-            code.iter().map(|&q| sim.qubit(q)).collect::<Vec<_>>(),
-            raw.iter().map(|&q| sim.qubit(q)).collect::<Vec<_>>(),
-            sim.phase,
-        )
-    };
-
-    let (forward_code, forward_raw, forward_phase) = run(false, &raw_masks);
-    if forward_phase != 0 {
-        return Err(format!("forward phase garbage 0x{forward_phase:x}"));
-    }
-    if forward_code != code_masks {
-        return Err(format!(
-            "forward code mismatch: got {forward_code:x?}, want {code_masks:x?}"
-        ));
-    }
-    if forward_raw.iter().any(|&mask| mask != 0) {
-        return Err(format!("forward raw garbage: {forward_raw:x?}"));
-    }
-
-    let (reverse_code, reverse_raw, reverse_phase) = run(true, &forward_code);
-    if reverse_phase != 0 {
-        return Err(format!("reverse phase garbage 0x{reverse_phase:x}"));
-    }
-    if reverse_code.iter().any(|&mask| mask != 0) {
-        return Err(format!("reverse code garbage: {reverse_code:x?}"));
-    }
-    if reverse_raw != raw_masks {
-        return Err(format!(
-            "reverse raw mismatch: got {reverse_raw:x?}, want {raw_masks:x?}"
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn dialog_gcd_k5_tail7_codec_selftest() -> Result<(), String> {
     use sha3::digest::{ExtendableOutput, Update};
 
@@ -2151,21 +1702,6 @@ fn dialog_gcd_compressed_sidecar_block_bits(block: usize) -> usize {
         && block + 1 == dialog_gcd_compressed_sidecar_blocks()
     {
         1
-    } else if (dialog_gcd_k5_tail3_fixed_last_enabled()
-        || dialog_gcd_k5_tail3_top32_enabled())
-        && block + 1 == dialog_gcd_compressed_sidecar_blocks()
-    {
-        DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-    } else if dialog_gcd_k5_tight_partial_block_enabled()
-        && block + 1 == dialog_gcd_compressed_sidecar_blocks()
-    {
-        let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
-        let steps = end - start;
-        if steps < dialog_gcd_sidecar_group_size() {
-            DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS + steps
-        } else {
-            dialog_gcd_block_bits()
-        }
     } else {
         dialog_gcd_block_bits()
     }
@@ -2212,9 +1748,7 @@ pub(crate) fn dialog_gcd_compressed_log_u_high_runway_enabled() -> bool {
 }
 
 fn dialog_gcd_k5_constant_tail_stored_steps(block_steps: usize) -> Option<usize> {
-    if dialog_gcd_k5_tail3_fixed_last_enabled() && block_steps == 3 {
-        Some(2)
-    } else if dialog_gcd_k5_tail6_graph9_enabled() && block_steps == 6 {
+    if dialog_gcd_k5_tail6_graph9_enabled() && block_steps == 6 {
         Some(DIALOG_GCD_K5_TAIL6_GRAPH9_STORED_STEPS)
     } else if dialog_gcd_k5_tail6_graph_enabled() && block_steps == 6 {
         Some(DIALOG_GCD_K5_TAIL6_GRAPH_STORED_STEPS)
@@ -2226,8 +1760,7 @@ fn dialog_gcd_k5_constant_tail_stored_steps(block_steps: usize) -> Option<usize>
 }
 
 fn dialog_gcd_k5_fixed_tail_apply_enabled() -> bool {
-    (dialog_gcd_k5_tail3_fixed_last_enabled()
-        || dialog_gcd_k5_tail7_enabled()
+    (dialog_gcd_k5_tail7_enabled()
         || dialog_gcd_k5_tail6_graph_enabled()
         || dialog_gcd_k5_tail6_graph9_enabled())
         && (std::env::var("DIALOG_GCD_K5_FIXED_TAIL_APPLY")
@@ -2252,13 +1785,6 @@ pub(crate) fn dialog_gcd_compressed_log_u_high_runway_blocks() -> usize {
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(16)
-}
-
-fn dialog_gcd_runway_partial_block_enabled() -> bool {
-    std::env::var("DIALOG_GCD_RUNWAY_PARTIAL_BLOCK")
-        .ok()
-        .as_deref()
-        == Some("1")
 }
 
 #[derive(Clone, Debug)]
@@ -2287,48 +1813,38 @@ pub(crate) fn dialog_gcd_runway_layout() -> Vec<(usize, usize)> {
     // widest inactive-u threshold.
     let first_allowed = blocks.saturating_sub(dialog_gcd_compressed_log_u_high_runway_blocks());
     for first_block in first_allowed..blocks {
-        let first_bits = dialog_gcd_compressed_sidecar_block_bits(first_block);
-        let first_slots = if dialog_gcd_runway_partial_block_enabled() {
-            0..first_bits
-        } else {
-            0..1
-        };
-        for first_slot in first_slots {
-            let mut next_host = highest_host;
-            let mut layout = Vec::with_capacity(
-                (first_block..blocks)
-                    .map(dialog_gcd_compressed_sidecar_block_bits)
-                    .sum::<usize>()
-                    - first_slot,
-            );
-            let mut fits = true;
-            for block in first_block..blocks {
-                let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
-                let active_threshold = (start..end)
-                    .map(dialog_gcd_tobitvector_active_width)
-                    .max()
-                    .unwrap_or(1);
-                let block_offset = dialog_gcd_compressed_sidecar_block_offset(block);
-                let slot_start = if block == first_block { first_slot } else { 0 };
-                for slot in slot_start..dialog_gcd_compressed_sidecar_block_bits(block) {
-                    if next_host < active_threshold {
-                        fits = false;
-                        break;
-                    }
-                    layout.push((block_offset + slot, next_host));
-                    let Some(next) = next_host.checked_sub(1) else {
-                        fits = false;
-                        break;
-                    };
-                    next_host = next;
-                }
-                if !fits {
+        let mut next_host = highest_host;
+        let mut layout = Vec::with_capacity(
+            (first_block..blocks)
+                .map(dialog_gcd_compressed_sidecar_block_bits)
+                .sum(),
+        );
+        let mut fits = true;
+        for block in first_block..blocks {
+            let (start, end) = dialog_gcd_compressed_sidecar_block_step_range(block);
+            let active_threshold = (start..end)
+                .map(dialog_gcd_tobitvector_active_width)
+                .max()
+                .unwrap_or(1);
+            let block_offset = dialog_gcd_compressed_sidecar_block_offset(block);
+            for slot in 0..dialog_gcd_compressed_sidecar_block_bits(block) {
+                if next_host < active_threshold {
+                    fits = false;
                     break;
                 }
+                layout.push((block_offset + slot, next_host));
+                let Some(next) = next_host.checked_sub(1) else {
+                    fits = false;
+                    break;
+                };
+                next_host = next;
             }
-            if fits {
-                return layout;
+            if !fits {
+                break;
             }
+        }
+        if fits {
+            return layout;
         }
     }
     Vec::new()
@@ -2939,30 +2455,6 @@ pub(crate) fn dialog_gcd_copy_compressed_block_to_raw(
         dialog_gcd_k5_tail7_decompress_block_to_raw(b, compressed_block, raw_block);
         return;
     }
-    if dialog_gcd_k5_tail3_top32_enabled()
-        && steps == 3
-        && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-    {
-        dialog_gcd_k5_tail3_top32_decompress_block_to_raw(
-            b,
-            compressed_block,
-            raw_block,
-            dialog_gcd_apply_replay_swap_host_enabled(),
-        );
-        return;
-    }
-    if dialog_gcd_k5_tail3_fixed_last_enabled()
-        && steps == 3
-        && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-    {
-        dialog_gcd_k5_tail3_decompress_block_to_raw(
-            b,
-            compressed_block,
-            raw_block,
-            dialog_gcd_apply_replay_swap_host_enabled(),
-        );
-        return;
-    }
     if dialog_gcd_k5_tail_pair1_enabled() && steps == 2 && compressed_block.len() == 1 {
         dialog_gcd_k5_tail_pair1_decompress_block_to_raw(
             b,
@@ -3059,30 +2551,6 @@ pub(crate) fn dialog_gcd_clear_raw_block_copy(
         && compressed_block.len() == DIALOG_GCD_K5_TAIL7_CODE_BITS
     {
         dialog_gcd_k5_tail7_compress_raw_to_block(b, compressed_block, raw_block);
-        return;
-    }
-    if dialog_gcd_k5_tail3_top32_enabled()
-        && steps == 3
-        && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-    {
-        dialog_gcd_k5_tail3_top32_compress_raw_to_block(
-            b,
-            compressed_block,
-            raw_block,
-            dialog_gcd_apply_replay_swap_host_enabled(),
-        );
-        return;
-    }
-    if dialog_gcd_k5_tail3_fixed_last_enabled()
-        && steps == 3
-        && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-    {
-        dialog_gcd_k5_tail3_compress_raw_to_block(
-            b,
-            compressed_block,
-            raw_block,
-            dialog_gcd_apply_replay_swap_host_enabled(),
-        );
         return;
     }
     if dialog_gcd_k5_tail_pair1_enabled() && steps == 2 && compressed_block.len() == 1 {
@@ -3395,26 +2863,6 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
             && compressed_block.len() == DIALOG_GCD_K5_TAIL7_CODE_BITS
         {
             dialog_gcd_k5_tail7_compress_raw_to_block(b, compressed_block, raw_block);
-        } else if dialog_gcd_k5_tail3_top32_enabled()
-            && block_steps == 3
-            && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-        {
-            dialog_gcd_k5_tail3_top32_compress_raw_to_block(
-                b,
-                compressed_block,
-                raw_block,
-                true,
-            );
-        } else if dialog_gcd_k5_tail3_fixed_last_enabled()
-            && block_steps == 3
-            && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-        {
-            dialog_gcd_k5_tail3_compress_raw_to_block(
-                b,
-                compressed_block,
-                raw_block,
-                true,
-            );
         } else if dialog_gcd_k5_tail_pair1_enabled()
             && end - start == 2
             && compressed_block.len() == 1
@@ -3538,26 +2986,6 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                     b,
                     compressed_block,
                     raw_block,
-                );
-            } else if dialog_gcd_k5_tail3_top32_enabled()
-                && block_steps == 3
-                && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-            {
-                dialog_gcd_k5_tail3_top32_decompress_block_to_raw(
-                    b,
-                    compressed_block,
-                    raw_block,
-                    true,
-                );
-            } else if dialog_gcd_k5_tail3_fixed_last_enabled()
-                && block_steps == 3
-                && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len()
-            {
-                dialog_gcd_k5_tail3_decompress_block_to_raw(
-                    b,
-                    compressed_block,
-                    raw_block,
-                    true,
                 );
             } else if dialog_gcd_k5_tail_pair1_enabled()
                 && end - start == 2
@@ -3779,30 +3207,34 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             && start == 0
             && block_steps == 5
             && compressed_block.len() == DIALOG_GCD_K5_HEAD11_DATA_WIRES.len();
-        let stream_tail3 = dialog_gcd_k5_tail3_top32_stream_apply_enabled()
-            && block_steps == 3
-            && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len();
+        let head11_step_frame =
+            head11_block && dialog_gcd_k5_head11_apply_step_frame_enabled();
+        let step_frame = head11_step_frame.then(|| b.alloc_qubits(3));
+        if head11_step_frame {
+            b.set_phase("dialog_gcd_compressed_block_apply_release_raw_host");
+            b.free_vec(raw_block);
+        }
 
         b.set_phase("dialog_gcd_compressed_block_apply_decompress_block");
-        let raw_frame = inplace_raw0.map(|raw0| {
+        let raw_frame = if head11_step_frame {
+            None
+        } else {
+            inplace_raw0.map(|raw0| {
             dialog_gcd_k2_pair_inplace_decompress_block(b, compressed_block, raw0, end - start)
-        });
-        if raw_frame.is_none() && !stream_tail3 {
+            })
+        };
+        if raw_frame.is_none() && !head11_step_frame {
             dialog_gcd_copy_compressed_block_to_raw(b, compressed_block, raw_block, end - start);
         }
-        if head11_block {
+        if head11_block && !head11_step_frame {
             b.free(raw_block[1]);
         }
-        let released_code_bits = if !stream_tail3
-            && raw_frame.is_none()
+        let released_code_bits = if raw_frame.is_none()
+            && !head11_step_frame
             && dialog_gcd_apply_replay_swap_host_enabled()
         {
-            let requested = if (block_steps == 6
-                && compressed_block.len() == DIALOG_GCD_K5_TAIL6_GRAPH9_CODE_BITS)
-                || ((dialog_gcd_k5_tail3_fixed_last_enabled()
-                    || dialog_gcd_k5_tail3_top32_enabled())
-                    && block_steps == 3
-                    && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len())
+            let requested = if block_steps == 6
+                && compressed_block.len() == DIALOG_GCD_K5_TAIL6_GRAPH9_CODE_BITS
             {
                 dialog_gcd_k5_release_decoded_tail_bits()
             } else {
@@ -3815,32 +3247,13 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
         let retained_code_bits = compressed_block.len() - released_code_bits;
         let released_code = &compressed_block[retained_code_bits..];
         b.free_vec(released_code);
-        let raw = raw_frame.as_ref().map_or(raw_block, |frame| &frame[..]);
-        let stream_clean_scratch = if stream_tail3 {
-            dialog_gcd_k5_tail3_top32_stream_scratch(raw)
-        } else {
-            Vec::new()
-        };
-        let stream_dynamic_raw = if stream_tail3 {
-            dialog_gcd_k5_tail3_top32_stream_dynamic(raw)
-        } else {
-            Vec::new()
-        };
-        if stream_tail3 {
-            b.free_vec(&stream_dynamic_raw);
-        }
-        let scale_release_bits = if stream_tail3 {
-            0
-        } else {
-            dialog_gcd_k5_release_scale_bits().min(retained_code_bits)
-        };
+        let scale_release_bits =
+            dialog_gcd_k5_release_scale_bits().min(retained_code_bits);
         let scale_released_code =
             &compressed_block[retained_code_bits - scale_release_bits..retained_code_bits];
-        let shift_clean_code = if stream_tail3 {
-            stream_clean_scratch.as_slice()
-        } else {
-            &compressed_block[..retained_code_bits - scale_release_bits]
-        };
+        let shift_clean_code =
+            &compressed_block[..retained_code_bits - scale_release_bits];
+        let raw = raw_frame.as_ref().map_or(raw_block, |frame| &frame[..]);
         let tail_clean_scratch = if dialog_gcd_k5_tail_pair1_enabled()
             && end - start == 2
             && compressed_block.len() == 1
@@ -3855,27 +3268,14 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
         } else {
             Vec::new()
         };
-        let mut partial_raw_clean_scratch = if stream_tail3 {
-            Vec::new()
-        } else {
-            dialog_gcd_k5_partial_raw_clean_scratch(raw, block_steps)
-        };
-        let partial_release =
-            dialog_gcd_k5_partial_raw_release_bits().min(partial_raw_clean_scratch.len());
-        let released_partial_raw =
-            partial_raw_clean_scratch.split_off(partial_raw_clean_scratch.len() - partial_release);
-        b.free_vec(&released_partial_raw);
-        let mut combined_clean_scratch = Vec::new();
-        if stream_tail3 {
-            combined_clean_scratch.extend_from_slice(&stream_clean_scratch);
-        } else if !inplace_raw && dialog_gcd_apply_replay_swap_host_enabled() {
-            combined_clean_scratch.extend_from_slice(&compressed_block[..retained_code_bits]);
-            combined_clean_scratch.extend_from_slice(&partial_raw_clean_scratch);
-        }
-        let block_clean_scratch = if !tail_clean_scratch.is_empty() {
+        let block_clean_scratch = if head11_step_frame {
+            &[]
+        } else if !tail_clean_scratch.is_empty() {
             tail_clean_scratch.as_slice()
+        } else if !inplace_raw && dialog_gcd_apply_replay_swap_host_enabled() {
+            &compressed_block[..retained_code_bits]
         } else {
-            combined_clean_scratch.as_slice()
+            &[]
         };
 
         for step in (start..end).rev() {
@@ -3916,21 +3316,21 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
                 }
                 continue;
             }
-            if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                b.reacquire_vec(&slot_raw);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
+            if let Some(frame) = step_frame.as_ref() {
+                b.set_phase("dialog_gcd_compressed_block_apply_load_step_frame");
+                dialog_gcd_k5_head11_toggle_step_frame(b, compressed_block, frame, slot);
             }
-            let b0 = raw[2 * slot];
-            let b0_and_b1 = if head11_block && slot == 0 {
-                raw[0]
+            let (b0, b0_and_b1, s2) = if let Some(frame) = step_frame.as_ref() {
+                (frame[0], frame[1], frame[2])
             } else {
-                raw[2 * slot + 1]
+                let b0 = raw[2 * slot];
+                let b0_and_b1 = if head11_block && slot == 0 {
+                    raw[0]
+                } else {
+                    raw[2 * slot + 1]
+                };
+                let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
+                (b0, b0_and_b1, s2)
             };
 
             if !scale_released_code.is_empty() {
@@ -3949,7 +3349,6 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             if apply_k2 && dialog_gcd_apply_fused_fold_enabled() {
                 // Fuse mod_double_inplace_fast + cmod_double_inplace_lazy into a
                 // single shared carry chain (value-identical; see fn doc).
-                let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
                 dialog_gcd_fused_double_y_at_step(b, y, p, s2, Some(step));
             } else {
                 mod_double_inplace_fast(b, y, p);
@@ -3957,7 +3356,6 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
                     // mirror the forward K=2 second shift: conditional 2nd double of y.
                     // MUST use the lazy (Solinas, truncated) controlled double so it
                     // composes with the uncontrolled mod_double_inplace_fast above.
-                    let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
                     cmod_double_inplace_lazy(b, y, p, s2);
                 }
             }
@@ -3971,12 +3369,12 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
 
             b.set_phase("dialog_gcd_compressed_block_apply_cadd");
             if dialog_gcd_raw_apply_materialized_special_add_enabled() {
-                let owned_clean_scratch = if inplace_raw {
+                let owned_clean_scratch = if inplace_raw || head11_step_frame {
                     b.alloc_qubits(dialog_gcd_block_bits())
                 } else {
                     Vec::new()
                 };
-                let clean_scratch = if inplace_raw {
+                let clean_scratch = if inplace_raw || head11_step_frame {
                     owned_clean_scratch.as_slice()
                 } else {
                     block_clean_scratch
@@ -3990,7 +3388,7 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
                     clean_scratch,
                     Some(step),
                 );
-                if inplace_raw {
+                if inplace_raw || head11_step_frame {
                     b.free_vec(&owned_clean_scratch);
                 }
             } else if dialog_gcd_raw_apply_direct_special_add_enabled() {
@@ -4003,15 +3401,9 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             for (&xi, &yi) in x.iter().zip(y.iter()) {
                 cswap(b, b0_and_b1, xi, yi);
             }
-            if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
-                b.free_vec(&slot_raw);
+            if let Some(frame) = step_frame.as_ref() {
+                b.set_phase("dialog_gcd_compressed_block_apply_clear_step_frame");
+                dialog_gcd_k5_head11_toggle_step_frame(b, compressed_block, frame, slot);
             }
         }
 
@@ -4019,20 +3411,21 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             b.set_phase("dialog_gcd_compressed_block_apply_reacquire_block");
             b.reacquire_vec(released_code);
         }
-        if !released_partial_raw.is_empty() {
-            b.set_phase("dialog_gcd_compressed_block_apply_reacquire_partial_raw");
-            b.reacquire_vec(&released_partial_raw);
-        }
-        if head11_block {
+        if head11_block && !head11_step_frame {
             b.reacquire(raw_block[1]);
         }
         b.set_phase("dialog_gcd_compressed_block_apply_clear_block_copy");
-        if stream_tail3 {
-            b.reacquire_vec(&stream_dynamic_raw);
-        } else if let Some(raw0) = inplace_raw0 {
+        if let Some(raw0) = inplace_raw0 {
             dialog_gcd_k2_pair_inplace_clear_block(b, compressed_block, raw0, end - start);
-        } else {
+        } else if !head11_step_frame {
             dialog_gcd_clear_raw_block_copy(b, compressed_block, raw_block, end - start);
+        }
+        if let Some(frame) = step_frame {
+            b.free_vec(&frame);
+        }
+        if head11_step_frame {
+            b.set_phase("dialog_gcd_compressed_block_apply_reacquire_raw_host");
+            b.reacquire_vec(raw_block);
         }
     }
 
@@ -4071,30 +3464,34 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             && start == 0
             && block_steps == 5
             && compressed_block.len() == DIALOG_GCD_K5_HEAD11_DATA_WIRES.len();
-        let stream_tail3 = dialog_gcd_k5_tail3_top32_stream_apply_enabled()
-            && block_steps == 3
-            && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len();
+        let head11_step_frame =
+            head11_block && dialog_gcd_k5_head11_apply_step_frame_enabled();
+        let step_frame = head11_step_frame.then(|| b.alloc_qubits(3));
+        if head11_step_frame {
+            b.set_phase("dialog_gcd_compressed_block_apply_reverse_release_raw_host");
+            b.free_vec(raw_block);
+        }
 
         b.set_phase("dialog_gcd_compressed_block_apply_reverse_decompress_block");
-        let raw_frame = inplace_raw0.map(|raw0| {
+        let raw_frame = if head11_step_frame {
+            None
+        } else {
+            inplace_raw0.map(|raw0| {
             dialog_gcd_k2_pair_inplace_decompress_block(b, compressed_block, raw0, end - start)
-        });
-        if raw_frame.is_none() && !stream_tail3 {
+            })
+        };
+        if raw_frame.is_none() && !head11_step_frame {
             dialog_gcd_copy_compressed_block_to_raw(b, compressed_block, raw_block, end - start);
         }
-        if head11_block {
+        if head11_block && !head11_step_frame {
             b.free(raw_block[1]);
         }
-        let released_code_bits = if !stream_tail3
-            && raw_frame.is_none()
+        let released_code_bits = if raw_frame.is_none()
+            && !head11_step_frame
             && dialog_gcd_apply_replay_swap_host_enabled()
         {
-            let requested = if (block_steps == 6
-                && compressed_block.len() == DIALOG_GCD_K5_TAIL6_GRAPH9_CODE_BITS)
-                || ((dialog_gcd_k5_tail3_fixed_last_enabled()
-                    || dialog_gcd_k5_tail3_top32_enabled())
-                    && block_steps == 3
-                    && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len())
+            let requested = if block_steps == 6
+                && compressed_block.len() == DIALOG_GCD_K5_TAIL6_GRAPH9_CODE_BITS
             {
                 dialog_gcd_k5_release_decoded_tail_bits()
             } else {
@@ -4107,32 +3504,13 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
         let retained_code_bits = compressed_block.len() - released_code_bits;
         let released_code = &compressed_block[retained_code_bits..];
         b.free_vec(released_code);
-        let raw = raw_frame.as_ref().map_or(raw_block, |frame| &frame[..]);
-        let stream_clean_scratch = if stream_tail3 {
-            dialog_gcd_k5_tail3_top32_stream_scratch(raw)
-        } else {
-            Vec::new()
-        };
-        let stream_dynamic_raw = if stream_tail3 {
-            dialog_gcd_k5_tail3_top32_stream_dynamic(raw)
-        } else {
-            Vec::new()
-        };
-        if stream_tail3 {
-            b.free_vec(&stream_dynamic_raw);
-        }
-        let scale_release_bits = if stream_tail3 {
-            0
-        } else {
-            dialog_gcd_k5_release_scale_bits().min(retained_code_bits)
-        };
+        let scale_release_bits =
+            dialog_gcd_k5_release_scale_bits().min(retained_code_bits);
         let scale_released_code =
             &compressed_block[retained_code_bits - scale_release_bits..retained_code_bits];
-        let shift_clean_code = if stream_tail3 {
-            stream_clean_scratch.as_slice()
-        } else {
-            &compressed_block[..retained_code_bits - scale_release_bits]
-        };
+        let shift_clean_code =
+            &compressed_block[..retained_code_bits - scale_release_bits];
+        let raw = raw_frame.as_ref().map_or(raw_block, |frame| &frame[..]);
         let tail_clean_scratch = if dialog_gcd_k5_tail_pair1_enabled()
             && end - start == 2
             && compressed_block.len() == 1
@@ -4147,27 +3525,14 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
         } else {
             Vec::new()
         };
-        let mut partial_raw_clean_scratch = if stream_tail3 {
-            Vec::new()
-        } else {
-            dialog_gcd_k5_partial_raw_clean_scratch(raw, block_steps)
-        };
-        let partial_release =
-            dialog_gcd_k5_partial_raw_release_bits().min(partial_raw_clean_scratch.len());
-        let released_partial_raw =
-            partial_raw_clean_scratch.split_off(partial_raw_clean_scratch.len() - partial_release);
-        b.free_vec(&released_partial_raw);
-        let mut combined_clean_scratch = Vec::new();
-        if stream_tail3 {
-            combined_clean_scratch.extend_from_slice(&stream_clean_scratch);
-        } else if !inplace_raw && dialog_gcd_apply_replay_swap_host_enabled() {
-            combined_clean_scratch.extend_from_slice(&compressed_block[..retained_code_bits]);
-            combined_clean_scratch.extend_from_slice(&partial_raw_clean_scratch);
-        }
-        let block_clean_scratch = if !tail_clean_scratch.is_empty() {
+        let block_clean_scratch = if head11_step_frame {
+            &[]
+        } else if !tail_clean_scratch.is_empty() {
             tail_clean_scratch.as_slice()
+        } else if !inplace_raw && dialog_gcd_apply_replay_swap_host_enabled() {
+            &compressed_block[..retained_code_bits]
         } else {
-            combined_clean_scratch.as_slice()
+            &[]
         };
 
         for step in start..end {
@@ -4214,21 +3579,21 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                 }
                 continue;
             }
-            if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                b.reacquire_vec(&slot_raw);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
+            if let Some(frame) = step_frame.as_ref() {
+                b.set_phase("dialog_gcd_compressed_block_apply_reverse_load_step_frame");
+                dialog_gcd_k5_head11_toggle_step_frame(b, compressed_block, frame, slot);
             }
-            let b0 = raw[2 * slot];
-            let b0_and_b1 = if head11_block && slot == 0 {
-                raw[0]
+            let (b0, b0_and_b1, s2) = if let Some(frame) = step_frame.as_ref() {
+                (frame[0], frame[1], frame[2])
             } else {
-                raw[2 * slot + 1]
+                let b0 = raw[2 * slot];
+                let b0_and_b1 = if head11_block && slot == 0 {
+                    raw[0]
+                } else {
+                    raw[2 * slot + 1]
+                };
+                let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
+                (b0, b0_and_b1, s2)
             };
 
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_cswap");
@@ -4238,12 +3603,12 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
 
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_csub");
             if dialog_gcd_raw_apply_reverse_materialized_special_sub_enabled() {
-                let owned_clean_scratch = if inplace_raw {
+                let owned_clean_scratch = if inplace_raw || head11_step_frame {
                     b.alloc_qubits(dialog_gcd_block_bits())
                 } else {
                     Vec::new()
                 };
-                let clean_scratch = if inplace_raw {
+                let clean_scratch = if inplace_raw || head11_step_frame {
                     owned_clean_scratch.as_slice()
                 } else {
                     block_clean_scratch
@@ -4257,7 +3622,7 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                     clean_scratch,
                     Some(step),
                 );
-                if inplace_raw {
+                if inplace_raw || head11_step_frame {
                     b.free_vec(&owned_clean_scratch);
                 }
             } else if dialog_gcd_raw_apply_reverse_fast_sub_enabled() {
@@ -4286,14 +3651,12 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                 // Fuse mod_halve_inplace_fast + cmod_halve_inplace_lazy into a
                 // single shared borrow chain (exact inverse of the fused double;
                 // see fn doc on dialog_gcd_fused_halve_y).
-                let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
                 dialog_gcd_fused_halve_y_at_step(b, y, p, s2, Some(step));
             } else {
                 mod_halve_inplace_fast(b, y, p);
                 if apply_k2 {
                     // mirror the forward K=2 second shift: conditional 2nd halve of y.
                     // MUST use the lazy (Solinas, truncated) controlled halve to match.
-                    let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
                     cmod_halve_inplace_lazy(b, y, p, s2);
                 }
             }
@@ -4304,15 +3667,9 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                 b.set_phase("dialog_gcd_compressed_block_apply_reverse_scale_reacquire");
                 b.reacquire_vec(scale_released_code);
             }
-            if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
-                b.free_vec(&slot_raw);
+            if let Some(frame) = step_frame.as_ref() {
+                b.set_phase("dialog_gcd_compressed_block_apply_reverse_clear_step_frame");
+                dialog_gcd_k5_head11_toggle_step_frame(b, compressed_block, frame, slot);
             }
         }
 
@@ -4320,20 +3677,21 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_reacquire_block");
             b.reacquire_vec(released_code);
         }
-        if !released_partial_raw.is_empty() {
-            b.set_phase("dialog_gcd_compressed_block_apply_reverse_reacquire_partial_raw");
-            b.reacquire_vec(&released_partial_raw);
-        }
-        if head11_block {
+        if head11_block && !head11_step_frame {
             b.reacquire(raw_block[1]);
         }
         b.set_phase("dialog_gcd_compressed_block_apply_reverse_clear_block_copy");
-        if stream_tail3 {
-            b.reacquire_vec(&stream_dynamic_raw);
-        } else if let Some(raw0) = inplace_raw0 {
+        if let Some(raw0) = inplace_raw0 {
             dialog_gcd_k2_pair_inplace_clear_block(b, compressed_block, raw0, end - start);
-        } else {
+        } else if !head11_step_frame {
             dialog_gcd_clear_raw_block_copy(b, compressed_block, raw_block, end - start);
+        }
+        if let Some(frame) = step_frame {
+            b.free_vec(&frame);
+        }
+        if head11_step_frame {
+            b.set_phase("dialog_gcd_compressed_block_apply_reverse_reacquire_raw_host");
+            b.reacquire_vec(raw_block);
         }
     }
 

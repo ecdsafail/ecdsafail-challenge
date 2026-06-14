@@ -13,8 +13,7 @@
 //! This is analysis-only tooling; it does not change the quantum circuit.
 
 use crate::point_add::{
-    dialog_gcd_k5_head11_supports, dialog_gcd_k5_tail3_top32_supports,
-    dialog_gcd_k5_tail6_graph9_supports,
+    dialog_gcd_k5_head11_supports, dialog_gcd_k5_tail6_graph9_supports,
     DIALOG_GCD_K5_TAIL6_GRAPH_SUPPORT, DIALOG_GCD_K5_TAIL7_SUPPORT,
     DIALOG_GCD_PA9024_COMPARE_SCHEDULE, N, SECP256K1_P,
 };
@@ -38,8 +37,6 @@ pub enum HardReason {
     Tail6GraphMismatch { pattern: u32 },
     Tail6Graph9Mismatch { pattern: u32 },
     Tail7Mismatch { pattern: u32 },
-    Tail3FixedLastMismatch { digit: u8 },
-    Tail3Top32Mismatch { pattern: u16 },
     OddTailTripleMismatch { s2_mask: u8 },
     FusedFoldCarryEscape { step: usize, reverse: bool },
     SpecialFoldCarryEscape { step: usize, reverse: bool },
@@ -1211,21 +1208,6 @@ fn tail_pair_pattern(log: &[DialogGcdStepLog]) -> u8 {
     pattern
 }
 
-fn tail3_pattern(log: &[DialogGcdStepLog]) -> u16 {
-    if log.len() < 3 {
-        return 0;
-    }
-    log[log.len() - 3..]
-        .iter()
-        .enumerate()
-        .fold(0u16, |packed, (slot, entry)| {
-            packed
-                | ((entry.b0 as u16) << (3 * slot))
-                | ((entry.b0_and_b1 as u16) << (3 * slot + 1))
-                | ((entry.s2 as u16) << (3 * slot + 2))
-        })
-}
-
 fn tail7_pattern(log: &[DialogGcdStepLog]) -> u32 {
     if log.len() < 7 {
         return 0;
@@ -1334,31 +1316,6 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         .ok()
         .as_deref()
         == Some("1");
-    if !ignore_tail_codec
-        && std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_CODEC")
-            .ok()
-            .as_deref()
-            == Some("1")
-    {
-        let pattern = tail3_pattern(log);
-        if !dialog_gcd_k5_tail3_top32_supports(pattern) {
-            return Err(HardReason::Tail3Top32Mismatch { pattern });
-        }
-    }
-    if !ignore_tail_codec
-        && std::env::var("DIALOG_GCD_K5_TAIL3_FIXED_LAST")
-            .ok()
-            .as_deref()
-            == Some("1")
-    {
-        let entry = log.last().expect("tail3 codec requires a final step");
-        let digit = (entry.b0 as u8)
-            | ((entry.b0_and_b1 as u8) << 1)
-            | ((entry.s2 as u8) << 2);
-        if digit != 4 {
-            return Err(HardReason::Tail3FixedLastMismatch { digit });
-        }
-    }
     if !ignore_tail_codec
         && std::env::var("DIALOG_GCD_K5_TAIL6_GRAPH9_CODEC")
             .ok()

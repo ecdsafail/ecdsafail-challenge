@@ -715,21 +715,6 @@ fn special_fold_park_low_carries() -> usize {
         .unwrap_or(0)
 }
 
-fn special_fold_park_low_carries_at_step(step: Option<usize>) -> usize {
-    let mapped = step.and_then(|step| {
-        let map =
-            std::env::var("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP").ok()?;
-        map.split(',').rev().find_map(|entry| {
-            let (raw_step, raw_value) = entry.trim().split_once(':')?;
-            if raw_step.trim().parse::<usize>().ok()? != step {
-                return None;
-            }
-            raw_value.trim().parse::<usize>().ok()
-        })
-    });
-    mapped.unwrap_or_else(special_fold_park_low_carries)
-}
-
 fn cconst_nbit_direct_trunc_fast_parked(
     b: &mut B,
     acc: &[QubitId],
@@ -909,27 +894,7 @@ pub(crate) fn cadd_nbit_const_direct_trunc_fast_releasing_scratch(
     window: usize,
     releasable_scratch: &[QubitId],
 ) {
-    cadd_nbit_const_direct_trunc_fast_releasing_scratch_at_step(
-        b,
-        acc,
-        c,
-        ctrl,
-        window,
-        releasable_scratch,
-        None,
-    );
-}
-
-pub(crate) fn cadd_nbit_const_direct_trunc_fast_releasing_scratch_at_step(
-    b: &mut B,
-    acc: &[QubitId],
-    c: U256,
-    ctrl: QubitId,
-    window: usize,
-    releasable_scratch: &[QubitId],
-    step: Option<usize>,
-) {
-    let park_low = special_fold_park_low_carries_at_step(step);
+    let park_low = special_fold_park_low_carries();
     if park_low == 0 || releasable_scratch.is_empty() {
         cadd_nbit_const_direct_trunc_fast_borrowed_carries(
             b,
@@ -954,27 +919,7 @@ pub(crate) fn csub_nbit_const_direct_trunc_fast_releasing_scratch(
     window: usize,
     releasable_scratch: &[QubitId],
 ) {
-    csub_nbit_const_direct_trunc_fast_releasing_scratch_at_step(
-        b,
-        acc,
-        c,
-        ctrl,
-        window,
-        releasable_scratch,
-        None,
-    );
-}
-
-pub(crate) fn csub_nbit_const_direct_trunc_fast_releasing_scratch_at_step(
-    b: &mut B,
-    acc: &[QubitId],
-    c: U256,
-    ctrl: QubitId,
-    window: usize,
-    releasable_scratch: &[QubitId],
-    step: Option<usize>,
-) {
-    let park_low = special_fold_park_low_carries_at_step(step);
+    let park_low = special_fold_park_low_carries();
     if park_low == 0 || releasable_scratch.is_empty() {
         csub_nbit_const_direct_trunc_fast_borrowed_carries(
             b,

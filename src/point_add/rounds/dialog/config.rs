@@ -147,6 +147,13 @@ pub(crate) fn dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() -> bool 
         != Some("0")
 }
 
+pub(crate) fn dialog_gcd_apply_eager_boundary_clear_enabled() -> bool {
+    std::env::var("DIALOG_GCD_APPLY_EAGER_BOUNDARY_CLEAR")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 pub(crate) fn dialog_gcd_apply_borrow_future_boundary_carries_enabled() -> bool {
     std::env::var("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES")
         .ok()
@@ -514,21 +521,7 @@ pub(crate) fn dialog_gcd_pa9024_compare_schedule_margin() -> usize {
         .unwrap_or(0)
 }
 
-fn dialog_gcd_compare_step_bits(step: usize) -> Option<usize> {
-    let map = std::env::var("DIALOG_GCD_COMPARE_STEP_BITS").ok()?;
-    map.split(',').rev().find_map(|entry| {
-        let (raw_step, raw_bits) = entry.trim().split_once(':')?;
-        if raw_step.trim().parse::<usize>().ok()? != step {
-            return None;
-        }
-        raw_bits.trim().parse::<usize>().ok()
-    })
-}
-
 pub(crate) fn dialog_gcd_compare_bits_for_step(step: usize, active_width: usize) -> usize {
-    if let Some(bits) = dialog_gcd_compare_step_bits(step) {
-        return bits.clamp(1, active_width);
-    }
     let global = dialog_gcd_compare_bits().min(active_width);
     if dialog_gcd_pa9024_compare_schedule_enabled() {
         let scheduled = (DIALOG_GCD_PA9024_COMPARE_SCHEDULE

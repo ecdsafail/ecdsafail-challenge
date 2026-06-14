@@ -1005,96 +1005,6 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    // q1170 record route. These defaults are first so the historical fallback
-    // block below cannot override the exact state searched on WMI.
-    set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
-    set_default_env("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "1");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "20");
-    set_default_env(
-        "DIALOG_GCD_APPLY_CHUNKED_F_CUTS",
-        "17,34,50,66,81,96,110,124,137,150,163,175,187,198,209,219,229,238,247",
-    );
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
-    set_default_env("DIALOG_GCD_APPLY_IMPLICIT_HIGH_ZERO", "1");
-    set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
-    set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
-    set_default_env("DIALOG_GCD_BINDER_NOTCH_STEPS", "8,9,10");
-    set_default_env(
-        "DIALOG_GCD_BODY_CARRY_BAND_TRIMS",
-        "0,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3",
-    );
-    set_default_env("DIALOG_GCD_COMPARE_BITS", "46");
-    set_default_env(
-        "DIALOG_GCD_COMPARE_STEP_BITS",
-        "181:48,194:48,199:48,202:48,207:48,212:48,216:48",
-    );
-    set_default_env(
-        "DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "0:20,3:19,8:19,10:19,21:20,22:19,26:19,33:19,34:19,37:20,42:20,51:19,65:20,73:19,86:19,97:19,104:19,109:19,110:19,120:19,132:20,141:20,142:19,146:19,169:19,170:20,177:19,191:19,192:19,198:19,206:19,212:19,215:19,217:19,224:20,228:19",
-    );
-    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("DIALOG_GCD_FOLD_FREED_TAIL", "1");
-    set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
-    set_default_env("DIALOG_GCD_FOLD_HOST_DERIVED_CONTROLS", "1");
-    set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
-    set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
-    set_default_env("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "15");
-    set_default_env(
-        "DIALOG_GCD_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "0:17,3:16,8:16,10:16,21:17,22:16,26:16,33:16,34:16,37:17,42:17,51:16,65:17,73:16,86:16,97:16,104:16,109:16,110:16,120:16,132:17,141:17,142:16,146:16,169:16,170:17,177:16,191:16,192:16,198:16,206:16,212:16,215:16,217:16,224:17,228:16",
-    );
-    set_default_env("DIALOG_GCD_K2", "1");
-    set_default_env("DIALOG_GCD_K5_CLEAN_BLOCK", "1");
-    set_default_env("DIALOG_GCD_K5_FIXED_TAIL_APPLY", "0");
-    set_default_env("DIALOG_GCD_K5_FREE_CLEAN_BLOCK_DURING_SHIFT", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_CODEC", "1");
-    set_default_env("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE", "6");
-    set_default_env("DIALOG_GCD_K5_RELEASE_SCALE_BITS", "5");
-    set_default_env("DIALOG_GCD_K5_TAIL3_FIXED_LAST", "0");
-    set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_CODEC", "1");
-    set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_STREAM_APPLY", "1");
-    set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
-    set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "1");
-    set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "0");
-    set_default_env("DIALOG_GCD_PERPOS_MAJ2", "1");
-    set_default_env("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
-    set_default_env("DIALOG_GCD_RAW_TOBITVECTOR_MATERIALIZED_SUB", "0");
-    set_default_env("DIALOG_GCD_RAW_TOBITVECTOR_VARIABLE_WIDTH", "1");
-    set_default_env("DIALOG_GCD_RUNWAY_PARTIAL_BLOCK", "1");
-    set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
-    set_default_env("DIALOG_GCD_SPECIAL_FOLD_BORROW_CARRIES", "1");
-    set_default_env(
-        "DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "10:19,11:19,21:20,63:19,74:19,100:19,107:19,118:19,135:19,136:19,137:19,188:20,227:20,241:19",
-    );
-    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "13");
-    set_default_env(
-        "DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "10:14,11:14,21:15,63:14,74:14,100:14,107:14,118:14,135:14,136:14,137:14,188:15,227:15,241:14",
-    );
-    set_default_env("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
-    set_default_env(
-        "DIALOG_GCD_SPECIAL_OVERFLOW_CLEAN_STEP_BITS",
-        "113:21,131:21,142:22,187:23,205:22,210:21",
-    );
-    set_default_env(
-        "DIALOG_GCD_SPECIAL_UNDERFLOW_CLEAN_STEP_BITS",
-        "42:22,91:22,118:22,149:21",
-    );
-    set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
-    set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_TAIL_NONCE", "11156415");
-    set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
-    set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("SQUARE_ROW_MAX_SEG", "143");
-    set_default_env("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "19");
-    set_default_env(
-        "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",
-        "2:20,11:20,12:20,13:21,16:22,19:20,20:21,21:20,26:21,29:21,32:21,37:21,44:22,46:20,53:21,56:20,64:20,70:20,75:20,78:20,87:20",
-    );
-    set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
-
     set_default_env("SKIP_ALT_SEED_CHECKS", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_SIDECAR_LOG", "1");
     // Tighten the windowed square-row carry cleanup by one bit. A GPU
@@ -1575,6 +1485,92 @@ fn configure_ecdsafail_submission_route() {
     // to a CX, and the lane-0 tobitvector add/sub body has no carry/borrow into
     // lane 1, so the body can start at bit 1. Co-tuned with the reroll island.
     set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
+
+    // q1185 head11/implicit-zero record candidate. These assignments make the
+    // submitted circuit independent of the optimizer shell environment.
+    std::env::set_var("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
+    std::env::set_var("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "18");
+    std::env::remove_var("DIALOG_GCD_APPLY_CHUNKED_F_CUTS");
+    std::env::set_var("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "0");
+    std::env::set_var("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
+    std::env::set_var("DIALOG_GCD_APPLY_IMPLICIT_HIGH_ZERO", "1");
+    std::env::set_var("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
+    std::env::set_var("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
+    std::env::set_var("DIALOG_GCD_BINDER_NOTCH_STEPS", "8,9,10");
+    std::env::set_var(
+        "DIALOG_GCD_BODY_CARRY_BAND_TRIMS",
+        "0,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3",
+    );
+    std::env::set_var("DIALOG_GCD_COMPARE_BITS", "46");
+    std::env::set_var("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
+    std::env::set_var("DIALOG_GCD_FOLD_FREED_TAIL", "1");
+    std::env::set_var("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
+    std::env::set_var("DIALOG_GCD_FOLD_MAJ1", "1");
+    std::env::set_var("DIALOG_GCD_FOLD_MAJ2", "1");
+    std::env::set_var("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "7");
+    std::env::set_var("DIALOG_GCD_K2", "1");
+    std::env::set_var("DIALOG_GCD_K5_CLEAN_BLOCK", "1");
+    std::env::set_var("DIALOG_GCD_K5_HEAD11_CODEC", "1");
+    std::env::set_var("DIALOG_GCD_K5_FREE_CLEAN_BLOCK_DURING_SHIFT", "1");
+    std::env::set_var("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
+    std::env::set_var("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "1");
+    std::env::set_var("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "0");
+    std::env::set_var("DIALOG_GCD_PERPOS_MAJ2", "1");
+    std::env::set_var("DIALOG_GCD_RAW_IPMUL_CLEAR_P_RESIDUAL", "1");
+    std::env::set_var("DIALOG_GCD_RAW_TOBITVECTOR_MATERIALIZED_SUB", "0");
+    std::env::set_var("DIALOG_GCD_RAW_TOBITVECTOR_VARIABLE_WIDTH", "1");
+    std::env::set_var("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
+    std::env::set_var("DIALOG_GCD_SPECIAL_FOLD_BORROW_CARRIES", "1");
+    std::env::set_var("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "5");
+    std::env::set_var("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
+    std::env::set_var(
+        "DIALOG_GCD_SPECIAL_OVERFLOW_CLEAN_STEP_BITS",
+        "113:21,131:21,142:22,187:23,205:22,210:21",
+    );
+    std::env::set_var(
+        "DIALOG_GCD_SPECIAL_UNDERFLOW_CLEAN_STEP_BITS",
+        "42:22,91:22,118:22,149:21",
+    );
+    std::env::set_var("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
+    std::env::set_var("DIALOG_GCD_WIDTH_MARGIN", "10");
+    std::env::set_var("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
+    std::env::set_var("KAL_DOUBLE_CARRY_TRUNC_W", "19");
+    std::env::set_var("KAL_FOLD_CARRY_TRUNC_W", "18");
+    std::env::set_var("SQUARE_ROW_MAX_SEG", "158");
+    std::env::set_var("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "19");
+    std::env::set_var(
+        "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",
+        "2:20,11:20,12:20,13:21,16:22,19:20,20:21,21:20,26:21,29:21,32:21,37:21,44:22,46:20,53:21,56:20,64:20,70:20,75:20,78:20,87:20",
+    );
+    std::env::set_var("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
+    std::env::set_var("DIALOG_TAIL_NONCE", "3452376");
+
+    // BAKED: q1175 repaired lower-qubit island, full-clean nonce 91794252.
+    // Keep this self-contained for `ecdsafail run`; env-only overrides can
+    // silently reuse a stale ops.bin.
+    for (name, value) in [
+        ("DIALOG_GCD_BOUNDARY_REPLAY_BORROW_CLEANED", "1"),
+        ("DIALOG_GCD_APPLY_ALL_DIRTY_QOFFSET", "1"),
+        ("DIALOG_GCD_FOLD_STREAM_CONTROLS", "1"),
+        ("DIALOG_GCD_FOLD_HOST_STREAMED_CONTROL", "1"),
+        ("DIALOG_GCD_FOLD_HOST_E_TOP_CARRY", "1"),
+        ("DIALOG_GCD_FOLD_HOST_D_CARRY12", "1"),
+        ("DIALOG_GCD_FOLD_HOST_OVF2_CARRY13", "1"),
+        ("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "22"),
+        ("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18"),
+        ("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "17"),
+        ("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "15"),
+        ("SQUARE_ROW_MAX_SEG", "144"),
+        ("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "1"),
+        ("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "25"),
+        (
+            "DIALOG_GCD_APPLY_CHUNKED_F_CUTS",
+            "16,31,46,61,75,89,103,116,129,141,153,164,175,185,195,204,213,221,229,236,243,249,253,255",
+        ),
+        ("DIALOG_TAIL_NONCE", "91794252"),
+    ] {
+        std::env::set_var(name, value);
+    }
 }
 
 pub fn build_builder() -> B {
@@ -1791,36 +1787,6 @@ pub fn build() -> Vec<Op> {
             Err(e) => panic!("DIALOG_GCD_K5_HEAD11_SELFTEST: FAIL: {e}"),
         }
         if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST_ONLY")
-            .ok()
-            .as_deref()
-            == Some("1")
-        {
-            return Vec::new();
-        }
-    }
-    if std::env::var("DIALOG_GCD_K5_TAIL3_SELFTEST").is_ok() {
-        match dialog_gcd_k5_tail3_codec_selftest() {
-            Ok(()) => eprintln!(
-                "DIALOG_GCD_K5_TAIL3_SELFTEST: PASS (two-step pair codec reversible and phase clean)"
-            ),
-            Err(e) => panic!("DIALOG_GCD_K5_TAIL3_SELFTEST: FAIL: {e}"),
-        }
-        if std::env::var("DIALOG_GCD_K5_TAIL3_SELFTEST_ONLY")
-            .ok()
-            .as_deref()
-            == Some("1")
-        {
-            return Vec::new();
-        }
-    }
-    if std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_SELFTEST").is_ok() {
-        match dialog_gcd_k5_tail3_top32_codec_selftest() {
-            Ok(()) => eprintln!(
-                "DIALOG_GCD_K5_TAIL3_TOP32_SELFTEST: PASS (32-word weighted codec reversible and phase clean)"
-            ),
-            Err(e) => panic!("DIALOG_GCD_K5_TAIL3_TOP32_SELFTEST: FAIL: {e}"),
-        }
-        if std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_SELFTEST_ONLY")
             .ok()
             .as_deref()
             == Some("1")
