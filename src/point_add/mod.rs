@@ -1084,11 +1084,11 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_TAIL_NONCE", "11156415");
+    set_default_env("DIALOG_TAIL_NONCE", "38047539020");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "143");
-    set_default_env("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "19");
+    set_default_env("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "18");
     set_default_env(
         "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",
         "2:20,11:20,12:20,13:21,16:22,19:20,20:21,21:20,26:21,29:21,32:21,37:21,44:22,46:20,53:21,56:20,64:20,70:20,75:20,78:20,87:20",
