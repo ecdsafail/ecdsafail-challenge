@@ -1014,7 +1014,7 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_APPLY_CHUNKED_F_CUTS",
         "17,34,50,66,81,96,110,124,137,150,163,175,187,198,209,219,229,238,247",
     );
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_APPLY_IMPLICIT_HIGH_ZERO", "1");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
@@ -1084,7 +1084,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_TAIL_NONCE", "38047539020");
+    set_default_env("DIALOG_TAIL_NONCE", "26008558798");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "143");
