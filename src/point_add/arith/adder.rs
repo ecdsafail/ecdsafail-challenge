@@ -664,6 +664,112 @@ pub(crate) fn cuccaro_sub_fast_low_to_ext_borrowed_carries(
     b.cx(a[0], acc_ext[0]);
 }
 
+pub(crate) fn cuccaro_add_fast_low_to_ext_borrowed_carries_gate_suffix(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+    carries: &[QubitId],
+    gate_suffix: usize,
+) {
+    let n = a.len();
+    assert_eq!(acc_ext.len(), n + 1);
+    if n == 0 {
+        b.cx(c_in, acc_ext[0]);
+        return;
+    }
+    let borrowed = n.saturating_sub(gate_suffix.min(n - 1));
+    assert!(borrowed >= 1);
+    assert!(carries.len() >= borrowed);
+
+    b.cx(a[0], acc_ext[0]);
+    b.cx(a[0], c_in);
+    b.ccx(c_in, acc_ext[0], carries[0]);
+    b.cx(carries[0], a[0]);
+    for i in 1..borrowed {
+        b.cx(a[i], acc_ext[i]);
+        b.cx(a[i], a[i - 1]);
+        b.ccx(a[i - 1], acc_ext[i], carries[i]);
+        b.cx(carries[i], a[i]);
+    }
+    for i in borrowed..n {
+        maj(b, a[i - 1], acc_ext[i], a[i]);
+    }
+
+    b.cx(a[n - 1], acc_ext[n]);
+
+    for i in (borrowed..n).rev() {
+        uma(b, a[i - 1], acc_ext[i], a[i]);
+    }
+    for i in (1..borrowed).rev() {
+        b.cx(carries[i], a[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(a[i - 1], acc_ext[i], m);
+        b.cx(a[i], a[i - 1]);
+        b.cx(a[i - 1], acc_ext[i]);
+    }
+    b.cx(carries[0], a[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(c_in, acc_ext[0], m0);
+    b.cx(a[0], c_in);
+    b.cx(c_in, acc_ext[0]);
+}
+
+pub(crate) fn cuccaro_sub_fast_low_to_ext_borrowed_carries_gate_suffix(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+    carries: &[QubitId],
+    gate_suffix: usize,
+) {
+    let n = a.len();
+    assert_eq!(acc_ext.len(), n + 1);
+    if n == 0 {
+        b.cx(c_in, acc_ext[0]);
+        return;
+    }
+    let borrowed = n.saturating_sub(gate_suffix.min(n - 1));
+    assert!(borrowed >= 1);
+    assert!(carries.len() >= borrowed);
+
+    b.cx(c_in, acc_ext[0]);
+    b.cx(a[0], c_in);
+    b.ccx(c_in, acc_ext[0], carries[0]);
+    b.cx(carries[0], a[0]);
+    for i in 1..borrowed {
+        b.cx(a[i - 1], acc_ext[i]);
+        b.cx(a[i], a[i - 1]);
+        b.ccx(a[i - 1], acc_ext[i], carries[i]);
+        b.cx(carries[i], a[i]);
+    }
+    for i in borrowed..n {
+        inv_uma(b, a[i - 1], acc_ext[i], a[i]);
+    }
+
+    b.cx(a[n - 1], acc_ext[n]);
+
+    for i in (borrowed..n).rev() {
+        inv_maj(b, a[i - 1], acc_ext[i], a[i]);
+    }
+    for i in (1..borrowed).rev() {
+        b.cx(carries[i], a[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(a[i - 1], acc_ext[i], m);
+        b.cx(a[i], a[i - 1]);
+        b.cx(a[i], acc_ext[i]);
+    }
+    b.cx(carries[0], a[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(c_in, acc_ext[0], m0);
+    b.cx(a[0], c_in);
+    b.cx(a[0], acc_ext[0]);
+}
+
 /// Zero-carry-in specialization of
 /// [`cuccaro_add_fast_low_to_ext_borrowed_carries`].  The omitted `c_in`
 /// register is known zero: its only forward role is to preserve the original

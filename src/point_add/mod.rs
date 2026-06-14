@@ -1005,8 +1005,10 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    // q1170 record route. These defaults are first so the historical fallback
-    // block below cannot override the exact state searched on WMI.
+    // q1169 sub-1170 island route. These defaults are first so the historical
+    // fallback block below cannot override the exact state searched on GPUs.
+    set_default_env("CODEX_APPLY_RIPPLE_GATE_SUFFIX_CARRIES", "1");
+    set_default_env("DIALOG_GCD_APPLY_FINAL_TOPCLEAN", "1");
     set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
     set_default_env("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "1");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "20");
@@ -1038,10 +1040,10 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_FOLD_HOST_DERIVED_CONTROLS", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
-    set_default_env("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "15");
+    set_default_env("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "16");
     set_default_env(
         "DIALOG_GCD_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "0:17,3:16,8:16,10:16,21:17,22:16,26:16,33:16,34:16,37:17,42:17,51:16,65:17,73:16,86:16,97:16,104:16,109:16,110:16,120:16,132:17,141:17,142:16,146:16,169:16,170:17,177:16,191:16,192:16,198:16,206:16,212:16,215:16,217:16,224:17,228:16",
+        "0:18,3:17,8:17,10:17,21:18,22:17,26:17,33:17,34:17,37:18,42:18,51:17,65:18,73:17,86:17,97:17,104:17,109:17,110:17,120:17,132:18,141:18,142:17,146:17,169:17,170:18,177:17,191:17,192:17,198:17,206:17,212:17,215:17,217:17,224:18,228:17",
     );
     set_default_env("DIALOG_GCD_K2", "1");
     set_default_env("DIALOG_GCD_K5_CLEAN_BLOCK", "1");
@@ -1067,10 +1069,10 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS",
         "10:19,11:19,21:20,63:19,74:19,100:19,107:19,118:19,135:19,136:19,137:19,188:20,227:20,241:19",
     );
-    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "13");
+    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "14");
     set_default_env(
         "DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "10:14,11:14,21:15,63:14,74:14,100:14,107:14,118:14,135:14,136:14,137:14,188:15,227:15,241:14",
+        "10:15,11:15,21:16,63:15,74:15,100:15,107:15,118:15,135:15,136:15,137:15,188:16,227:16,241:15",
     );
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
     set_default_env(
@@ -1084,10 +1086,10 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_TAIL_NONCE", "11156415");
+    set_default_env("DIALOG_TAIL_NONCE", "589602899");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("SQUARE_ROW_MAX_SEG", "143");
+    set_default_env("SQUARE_ROW_MAX_SEG", "142");
     set_default_env("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "19");
     set_default_env(
         "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",

@@ -1538,12 +1538,30 @@ fn dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
     borrowed: &[QubitId],
 ) {
     let needed = a.len();
+    let gate_suffix = std::env::var("CODEX_APPLY_RIPPLE_ADD_SUFFIX_CARRIES")
+        .or_else(|_| std::env::var("CODEX_APPLY_RIPPLE_GATE_SUFFIX_CARRIES"))
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(needed.saturating_sub(1));
+    let needed = needed - gate_suffix;
     let borrowed = &borrowed[..borrowed.len().min(needed)];
     let owned = b.alloc_qubits(needed - borrowed.len());
     let mut carries = Vec::with_capacity(needed);
     carries.extend_from_slice(borrowed);
     carries.extend_from_slice(&owned);
-    cuccaro_add_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    if gate_suffix == 0 {
+        cuccaro_add_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    } else {
+        cuccaro_add_fast_low_to_ext_borrowed_carries_gate_suffix(
+            b,
+            a,
+            acc_ext,
+            c_in,
+            &carries,
+            gate_suffix,
+        );
+    }
     b.free_vec(&owned);
 }
 
@@ -1555,12 +1573,30 @@ fn dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
     borrowed: &[QubitId],
 ) {
     let needed = a.len();
+    let gate_suffix = std::env::var("CODEX_APPLY_RIPPLE_SUB_SUFFIX_CARRIES")
+        .or_else(|_| std::env::var("CODEX_APPLY_RIPPLE_GATE_SUFFIX_CARRIES"))
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(needed.saturating_sub(1));
+    let needed = needed - gate_suffix;
     let borrowed = &borrowed[..borrowed.len().min(needed)];
     let owned = b.alloc_qubits(needed - borrowed.len());
     let mut carries = Vec::with_capacity(needed);
     carries.extend_from_slice(borrowed);
     carries.extend_from_slice(&owned);
-    cuccaro_sub_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    if gate_suffix == 0 {
+        cuccaro_sub_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    } else {
+        cuccaro_sub_fast_low_to_ext_borrowed_carries_gate_suffix(
+            b,
+            a,
+            acc_ext,
+            c_in,
+            &carries,
+            gate_suffix,
+        );
+    }
     b.free_vec(&owned);
 }
 
@@ -1742,15 +1778,22 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
                 ccx_cmp_lt_into_fast_prefix_targets(b, &acc_ext[..p], &source[..p], ctrl, &targets);
             }
         }
+        for &(cout, _, owned_cout) in couts.iter().rev() {
+            if owned_cout {
+                b.free(cout);
+            }
+        }
     } else {
         for &(cout, p, _) in couts.iter().rev() {
             b.set_phase("dialog_gcd_apply_chunk_add_boundary_clear");
             ccx_cmp_lt_into_fast(b, &acc_ext[..p], &source[..p], ctrl, cout);
-        }
-    }
-    for &(cout, _, owned_cout) in couts.iter().rev() {
-        if owned_cout {
-            b.free(cout);
+            if couts
+                .iter()
+                .find(|&&(candidate, _, _)| candidate == cout)
+                .is_some_and(|&(_, _, owned_cout)| owned_cout)
+            {
+                b.free(cout);
+            }
         }
     }
 }
@@ -1907,6 +1950,11 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
                 b.x(source[i]);
             }
         }
+        for &(bout, _, owned_bout) in bouts.iter().rev() {
+            if owned_bout {
+                b.free(bout);
+            }
+        }
     } else {
         for &(bout, p, _) in bouts.iter().rev() {
             b.set_phase("dialog_gcd_apply_chunk_sub_boundary_clear");
@@ -1917,11 +1965,13 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
             for i in 0..p {
                 b.x(source[i]);
             }
-        }
-    }
-    for &(bout, _, owned_bout) in bouts.iter().rev() {
-        if owned_bout {
-            b.free(bout);
+            if bouts
+                .iter()
+                .find(|&&(candidate, _, _)| candidate == bout)
+                .is_some_and(|&(_, _, owned_bout)| owned_bout)
+            {
+                b.free(bout);
+            }
         }
     }
 }
