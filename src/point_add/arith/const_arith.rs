@@ -1291,6 +1291,13 @@ fn fold_host_ovf2_carry13_enabled() -> bool {
         && fold_park_low_carries() >= 15
 }
 
+fn fold_free_first_high_carry_enabled() -> bool {
+    std::env::var("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 fn fold_stream_profile_phase(b: &mut B, add_phase: &'static str, sub_phase: &'static str, is_add: bool) {
     if std::env::var("DIALOG_GCD_FOLD_PROFILE_PHASES").ok().as_deref() == Some("1") {
         b.set_phase(if is_add { add_phase } else { sub_phase });
@@ -1632,6 +1639,25 @@ pub(crate) fn fold_ripple_freed_tail_ed_streamed(
         );
     }
 
+    let free_first_high_carry = fold_free_first_high_carry_enabled()
+        && park_low < low_chain_last
+        && !(host_d_carry12 && park_low == 12)
+        && !(host_ovf2_carry13 && park_low == 13);
+    if free_first_high_carry {
+        let m = b.alloc_bit();
+        b.hmr(low[park_low], m);
+        fold_postsum_carry_phase_uncompute(
+            b,
+            acc,
+            kctrl(park_low),
+            Some(low[park_low - 1]),
+            m,
+            park_low,
+            is_add,
+        );
+        b.free(low[park_low]);
+    }
+
     for i in (12..park_low).rev() {
         let m = b.alloc_bit();
         b.hmr(low[i], m);
@@ -1934,6 +1960,18 @@ pub(crate) fn fold_ripple_freed_tail_ed_streamed(
             Some(low[i - 1]),
             low[i],
             i,
+            is_add,
+        );
+    }
+    if free_first_high_carry {
+        b.reacquire(low[park_low]);
+        fold_postsum_carry_compute(
+            b,
+            acc,
+            kctrl(park_low),
+            Some(low[park_low - 1]),
+            low[park_low],
+            park_low,
             is_add,
         );
     }

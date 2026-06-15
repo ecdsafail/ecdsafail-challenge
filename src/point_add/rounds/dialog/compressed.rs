@@ -96,6 +96,14 @@ const DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF: [&[u16]; 5] = [
     &[6, 32, 64],
     &[4, 6, 8, 10, 32, 80, 128, 130, 256],
 ];
+const DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_CODE_CONSTANT: u8 = 3;
+const DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_ENCODER_ANF: [&[u16]; 5] = [
+    &[6, 8, 16, 20, 24, 64, 80, 128, 130, 136],
+    &[2, 6, 10, 16, 80, 128, 130],
+    &[2, 10, 16, 64, 80, 128, 130],
+    &[2, 4, 6, 8, 16, 64],
+    &[1, 2, 6, 10, 16, 20, 24, 64, 128, 136],
+];
 const DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF: [&[u16]; 9] = [
     &[0, 6, 7, 9, 10, 17, 19, 22, 23, 24, 25, 29, 31],
     &[0, 2, 7, 8, 10, 14, 16, 19, 24],
@@ -106,6 +114,17 @@ const DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF: [&[u16]; 9] = [
     &[2, 7, 10, 14, 16, 18, 22, 23, 24],
     &[1, 6, 7, 8, 9, 10, 16, 18, 19, 20, 27, 28, 29, 30],
     &[0, 9, 13, 22, 24, 28, 31],
+];
+const DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_DECODER_ANF: [&[u16]; 9] = [
+    &[0, 1, 13, 17, 24, 25, 26],
+    &[0, 1, 2, 7, 10, 12, 13, 14, 31],
+    &[0, 6, 7, 8, 10, 12, 15],
+    &[4, 5, 7, 12, 22, 23, 27],
+    &[0, 1, 5, 12, 13, 27, 30],
+    &[],
+    &[1, 4, 7, 8, 9, 27],
+    &[0, 4, 8, 9, 16, 17, 20, 21, 30],
+    &[0],
 ];
 pub(crate) const DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT: [u16; 32] = [
     0x124, 0x125, 0x12b, 0x129, 0x128, 0x12f, 0x12d, 0x14b,
@@ -330,6 +349,64 @@ fn dialog_gcd_k5_tail3_top32_stream_apply_enabled() -> bool {
             == Some("1")
 }
 
+fn dialog_gcd_k5_tail3_top32_split_slot_apply_enabled() -> bool {
+    dialog_gcd_k5_tail3_top32_stream_apply_enabled()
+        && std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_SPLIT_SLOT_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
+fn dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled() -> bool {
+    dialog_gcd_k5_tail3_top32_split_slot_apply_enabled()
+        && std::env::var("DIALOG_GCD_K5_TAIL3_TOP32_FINAL_S2_CONST_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
+fn dialog_gcd_k5_head11_stream_pair_apply_enabled() -> bool {
+    dialog_gcd_k5_head11_enabled()
+        && dialog_gcd_apply_replay_swap_host_enabled()
+        && std::env::var("DIALOG_GCD_K5_HEAD11_STREAM_PAIR_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
+fn dialog_gcd_k5_head11_split_pair_shift_apply_enabled() -> bool {
+    dialog_gcd_k5_head11_stream_pair_apply_enabled()
+        && std::env::var("DIALOG_GCD_K5_HEAD11_SPLIT_PAIR_SHIFT_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
+fn dialog_gcd_k5_head11_pair01_s2_permute_apply_enabled() -> bool {
+    dialog_gcd_k5_head11_split_pair_shift_apply_enabled()
+        && std::env::var("DIALOG_GCD_K5_HEAD11_PAIR01_S2_PERMUTE_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
+fn dialog_gcd_k5_head11_pair23_s2_borrow_pair01_apply_enabled() -> bool {
+    dialog_gcd_k5_head11_split_pair_shift_apply_enabled()
+        && std::env::var("DIALOG_GCD_K5_HEAD11_PAIR23_S2_BORROW_PAIR01_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
+fn dialog_gcd_k5_stream_pair_apply_enabled() -> bool {
+    dialog_gcd_k5_clean_block_enabled()
+        && dialog_gcd_apply_replay_swap_host_enabled()
+        && std::env::var("DIALOG_GCD_K5_STREAM_PAIR_APPLY")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
 fn emit_dialog_gcd_k5_head11_preconditioner(b: &mut B, data: &[QubitId; 13]) {
     b.x(data[0]);
     b.ccx(data[0], data[1], data[3]);
@@ -543,6 +620,269 @@ fn dialog_gcd_k5_head11_decompress_block_to_raw(
     emit_dialog_gcd_k5_head11_preconditioner_inverse(b, &data);
     emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair23(raw_block));
     emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair01(raw_block));
+}
+
+fn dialog_gcd_k5_compress_data_to_block(
+    b: &mut B,
+    compressed_block: &[QubitId],
+    raw_block: &[QubitId],
+    swap_host: bool,
+) {
+    assert_eq!(compressed_block.len(), 12);
+    assert_eq!(raw_block.len(), 15);
+    let data = dialog_gcd_k5_data_from_raw(raw_block);
+    let ancilla = b.alloc_qubit();
+    emit_dialog_gcd_k5_clean_compressor(b, &data, ancilla);
+    b.free(ancilla);
+    dialog_gcd_k5_transfer_survivors(b, compressed_block, &data, swap_host);
+}
+
+fn dialog_gcd_k5_decompress_block_to_data(
+    b: &mut B,
+    compressed_block: &[QubitId],
+    raw_block: &[QubitId],
+    swap_host: bool,
+) {
+    assert_eq!(compressed_block.len(), 12);
+    assert_eq!(raw_block.len(), 15);
+    let data = dialog_gcd_k5_data_from_raw(raw_block);
+    dialog_gcd_k5_transfer_survivors(b, compressed_block, &data, swap_host);
+    let ancilla = b.alloc_qubit();
+    emit_dialog_gcd_k5_clean_compressor_inverse(b, &data, ancilla);
+    b.free(ancilla);
+}
+
+fn dialog_gcd_k5_stream_pairs_start(b: &mut B, raw_block: &[QubitId]) {
+    assert_eq!(raw_block.len(), 15);
+    // The pair encoders clear these drop lanes in the post-Fable data representation.
+    // Keep them out of the live set except while their pair is opened for apply.
+    b.free(raw_block[0]);
+    b.free(raw_block[4]);
+}
+
+fn dialog_gcd_k5_stream_pairs_before_slot(
+    b: &mut B,
+    raw_block: &[QubitId],
+    slot: usize,
+) {
+    match slot {
+        3 => {
+            b.reacquire(raw_block[4]);
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair23(raw_block));
+        }
+        1 => {
+            b.reacquire(raw_block[0]);
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair01(raw_block));
+        }
+        _ => {}
+    }
+}
+
+fn dialog_gcd_k5_stream_pairs_after_slot_forward(
+    b: &mut B,
+    raw_block: &[QubitId],
+    slot: usize,
+) {
+    match slot {
+        2 => {
+            emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair23(raw_block));
+            b.free(raw_block[4]);
+        }
+        0 => {
+            emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair01(raw_block));
+            b.free(raw_block[0]);
+        }
+        _ => {}
+    }
+}
+
+fn dialog_gcd_k5_stream_pairs_before_slot_reverse(
+    b: &mut B,
+    raw_block: &[QubitId],
+    slot: usize,
+) {
+    match slot {
+        0 => {
+            b.reacquire(raw_block[0]);
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair01(raw_block));
+        }
+        2 => {
+            b.reacquire(raw_block[4]);
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair23(raw_block));
+        }
+        _ => {}
+    }
+}
+
+fn dialog_gcd_k5_stream_pairs_after_slot_reverse(
+    b: &mut B,
+    raw_block: &[QubitId],
+    slot: usize,
+) {
+    match slot {
+        1 => {
+            emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair01(raw_block));
+            b.free(raw_block[0]);
+        }
+        3 => {
+            emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair23(raw_block));
+            b.free(raw_block[4]);
+        }
+        _ => {}
+    }
+}
+
+fn dialog_gcd_k5_stream_pairs_finish(b: &mut B, raw_block: &[QubitId]) {
+    b.reacquire(raw_block[0]);
+    b.reacquire(raw_block[4]);
+}
+
+fn dialog_gcd_k5_head11_pair_for_slot(slot: usize) -> usize {
+    assert!(slot < 4);
+    slot / 2
+}
+
+fn dialog_gcd_k5_head11_open_pair_for_slot(b: &mut B, raw_block: &[QubitId], slot: usize) {
+    match dialog_gcd_k5_head11_pair_for_slot(slot) {
+        0 => {
+            b.reacquire(raw_block[0]);
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair01(raw_block));
+        }
+        1 => {
+            b.reacquire(raw_block[4]);
+            emit_dialog_gcd_k5_pair_encoder_inverse(b, &dialog_gcd_k5_pair23(raw_block));
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn dialog_gcd_k5_head11_close_pair_for_slot(b: &mut B, raw_block: &[QubitId], slot: usize) {
+    match dialog_gcd_k5_head11_pair_for_slot(slot) {
+        0 => {
+            emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair01(raw_block));
+            b.free(raw_block[0]);
+        }
+        1 => {
+            emit_dialog_gcd_k5_pair_encoder(b, &dialog_gcd_k5_pair23(raw_block));
+            b.free(raw_block[4]);
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn dialog_gcd_k5_head11_pair01_expose_s2(b: &mut B, raw_block: &[QubitId]) {
+    let w = [
+        raw_block[1],
+        raw_block[10],
+        raw_block[2],
+        raw_block[3],
+        raw_block[11],
+    ];
+    b.cx(w[0], w[2]);
+    b.cx(w[1], w[0]);
+    b.ccx(w[0], w[2], w[1]);
+}
+
+fn dialog_gcd_k5_head11_pair01_unexpose_s2(b: &mut B, raw_block: &[QubitId]) {
+    let w = [
+        raw_block[1],
+        raw_block[10],
+        raw_block[2],
+        raw_block[3],
+        raw_block[11],
+    ];
+    b.ccx(w[0], w[2], w[1]);
+    b.cx(w[1], w[0]);
+    b.cx(w[0], w[2]);
+}
+
+fn dialog_gcd_k5_head11_pair01_zero_lane(b: &mut B, raw_block: &[QubitId]) {
+    let w = [
+        raw_block[1],
+        raw_block[10],
+        raw_block[2],
+        raw_block[3],
+        raw_block[11],
+    ];
+    b.x(w[0]);
+    b.x(w[2]);
+    b.ccx(w[0], w[1], w[3]);
+    b.ccx(w[2], w[3], w[0]);
+}
+
+fn dialog_gcd_k5_head11_pair01_unzero_lane(b: &mut B, raw_block: &[QubitId]) {
+    let w = [
+        raw_block[1],
+        raw_block[10],
+        raw_block[2],
+        raw_block[3],
+        raw_block[11],
+    ];
+    b.ccx(w[2], w[3], w[0]);
+    b.ccx(w[0], w[1], w[3]);
+    b.x(w[2]);
+    b.x(w[0]);
+}
+
+const DIALOG_GCD_K5_HEAD11_PAIR23_S2_ANF: &[u16] = &[1, 2, 3, 4, 7, 9, 11, 13, 15];
+
+fn dialog_gcd_k5_head11_toggle_pair23_s2_into(
+    b: &mut B,
+    raw_block: &[QubitId],
+    target: QubitId,
+) {
+    let code = [
+        raw_block[5],
+        raw_block[12],
+        raw_block[6],
+        raw_block[7],
+        raw_block[13],
+    ];
+    dialog_gcd_toggle_anf_with_dirty(
+        b,
+        &code,
+        target,
+        raw_block,
+        DIALOG_GCD_K5_HEAD11_PAIR23_S2_ANF,
+    );
+}
+
+fn dialog_gcd_k5_head11_compress_data_to_block(
+    b: &mut B,
+    compressed_block: &[QubitId],
+    raw_block: &[QubitId],
+    swap_host: bool,
+) {
+    assert_eq!(
+        compressed_block.len(),
+        DIALOG_GCD_K5_HEAD11_DATA_WIRES.len()
+    );
+    assert_eq!(raw_block.len(), 15);
+    let data = dialog_gcd_k5_data_from_raw(raw_block);
+    emit_dialog_gcd_k5_head11_preconditioner(b, &data);
+    let ancilla = b.alloc_qubit();
+    emit_dialog_gcd_k5_clean_compressor(b, &data, ancilla);
+    b.free(ancilla);
+    dialog_gcd_k5_head11_transfer_survivors(b, compressed_block, &data, swap_host);
+}
+
+fn dialog_gcd_k5_head11_decompress_block_to_data(
+    b: &mut B,
+    compressed_block: &[QubitId],
+    raw_block: &[QubitId],
+    swap_host: bool,
+) {
+    assert_eq!(
+        compressed_block.len(),
+        DIALOG_GCD_K5_HEAD11_DATA_WIRES.len()
+    );
+    assert_eq!(raw_block.len(), 15);
+    let data = dialog_gcd_k5_data_from_raw(raw_block);
+    dialog_gcd_k5_head11_transfer_survivors(b, compressed_block, &data, swap_host);
+    let ancilla = b.alloc_qubit();
+    emit_dialog_gcd_k5_clean_compressor_inverse(b, &data, ancilla);
+    b.free(ancilla);
+    emit_dialog_gcd_k5_head11_preconditioner_inverse(b, &data);
 }
 
 fn dialog_gcd_k5_head11_pair_encode_word(bits: &mut [bool; 15], slots: [usize; 2]) {
@@ -1555,14 +1895,21 @@ fn dialog_gcd_k5_tail3_top32_toggle_code_from_raw(
 ) {
     assert_eq!(code.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
     let raw = dialog_gcd_k5_tail3_top32_raw(raw_block);
-    for (code_index, terms) in DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF
-        .iter()
-        .enumerate()
-    {
-        if (DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT >> code_index) & 1 != 0 {
+    let code_constant = if dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled() {
+        DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_CODE_CONSTANT
+    } else {
+        DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT
+    };
+    for code_index in 0..DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF.len() {
+        let terms = if dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled() {
+            DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_ENCODER_ANF[code_index]
+        } else {
+            DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF[code_index]
+        };
+        if (code_constant >> code_index) & 1 != 0 {
             b.x(code[code_index]);
         }
-        for &mask in *terms {
+        for &mask in terms {
             let controls = raw
                 .iter()
                 .enumerate()
@@ -1581,10 +1928,12 @@ fn dialog_gcd_k5_tail3_top32_toggle_raw_from_code(
 ) {
     assert_eq!(code.len(), DIALOG_GCD_K5_TAIL3_DATA_WIRES.len());
     let raw = dialog_gcd_k5_tail3_top32_raw(raw_block);
-    for (raw_index, terms) in DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF
-        .iter()
-        .enumerate()
-    {
+    for raw_index in 0..DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF.len() {
+        let terms = if dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled() {
+            DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_DECODER_ANF[raw_index]
+        } else {
+            DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF[raw_index]
+        };
         dialog_gcd_toggle_anf_with_dirty(b, code, raw[raw_index], raw_block, terms);
     }
 }
@@ -1596,6 +1945,69 @@ fn dialog_gcd_k5_tail3_top32_slot_raw(
     assert_eq!(raw_block.len(), 15);
     assert!(slot < 3);
     [raw_block[2 * slot], raw_block[2 * slot + 1], raw_block[10 + slot]]
+}
+
+fn dialog_gcd_k5_tail3_top32_slot_branch_raw(
+    raw_block: &[QubitId],
+    slot: usize,
+) -> [QubitId; 2] {
+    assert_eq!(raw_block.len(), 15);
+    assert!(slot < 3);
+    [raw_block[2 * slot], raw_block[2 * slot + 1]]
+}
+
+fn dialog_gcd_k5_tail3_top32_slot_shift_raw(
+    raw_block: &[QubitId],
+    slot: usize,
+) -> [QubitId; 1] {
+    assert_eq!(raw_block.len(), 15);
+    assert!(slot < 3);
+    [raw_block[10 + slot]]
+}
+
+fn dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(
+    b: &mut B,
+    code: &[QubitId],
+    raw_block: &[QubitId],
+    raw_indices: &[usize],
+) {
+    let raw = dialog_gcd_k5_tail3_top32_raw(raw_block);
+    for &raw_index in raw_indices {
+        dialog_gcd_toggle_anf_with_dirty(
+            b,
+            code,
+            raw[raw_index],
+            raw_block,
+            if dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled() {
+                DIALOG_GCD_K5_TAIL3_TOP32_S2CONST_DECODER_ANF[raw_index]
+            } else {
+                DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF[raw_index]
+            },
+        );
+    }
+}
+
+fn dialog_gcd_k5_tail3_top32_toggle_slot_branch_from_code(
+    b: &mut B,
+    code: &[QubitId],
+    raw_block: &[QubitId],
+    slot: usize,
+) {
+    dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(
+        b,
+        code,
+        raw_block,
+        &[2 * slot, 2 * slot + 1],
+    );
+}
+
+fn dialog_gcd_k5_tail3_top32_toggle_slot_shift_from_code(
+    b: &mut B,
+    code: &[QubitId],
+    raw_block: &[QubitId],
+    slot: usize,
+) {
+    dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(b, code, raw_block, &[6 + slot]);
 }
 
 fn dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
@@ -3782,15 +4194,37 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
         let stream_tail3 = dialog_gcd_k5_tail3_top32_stream_apply_enabled()
             && block_steps == 3
             && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len();
+        let split_stream_tail3 =
+            stream_tail3 && dialog_gcd_k5_tail3_top32_split_slot_apply_enabled();
 
         b.set_phase("dialog_gcd_compressed_block_apply_decompress_block");
         let raw_frame = inplace_raw0.map(|raw0| {
             dialog_gcd_k2_pair_inplace_decompress_block(b, compressed_block, raw0, end - start)
         });
-        if raw_frame.is_none() && !stream_tail3 {
+        let stream_head11_pairs = dialog_gcd_k5_head11_stream_pair_apply_enabled()
+            && raw_frame.is_none()
+            && head11_block;
+        let split_head11_pair_shift = stream_head11_pairs
+            && dialog_gcd_k5_head11_split_pair_shift_apply_enabled();
+        let stream_k5_pairs = dialog_gcd_k5_stream_pair_apply_enabled()
+            && raw_frame.is_none()
+            && !stream_tail3
+            && !head11_block
+            && block_steps == 5
+            && compressed_block.len() == 12;
+        if stream_head11_pairs {
+            dialog_gcd_k5_head11_decompress_block_to_data(
+                b,
+                compressed_block,
+                raw_block,
+                true,
+            );
+        } else if stream_k5_pairs {
+            dialog_gcd_k5_decompress_block_to_data(b, compressed_block, raw_block, true);
+        } else if raw_frame.is_none() && !stream_tail3 {
             dialog_gcd_copy_compressed_block_to_raw(b, compressed_block, raw_block, end - start);
         }
-        if head11_block {
+        if head11_block && !stream_head11_pairs {
             b.free(raw_block[1]);
         }
         let released_code_bits = if !stream_tail3
@@ -3816,6 +4250,9 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
         let released_code = &compressed_block[retained_code_bits..];
         b.free_vec(released_code);
         let raw = raw_frame.as_ref().map_or(raw_block, |frame| &frame[..]);
+        if stream_head11_pairs || stream_k5_pairs {
+            dialog_gcd_k5_stream_pairs_start(b, raw);
+        }
         let stream_clean_scratch = if stream_tail3 {
             dialog_gcd_k5_tail3_top32_stream_scratch(raw)
         } else {
@@ -3880,6 +4317,10 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
 
         for step in (start..end).rev() {
             let slot = step - start;
+            let top32_final_s2_const = stream_tail3
+                && split_stream_tail3
+                && dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled()
+                && slot + 1 == block_steps;
             let constant_tail_stored_steps =
                 dialog_gcd_k5_constant_tail_stored_steps(block_steps);
             if constant_tail_stored_steps.is_some_and(|stored_steps| slot >= stored_steps) {
@@ -3917,14 +4358,51 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
                 continue;
             }
             if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                b.reacquire_vec(&slot_raw);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
+                if split_stream_tail3 {
+                    if !top32_final_s2_const {
+                        let shift_raw = dialog_gcd_k5_tail3_top32_slot_shift_raw(raw, slot);
+                        b.reacquire_vec(&shift_raw);
+                        dialog_gcd_k5_tail3_top32_toggle_slot_shift_from_code(
+                            b,
+                            compressed_block,
+                            raw,
+                            slot,
+                        );
+                    }
+                } else {
+                    let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
+                    b.reacquire_vec(&slot_raw);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                }
+            }
+            let split_head11_pair_slot = split_head11_pair_shift && slot < 4;
+            let split_head11_permute_shift = split_head11_pair_slot
+                && slot == 0
+                && dialog_gcd_k5_head11_pair01_s2_permute_apply_enabled();
+            let split_head11_borrow_pair23_shift = split_head11_pair_slot
+                && slot == 2
+                && dialog_gcd_k5_head11_pair23_s2_borrow_pair01_apply_enabled();
+            let split_head11_open_for_shift = split_head11_pair_slot
+                && matches!(slot, 0 | 2)
+                && !split_head11_permute_shift
+                && !split_head11_borrow_pair23_shift;
+            if stream_k5_pairs || (stream_head11_pairs && !split_head11_pair_shift) {
+                dialog_gcd_k5_stream_pairs_before_slot(b, raw, slot);
+            }
+            if split_head11_open_for_shift {
+                dialog_gcd_k5_head11_open_pair_for_slot(b, raw, slot);
+            }
+            if split_head11_permute_shift {
+                dialog_gcd_k5_head11_pair01_expose_s2(b, raw);
+            }
+            if split_head11_borrow_pair23_shift {
+                dialog_gcd_k5_head11_pair01_zero_lane(b, raw);
+                dialog_gcd_k5_head11_toggle_pair23_s2_into(b, raw, raw[1]);
             }
             let b0 = raw[2 * slot];
             let b0_and_b1 = if head11_block && slot == 0 {
@@ -3946,10 +4424,16 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             if free_clean_code {
                 b.free_vec(shift_clean_code);
             }
-            if apply_k2 && dialog_gcd_apply_fused_fold_enabled() {
+            if top32_final_s2_const && apply_k2 {
+                dialog_gcd_fixed_double_twice_y(b, y, p);
+            } else if apply_k2 && dialog_gcd_apply_fused_fold_enabled() {
                 // Fuse mod_double_inplace_fast + cmod_double_inplace_lazy into a
                 // single shared carry chain (value-identical; see fn doc).
-                let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
+                let s2 = if split_head11_borrow_pair23_shift {
+                    raw[1]
+                } else {
+                    dialog_gcd_block_raw_s2(raw, block_steps, slot)
+                };
                 dialog_gcd_fused_double_y_at_step(b, y, p, s2, Some(step));
             } else {
                 mod_double_inplace_fast(b, y, p);
@@ -3957,7 +4441,11 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
                     // mirror the forward K=2 second shift: conditional 2nd double of y.
                     // MUST use the lazy (Solinas, truncated) controlled double so it
                     // composes with the uncontrolled mod_double_inplace_fast above.
-                    let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
+                    let s2 = if split_head11_borrow_pair23_shift {
+                        raw[1]
+                    } else {
+                        dialog_gcd_block_raw_s2(raw, block_steps, slot)
+                    };
                     cmod_double_inplace_lazy(b, y, p, s2);
                 }
             }
@@ -3967,6 +4455,44 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             if !scale_released_code.is_empty() {
                 b.set_phase("dialog_gcd_compressed_block_apply_scale_reacquire");
                 b.reacquire_vec(scale_released_code);
+            }
+            if split_head11_permute_shift {
+                dialog_gcd_k5_head11_pair01_unexpose_s2(b, raw);
+            }
+            if split_head11_borrow_pair23_shift {
+                dialog_gcd_k5_head11_toggle_pair23_s2_into(b, raw, raw[1]);
+                dialog_gcd_k5_head11_pair01_unzero_lane(b, raw);
+            }
+            if split_stream_tail3 {
+                if top32_final_s2_const {
+                    b.reacquire(raw[2 * slot]);
+                    dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        &[2 * slot],
+                    );
+                } else {
+                    let shift_raw = dialog_gcd_k5_tail3_top32_slot_shift_raw(raw, slot);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_shift_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                    b.free_vec(&shift_raw);
+                    let branch_raw = dialog_gcd_k5_tail3_top32_slot_branch_raw(raw, slot);
+                    b.reacquire_vec(&branch_raw);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_branch_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                }
+            }
+            if split_head11_pair_slot && !split_head11_open_for_shift {
+                dialog_gcd_k5_head11_open_pair_for_slot(b, raw, slot);
             }
 
             b.set_phase("dialog_gcd_compressed_block_apply_cadd");
@@ -4000,18 +4526,46 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             }
 
             b.set_phase("dialog_gcd_compressed_block_apply_cswap");
-            for (&xi, &yi) in x.iter().zip(y.iter()) {
-                cswap(b, b0_and_b1, xi, yi);
+            if !top32_final_s2_const {
+                for (&xi, &yi) in x.iter().zip(y.iter()) {
+                    cswap(b, b0_and_b1, xi, yi);
+                }
             }
             if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
-                b.free_vec(&slot_raw);
+                if split_stream_tail3 {
+                    if top32_final_s2_const {
+                        dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(
+                            b,
+                            compressed_block,
+                            raw,
+                            &[2 * slot],
+                        );
+                        b.free(raw[2 * slot]);
+                    } else {
+                        let branch_raw = dialog_gcd_k5_tail3_top32_slot_branch_raw(raw, slot);
+                        dialog_gcd_k5_tail3_top32_toggle_slot_branch_from_code(
+                            b,
+                            compressed_block,
+                            raw,
+                            slot,
+                        );
+                        b.free_vec(&branch_raw);
+                    }
+                } else {
+                    let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                    b.free_vec(&slot_raw);
+                }
+            }
+            if split_head11_pair_slot {
+                dialog_gcd_k5_head11_close_pair_for_slot(b, raw, slot);
+            } else if stream_k5_pairs || stream_head11_pairs {
+                dialog_gcd_k5_stream_pairs_after_slot_forward(b, raw, slot);
             }
         }
 
@@ -4023,12 +4577,23 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
             b.set_phase("dialog_gcd_compressed_block_apply_reacquire_partial_raw");
             b.reacquire_vec(&released_partial_raw);
         }
-        if head11_block {
+        if head11_block && !stream_head11_pairs {
             b.reacquire(raw_block[1]);
         }
         b.set_phase("dialog_gcd_compressed_block_apply_clear_block_copy");
         if stream_tail3 {
             b.reacquire_vec(&stream_dynamic_raw);
+        } else if stream_head11_pairs {
+            dialog_gcd_k5_stream_pairs_finish(b, raw_block);
+            dialog_gcd_k5_head11_compress_data_to_block(
+                b,
+                compressed_block,
+                raw_block,
+                true,
+            );
+        } else if stream_k5_pairs {
+            dialog_gcd_k5_stream_pairs_finish(b, raw_block);
+            dialog_gcd_k5_compress_data_to_block(b, compressed_block, raw_block, true);
         } else if let Some(raw0) = inplace_raw0 {
             dialog_gcd_k2_pair_inplace_clear_block(b, compressed_block, raw0, end - start);
         } else {
@@ -4074,15 +4639,37 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
         let stream_tail3 = dialog_gcd_k5_tail3_top32_stream_apply_enabled()
             && block_steps == 3
             && compressed_block.len() == DIALOG_GCD_K5_TAIL3_DATA_WIRES.len();
+        let split_stream_tail3 =
+            stream_tail3 && dialog_gcd_k5_tail3_top32_split_slot_apply_enabled();
 
         b.set_phase("dialog_gcd_compressed_block_apply_reverse_decompress_block");
         let raw_frame = inplace_raw0.map(|raw0| {
             dialog_gcd_k2_pair_inplace_decompress_block(b, compressed_block, raw0, end - start)
         });
-        if raw_frame.is_none() && !stream_tail3 {
+        let stream_head11_pairs = dialog_gcd_k5_head11_stream_pair_apply_enabled()
+            && raw_frame.is_none()
+            && head11_block;
+        let split_head11_pair_shift = stream_head11_pairs
+            && dialog_gcd_k5_head11_split_pair_shift_apply_enabled();
+        let stream_k5_pairs = dialog_gcd_k5_stream_pair_apply_enabled()
+            && raw_frame.is_none()
+            && !stream_tail3
+            && !head11_block
+            && block_steps == 5
+            && compressed_block.len() == 12;
+        if stream_head11_pairs {
+            dialog_gcd_k5_head11_decompress_block_to_data(
+                b,
+                compressed_block,
+                raw_block,
+                true,
+            );
+        } else if stream_k5_pairs {
+            dialog_gcd_k5_decompress_block_to_data(b, compressed_block, raw_block, true);
+        } else if raw_frame.is_none() && !stream_tail3 {
             dialog_gcd_copy_compressed_block_to_raw(b, compressed_block, raw_block, end - start);
         }
-        if head11_block {
+        if head11_block && !stream_head11_pairs {
             b.free(raw_block[1]);
         }
         let released_code_bits = if !stream_tail3
@@ -4108,6 +4695,9 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
         let released_code = &compressed_block[retained_code_bits..];
         b.free_vec(released_code);
         let raw = raw_frame.as_ref().map_or(raw_block, |frame| &frame[..]);
+        if stream_head11_pairs || stream_k5_pairs {
+            dialog_gcd_k5_stream_pairs_start(b, raw);
+        }
         let stream_clean_scratch = if stream_tail3 {
             dialog_gcd_k5_tail3_top32_stream_scratch(raw)
         } else {
@@ -4172,6 +4762,10 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
 
         for step in start..end {
             let slot = step - start;
+            let top32_final_s2_const = stream_tail3
+                && split_stream_tail3
+                && dialog_gcd_k5_tail3_top32_final_s2_const_apply_enabled()
+                && slot + 1 == block_steps;
             let constant_tail_stored_steps =
                 dialog_gcd_k5_constant_tail_stored_steps(block_steps);
             if constant_tail_stored_steps.is_some_and(|stored_steps| slot >= stored_steps) {
@@ -4215,14 +4809,52 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                 continue;
             }
             if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                b.reacquire_vec(&slot_raw);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
+                if split_stream_tail3 {
+                    if top32_final_s2_const {
+                        b.reacquire(raw[2 * slot]);
+                        dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(
+                            b,
+                            compressed_block,
+                            raw,
+                            &[2 * slot],
+                        );
+                    } else {
+                        let branch_raw = dialog_gcd_k5_tail3_top32_slot_branch_raw(raw, slot);
+                        b.reacquire_vec(&branch_raw);
+                        dialog_gcd_k5_tail3_top32_toggle_slot_branch_from_code(
+                            b,
+                            compressed_block,
+                            raw,
+                            slot,
+                        );
+                    }
+                } else {
+                    let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
+                    b.reacquire_vec(&slot_raw);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                }
+            }
+            let split_head11_pair_slot = split_head11_pair_shift && slot < 4;
+            let split_head11_permute_shift = split_head11_pair_slot
+                && slot == 0
+                && dialog_gcd_k5_head11_pair01_s2_permute_apply_enabled();
+            let split_head11_borrow_pair23_shift = split_head11_pair_slot
+                && slot == 2
+                && dialog_gcd_k5_head11_pair23_s2_borrow_pair01_apply_enabled();
+            let split_head11_keep_open_for_shift = split_head11_pair_slot
+                && matches!(slot, 0 | 2)
+                && !split_head11_permute_shift
+                && !split_head11_borrow_pair23_shift;
+            if stream_k5_pairs || (stream_head11_pairs && !split_head11_pair_shift) {
+                dialog_gcd_k5_stream_pairs_before_slot_reverse(b, raw, slot);
+            }
+            if split_head11_pair_slot {
+                dialog_gcd_k5_head11_open_pair_for_slot(b, raw, slot);
             }
             let b0 = raw[2 * slot];
             let b0_and_b1 = if head11_block && slot == 0 {
@@ -4232,8 +4864,10 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             };
 
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_cswap");
-            for (&xi, &yi) in x.iter().zip(y.iter()) {
-                cswap(b, b0_and_b1, xi, yi);
+            if !top32_final_s2_const {
+                for (&xi, &yi) in x.iter().zip(y.iter()) {
+                    cswap(b, b0_and_b1, xi, yi);
+                }
             }
 
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_csub");
@@ -4265,6 +4899,44 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             } else {
                 cmod_sub_qq_lowq(b, y, x, b0, p);
             }
+            if split_head11_pair_slot && !split_head11_keep_open_for_shift {
+                dialog_gcd_k5_head11_close_pair_for_slot(b, raw, slot);
+            }
+            if split_head11_permute_shift {
+                dialog_gcd_k5_head11_pair01_expose_s2(b, raw);
+            }
+            if split_head11_borrow_pair23_shift {
+                dialog_gcd_k5_head11_pair01_zero_lane(b, raw);
+                dialog_gcd_k5_head11_toggle_pair23_s2_into(b, raw, raw[1]);
+            }
+            if split_stream_tail3 {
+                if top32_final_s2_const {
+                    dialog_gcd_k5_tail3_top32_toggle_raw_indices_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        &[2 * slot],
+                    );
+                    b.free(raw[2 * slot]);
+                } else {
+                    let branch_raw = dialog_gcd_k5_tail3_top32_slot_branch_raw(raw, slot);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_branch_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                    b.free_vec(&branch_raw);
+                    let shift_raw = dialog_gcd_k5_tail3_top32_slot_shift_raw(raw, slot);
+                    b.reacquire_vec(&shift_raw);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_shift_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                }
+            }
 
             if !scale_released_code.is_empty() {
                 b.set_phase("dialog_gcd_compressed_block_apply_reverse_scale_release");
@@ -4279,21 +4951,31 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             if free_clean_code {
                 b.free_vec(shift_clean_code);
             }
-            if apply_k2
+            if top32_final_s2_const && apply_k2 {
+                dialog_gcd_fixed_halve_twice_y(b, y, p);
+            } else if apply_k2
                 && dialog_gcd_apply_fused_fold_enabled()
                 && std::env::var("DIALOG_GCD_FUSE_HALVE_OFF").ok().as_deref() != Some("1")
             {
                 // Fuse mod_halve_inplace_fast + cmod_halve_inplace_lazy into a
                 // single shared borrow chain (exact inverse of the fused double;
                 // see fn doc on dialog_gcd_fused_halve_y).
-                let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
+                let s2 = if split_head11_borrow_pair23_shift {
+                    raw[1]
+                } else {
+                    dialog_gcd_block_raw_s2(raw, block_steps, slot)
+                };
                 dialog_gcd_fused_halve_y_at_step(b, y, p, s2, Some(step));
             } else {
                 mod_halve_inplace_fast(b, y, p);
                 if apply_k2 {
                     // mirror the forward K=2 second shift: conditional 2nd halve of y.
                     // MUST use the lazy (Solinas, truncated) controlled halve to match.
-                    let s2 = dialog_gcd_block_raw_s2(raw, block_steps, slot);
+                    let s2 = if split_head11_borrow_pair23_shift {
+                        raw[1]
+                    } else {
+                        dialog_gcd_block_raw_s2(raw, block_steps, slot)
+                    };
                     cmod_halve_inplace_lazy(b, y, p, s2);
                 }
             }
@@ -4304,15 +4986,39 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                 b.set_phase("dialog_gcd_compressed_block_apply_reverse_scale_reacquire");
                 b.reacquire_vec(scale_released_code);
             }
+            if split_head11_borrow_pair23_shift {
+                dialog_gcd_k5_head11_toggle_pair23_s2_into(b, raw, raw[1]);
+                dialog_gcd_k5_head11_pair01_unzero_lane(b, raw);
+            }
+            if split_head11_keep_open_for_shift {
+                dialog_gcd_k5_head11_close_pair_for_slot(b, raw, slot);
+            } else if split_head11_permute_shift {
+                dialog_gcd_k5_head11_pair01_unexpose_s2(b, raw);
+            } else if !split_head11_pair_slot && (stream_k5_pairs || stream_head11_pairs) {
+                dialog_gcd_k5_stream_pairs_after_slot_reverse(b, raw, slot);
+            }
             if stream_tail3 {
-                let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
-                dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
-                    b,
-                    compressed_block,
-                    raw,
-                    slot,
-                );
-                b.free_vec(&slot_raw);
+                if split_stream_tail3 {
+                    if !top32_final_s2_const {
+                        let shift_raw = dialog_gcd_k5_tail3_top32_slot_shift_raw(raw, slot);
+                        dialog_gcd_k5_tail3_top32_toggle_slot_shift_from_code(
+                            b,
+                            compressed_block,
+                            raw,
+                            slot,
+                        );
+                        b.free_vec(&shift_raw);
+                    }
+                } else {
+                    let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                    b.free_vec(&slot_raw);
+                }
             }
         }
 
@@ -4324,12 +5030,23 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_reacquire_partial_raw");
             b.reacquire_vec(&released_partial_raw);
         }
-        if head11_block {
+        if head11_block && !stream_head11_pairs {
             b.reacquire(raw_block[1]);
         }
         b.set_phase("dialog_gcd_compressed_block_apply_reverse_clear_block_copy");
         if stream_tail3 {
             b.reacquire_vec(&stream_dynamic_raw);
+        } else if stream_head11_pairs {
+            dialog_gcd_k5_stream_pairs_finish(b, raw_block);
+            dialog_gcd_k5_head11_compress_data_to_block(
+                b,
+                compressed_block,
+                raw_block,
+                true,
+            );
+        } else if stream_k5_pairs {
+            dialog_gcd_k5_stream_pairs_finish(b, raw_block);
+            dialog_gcd_k5_compress_data_to_block(b, compressed_block, raw_block, true);
         } else if let Some(raw0) = inplace_raw0 {
             dialog_gcd_k2_pair_inplace_clear_block(b, compressed_block, raw0, end - start);
         } else {
