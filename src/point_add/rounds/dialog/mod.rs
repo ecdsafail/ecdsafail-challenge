@@ -30,6 +30,11 @@ pub(crate) fn round84_emit_fused_square_xtail(
     } else {
         squaring_sub_from_acc_schoolbook_lowq_shift22(b, tx, lam, p);
     }
+    if dialog_fuse_c_form_enabled() {
+        // FUSE_C_FORM: leave tx = dx - lam^2; the +3*Qx is applied in the driver's
+        // c-form via mod_add_triple_qb (telescoping the [+2Qx, neg, -Qx, neg] chain).
+        return;
+    }
     b.set_phase("round84_fused_square_xtail_add_double_ox");
     mod_add_double_qb(b, tx, ox, p);
     b.set_phase("round84_fused_square_xtail_negate_to_x3");
@@ -2686,8 +2691,12 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
     }
 
     b.set_phase("dialog_gcd_raw_pa_c_ox_minus_rx");
-    mod_sub_qb(b, tx, ox, p);
-    mod_neg_inplace_fast(b, tx, p);
+    if dialog_fuse_c_form_enabled() {
+        mod_add_triple_qb(b, tx, ox, p); // c = (dx - lam^2) + 3*Qx
+    } else {
+        mod_sub_qb(b, tx, ox, p);
+        mod_neg_inplace_fast(b, tx, p);
+    }
     if dialog_gcd_raw_pa_stop_after_c_enabled() {
         return;
     }
@@ -2702,7 +2711,11 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
     mod_sub_qb(b, ty, oy, p);
 
     b.set_phase("dialog_gcd_raw_pa_x_restore");
-    mod_neg_inplace_fast(b, tx, p);
-    mod_add_qb(b, tx, ox, p);
+    if dialog_fuse_x_restore_enabled() {
+        mod_const_minus_reg_qb(b, tx, ox, p); // Rx = Qx - c
+    } else {
+        mod_neg_inplace_fast(b, tx, p);
+        mod_add_qb(b, tx, ox, p);
+    }
 }
 

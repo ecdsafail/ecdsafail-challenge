@@ -580,3 +580,18 @@ pub(crate) fn dialog_gcd_sidecar_group_size() -> usize {
 pub(crate) fn dialog_gcd_apply_fused_fold_enabled() -> bool {
     std::env::var("DIALOG_GCD_APPLY_FUSED_FOLD").ok().as_deref() == Some("1")
 }
+
+// Value-exact, density-neutral score fusions (credit: telegram "Alex" / b0644ed).
+// Default OFF -> the op stream is byte-identical to the current frontier.
+// FUSE_C_FORM telescopes the square-tail+c-form chain [+2Qx, neg, -Qx, neg] -> one
+// +3Qx (mod_add_triple_qb), skipping the intermediate Rx materialization.
+// FUSE_X_RESTORE telescopes the x-restore chain [neg, +Qx] -> one constant-minus-
+// register (mod_const_minus_reg_qb), folding two reductions into one.
+pub const DIALOG_FUSE_C_FORM_ENV: &str = "DIALOG_FUSE_C_FORM";
+pub(crate) fn dialog_fuse_c_form_enabled() -> bool {
+    std::env::var(DIALOG_FUSE_C_FORM_ENV).ok().as_deref() == Some("1")
+}
+pub const DIALOG_FUSE_X_RESTORE_ENV: &str = "DIALOG_FUSE_X_RESTORE";
+pub(crate) fn dialog_fuse_x_restore_enabled() -> bool {
+    std::env::var(DIALOG_FUSE_X_RESTORE_ENV).ok().as_deref() == Some("1")
+}

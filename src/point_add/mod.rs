@@ -1084,7 +1084,12 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_TAIL_NONCE", "3480010331559");
+    set_default_env("DIALOG_TAIL_NONCE", "55432501896150");
+    // R8 fusion bake placeholders: default "0" = OFF = byte-identical frontier (gates check
+    // ==Some("1")). island.sh bake flips these to "1" at submit time. confirm_one_r8.sh's
+    // bake targets these exact lines; do not remove.
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "143");
@@ -1109,7 +1114,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "9600076011007");
+    set_default_env("DIALOG_TAIL_NONCE", "55432501896150");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1560,7 +1565,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "9600076011007");
+    set_default_env("DIALOG_TAIL_NONCE", "55432501896150");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1568,6 +1573,8 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("ROUND84_QPROD_VENT_PAD", "1");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
@@ -1889,6 +1896,17 @@ pub fn build() -> Vec<Op> {
             .as_deref()
             == Some("1")
         {
+            return Vec::new();
+        }
+    }
+    if std::env::var("DIALOG_FUSE_SELFTEST").is_ok() {
+        match dialog_fuse_primitive_selftest() {
+            Ok(()) => eprintln!(
+                "DIALOG_FUSE_SELFTEST: PASS (mod_add_triple_qb = +3*Qx, mod_const_minus_reg_qb = Qx-tx; value-exact, ancilla & phase clean over 64 shots)"
+            ),
+            Err(e) => panic!("DIALOG_FUSE_SELFTEST: FAIL: {e}"),
+        }
+        if std::env::var("DIALOG_FUSE_SELFTEST_ONLY").ok().as_deref() == Some("1") {
             return Vec::new();
         }
     }

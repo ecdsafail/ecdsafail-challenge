@@ -383,6 +383,165 @@ pub(crate) fn mod_sub_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
     unload_bits(b, &a, bits);
 }
 
+// ─────────── Value-exact, density-neutral score fusions (Alex / b0644ed) ───────────
+
+/// `acc := (acc + 3*bits) mod p`, `bits` a classical bit register. FUSE_C_FORM
+/// primitive: fuses the square-tail+c-form chain `[+2Qx, neg, -Qx, neg]` (two negs
+/// cancel, adds net +3Qx) into one constant-multiple add, skipping the intermediate
+/// Rx materialization (saves one measurement-Cuccaro neg).
+pub(crate) fn mod_add_triple_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
+    let n = bits.len();
+    let a = load_bits(b, bits);
+    let d = b.alloc_qubits(n);
+    for i in 0..n {
+        b.cx(a[i], d[i]); // d = copy(Qx)
+    }
+    mod_double_inplace_fast(b, &d, p); // d = 2*Qx
+    mod_add_qq_vent(b, acc, &d, p); // acc += 2*Qx
+    mod_add_qq_vent(b, acc, &a, p); // acc += Qx   (=> +3*Qx total)
+    mod_halve_inplace_fast(b, &d, p); // d = Qx
+    for i in 0..n {
+        b.cx(a[i], d[i]); // d -> 0
+    }
+    b.free_vec(&d);
+    unload_bits(b, &a, bits);
+}
+
+/// `tx := (Qx - tx) mod p`, `Qx` the classical bit register `bits`, `tx` in [0,p).
+/// FUSE_X_RESTORE primitive: fuses the x-restore chain `[neg, +Qx]` into one
+/// "constant-minus-register" modular op, folding the negation's reduction into the
+/// subtract's own underflow fold (one reduction instead of two). Mirrors the existing
+/// vented controlled-subtract pattern in this file (see mod_sub_qq_vent).
+pub(crate) fn mod_const_minus_reg_qb(b: &mut B, tx: &[QubitId], bits: &[BitId], p: U256) {
+    let n = tx.len();
+    assert_eq!(n, bits.len());
+    let a = load_bits(b, bits); // Qx (preserved as uncompute operand)
+    let (a_ext, a_ovf) = ext_reg(b, &a);
+    let (tx_ext, tx_ovf) = ext_reg(b, tx);
+    for i in 0..n {
+        b.x(tx_ext[i]); // ~tx = 2^n-1-tx
+    }
+    let cin = b.alloc_qubit();
+    b.x(cin); // +1 carry-in
+    cuccaro_add_low_to_ext_clean(b, &a, &tx_ext, cin); // tx_ext = 2^n + (Qx - tx)
+    b.x(cin);
+    b.free(cin);
+    let flag = b.alloc_qubit(); // flag = carry = (Qx >= tx)
+    b.cx(tx_ovf, flag);
+    b.cx(flag, tx_ovf); // capture + clear the 2^n bit
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+    let c_low = c.as_limbs()[0];
+    let n1 = tx_ext.len();
+    b.x(flag); // if underflow (Qx<tx): subtract c (= +p fold)
+    {
+        let q2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
+        venting::cisub_dirty_2clean_classical(b, &tx_ext, &a_ext[..n1 - 2], &q2, c_low, flag);
+        b.free(q2[0]);
+        b.free(q2[1]);
+    }
+    b.x(flag);
+    b.x(flag); // uncompute flag via clean cmp_lt (Qx still live)
+    cmp_lt_into(b, &a, &tx_ext[..n], flag);
+    b.free(flag);
+    unext_reg(b, tx_ovf);
+    unext_reg(b, a_ovf);
+    let _ = (tx_ext, a_ext);
+    unload_bits(b, &a, bits);
+}
+
+/// Env-gated (`DIALOG_FUSE_SELFTEST=1`) value-exactness proof for both fused
+/// primitives: simulate each over 64 random shots and assert the output register
+/// equals the modular reference, with phase==0 and every ancilla qubit restored to 0.
+pub(crate) fn dialog_fuse_primitive_selftest() -> Result<(), String> {
+    use crate::sim::Simulator;
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    let p = crate::point_add::SECP256K1_P;
+    let nbits = 256usize;
+    let red = |v: U256| v % p;
+    let sub_modp = |x: U256, y: U256| -> U256 {
+        if x >= y {
+            x - y
+        } else {
+            p - (y - x)
+        }
+    };
+    for fuse_x_restore in [false, true] {
+        let name = if fuse_x_restore {
+            "mod_const_minus_reg_qb (FUSE_X_RESTORE)"
+        } else {
+            "mod_add_triple_qb (FUSE_C_FORM)"
+        };
+        let mut bld = B::new();
+        let tx = bld.alloc_qubits(nbits);
+        let qx = bld.alloc_bits(nbits);
+        if fuse_x_restore {
+            mod_const_minus_reg_qb(&mut bld, &tx, &qx, p);
+        } else {
+            mod_add_triple_qb(&mut bld, &tx, &qx, p);
+        }
+        let (ops, nq, nb) = (bld.ops, bld.next_qubit as usize, bld.next_bit as usize);
+        let mut seed = sha3::Shake256::default();
+        seed.update(b"dialog-fuse-primitive-selftest");
+        seed.update(&[u8::from(fuse_x_restore)]);
+        let mut xof = seed.finalize_xof();
+        // Draw all random test values BEFORE Simulator::new borrows xof for R/Hmr.
+        let mut txv = [U256::ZERO; 64];
+        let mut qxv = [U256::ZERO; 64];
+        let mut buf = [0u8; 32];
+        for shot in 0..64 {
+            xof.read(&mut buf);
+            txv[shot] = red(U256::from_le_bytes(buf));
+            xof.read(&mut buf);
+            qxv[shot] = red(U256::from_le_bytes(buf));
+        }
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        sim.clear_for_shot();
+        for shot in 0..64 {
+            for i in 0..nbits {
+                if txv[shot].bit(i) {
+                    *sim.qubit_mut(tx[i]) |= 1u64 << shot;
+                }
+                if qxv[shot].bit(i) {
+                    *sim.bit_mut(qx[i]) |= 1u64 << shot;
+                }
+            }
+        }
+        sim.apply_iter(ops.iter());
+        if sim.phase != 0 {
+            return Err(format!("{name}: phase garbage 0x{:x}", sim.phase));
+        }
+        for shot in 0..64 {
+            let mut out = U256::ZERO;
+            for i in 0..nbits {
+                if (sim.qubit(tx[i]) >> shot) & 1 == 1 {
+                    out |= U256::from(1u64) << i;
+                }
+            }
+            let expect = if fuse_x_restore {
+                sub_modp(qxv[shot], txv[shot])
+            } else {
+                txv[shot].add_mod(qxv[shot].mul_mod(U256::from(3u64), p), p)
+            };
+            if out != expect {
+                return Err(format!(
+                    "{name}: shot {shot} got {out:#x} expect {expect:#x} (tx={:#x} qx={:#x})",
+                    txv[shot], qxv[shot]
+                ));
+            }
+        }
+        for q in 0..nq as u64 {
+            if tx.iter().any(|t| t.0 == q) {
+                continue;
+            }
+            let v = sim.qubit(QubitId(q));
+            if v != 0 {
+                return Err(format!("{name}: ancilla qubit {q} not clean = 0x{v:x}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  Non-modular n-bit primitives
 // ═══════════════════════════════════════════════════════════════════════════
