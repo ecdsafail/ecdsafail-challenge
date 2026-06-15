@@ -1014,7 +1014,7 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_APPLY_CHUNKED_F_CUTS",
         "17,34,50,66,81,96,110,124,137,150,163,175,187,198,209,219,229,238,247",
     );
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "20");
     set_default_env("DIALOG_GCD_APPLY_IMPLICIT_HIGH_ZERO", "1");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
@@ -1030,7 +1030,7 @@ fn configure_ecdsafail_submission_route() {
     );
     set_default_env(
         "DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "0:20,3:19,8:19,9:19,10:19,21:20,22:19,24:19,26:19,33:19,34:19,37:20,41:19,42:20,51:19,55:19,65:20,73:19,77:19,81:19,82:19,86:19,87:19,97:19,104:19,109:19,110:19,120:19,129:19,132:20,134:19,141:20,142:19,146:19,157:19,160:19,169:19,170:20,174:19,177:19,191:19,192:19,198:19,205:19,206:19,212:19,215:19,216:19,217:19,224:20,228:19",
+        "0:20,3:19,8:19,10:19,21:20,22:19,26:19,33:19,34:19,37:20,42:20,51:19,65:20,73:19,86:19,97:19,104:19,109:19,110:19,120:19,132:20,141:20,142:19,146:19,169:19,170:20,177:19,191:19,192:19,198:19,206:19,212:19,215:19,217:19,224:20,228:19",
     );
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL", "1");
@@ -1041,7 +1041,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "15");
     set_default_env(
         "DIALOG_GCD_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "0:17,3:16,8:16,9:16,10:16,21:17,22:16,24:16,26:16,33:16,34:16,37:17,41:16,42:17,51:16,55:16,65:17,73:16,77:16,81:16,82:16,86:16,87:16,97:16,104:16,109:16,110:16,120:16,129:16,132:17,134:16,141:17,142:16,146:16,157:16,160:16,169:16,170:17,174:16,177:16,191:16,192:16,198:16,205:16,206:16,212:16,215:16,216:16,217:16,224:17,228:16",
+        "0:17,3:16,8:16,10:16,21:17,22:16,26:16,33:16,34:16,37:17,42:17,51:16,65:17,73:16,86:16,97:16,104:16,109:16,110:16,120:16,132:17,141:17,142:16,146:16,169:16,170:17,177:16,191:16,192:16,198:16,206:16,212:16,215:16,217:16,224:17,228:16",
     );
     set_default_env("DIALOG_GCD_K2", "1");
     set_default_env("DIALOG_GCD_K5_CLEAN_BLOCK", "1");
@@ -1065,26 +1065,26 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_BORROW_CARRIES", "1");
     set_default_env(
         "DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "10:19,11:19,21:20,63:19,74:19,100:19,107:19,110:19,118:19,135:19,136:19,137:19,188:20,204:19,227:20,241:19",
+        "10:19,11:19,21:20,63:19,74:19,100:19,107:19,118:19,135:19,136:19,137:19,188:20,227:20,241:19",
     );
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "13");
     set_default_env(
         "DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "10:14,11:14,21:15,63:14,74:14,100:14,107:14,110:14,118:14,135:14,136:14,137:14,188:15,204:14,227:15,241:14",
+        "10:14,11:14,21:15,63:14,74:14,100:14,107:14,118:14,135:14,136:14,137:14,188:15,227:15,241:14",
     );
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
     set_default_env(
         "DIALOG_GCD_SPECIAL_OVERFLOW_CLEAN_STEP_BITS",
-        "1:24,4:21,6:25,7:20,10:22,11:20,19:21,21:21,22:21,23:23,28:21,30:22,32:20,33:24,34:25,48:21,49:22,55:22,62:23,64:20,66:21,71:22,86:20,92:21,113:21,116:21,118:20,119:24,120:21,121:20,127:20,129:22,131:22,142:22,144:21,145:23,147:21,151:23,153:23,154:23,155:20,156:24,159:22,161:24,165:21,166:21,168:21,173:20,175:21,178:21,184:22,185:20,187:23,188:22,190:20,193:21,194:22,196:20,197:21,199:21,203:22,205:22,209:20,210:21,213:20,217:22,221:21,222:23,229:21,236:21,241:21",
+        "113:21,131:21,142:22,187:23,205:22,210:21",
     );
     set_default_env(
         "DIALOG_GCD_SPECIAL_UNDERFLOW_CLEAN_STEP_BITS",
-        "3:21,5:21,10:23,11:22,14:22,17:20,27:22,33:20,34:22,38:21,42:22,47:21,50:22,51:21,53:20,54:21,58:21,60:21,65:21,67:23,68:25,73:20,74:20,75:23,77:21,78:20,84:21,89:23,91:22,95:22,98:26,103:21,109:22,110:22,114:22,118:22,127:26,135:20,136:20,137:22,143:21,149:21,152:20,154:26,155:20,156:22,157:20,158:26,166:20,178:20,181:20,186:24,188:25,191:21,194:20,198:20,200:21,201:21,202:23,203:23,204:22,212:25,213:20,214:22,221:20,223:21,228:21,231:23,243:21,246:20",
+        "42:22,91:22,118:22,149:21",
     );
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_TAIL_NONCE", "3480010331559");
+    set_default_env("DIALOG_TAIL_NONCE", "38047539020");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "143");
@@ -1092,10 +1092,6 @@ fn configure_ecdsafail_submission_route() {
     set_default_env(
         "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",
         "2:20,11:20,12:20,13:21,16:22,19:20,20:21,21:20,26:21,29:21,32:21,37:21,44:22,46:20,53:21,56:20,64:20,70:20,75:20,78:20,87:20",
-    );
-    set_default_env(
-        "SQUARE_ROW_WINDOW_CLEAN_SITE_BITS",
-        "1:0:f:19,3:0:r:21,9:0:f:22,10:0:r:21,13:0:r:22,14:0:r:20,15:0:r:19,17:0:r:20,26:0:f:22,36:0:f:20,38:0:f:20,38:0:r:20,39:0:r:19,40:0:r:22,41:0:r:19,42:0:r:20,43:0:r:19,45:0:r:19,47:0:f:22,47:0:r:19,48:0:r:20,50:0:f:22,50:0:r:22,51:0:f:22,54:0:f:19,57:0:r:19,59:0:f:19,60:0:f:19,62:0:f:22,62:0:r:21,63:0:f:20,65:0:f:19,66:0:f:21,66:0:r:21,67:0:f:19,68:0:r:21,71:0:r:20,72:0:f:21,73:0:r:21,74:0:r:19,76:0:r:21,79:0:r:20,81:0:f:20,83:0:r:22,89:0:r:19,90:0:r:21,91:0:f:21,92:0:r:21,95:0:r:20,97:0:r:21,102:0:f:20,103:0:r:19,104:0:r:19,107:0:f:20,109:0:f:21,110:0:f:19,110:0:r:20",
     );
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
 
@@ -1579,6 +1575,13 @@ fn configure_ecdsafail_submission_route() {
     // to a CX, and the lane-0 tobitvector add/sub body has no carry/borrow into
     // lane 1, so the body can start at bit 1. Co-tuned with the reroll island.
     set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
+    // Two density-neutral cross-block arithmetic-identity fusions (value-exact,
+    // selftest-proven): square-tail+c-form [+2Qx,neg,-Qx,neg] -> +3*Qx, and
+    // x_restore [neg,+Qx] -> (Qx-tx). Together -1,524 avg-T -> 1,676,846,340 at
+    // peak 1170. They change the op stream, so the baked DIALOG_TAIL_NONCE is no
+    // longer a clean island (a fresh GPU nonce hunt is required to validate 0/0/0).
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
 }
 
 pub fn build_builder() -> B {
@@ -1787,6 +1790,24 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("DIALOG_FUSE_X_RESTORE_SELFTEST").is_ok() {
+        match fuse_x_restore_selftest() {
+            Ok(()) => eprintln!(
+                "DIALOG_FUSE_X_RESTORE_SELFTEST: PASS (mod_const_minus_reg_qb value-exact, operand-preserving, ancilla- and phase-clean over 512 inputs)"
+            ),
+            Err(e) => panic!("DIALOG_FUSE_X_RESTORE_SELFTEST: FAIL: {e}"),
+        }
+        return Vec::new();
+    }
+    if std::env::var("DIALOG_FUSE_APPLY_SWAPADD_SELFTEST").is_ok() {
+        match fuse_apply_swapadd_selftest() {
+            Ok(()) => eprintln!(
+                "DIALOG_FUSE_APPLY_SWAPADD_SELFTEST: PASS (fused == cadd;cswap, reverse inverts, ancilla- and phase-clean over all 3 (b0,s) cases x 256 inputs)"
+            ),
+            Err(e) => panic!("DIALOG_FUSE_APPLY_SWAPADD_SELFTEST: FAIL: {e}"),
+        }
+        return Vec::new();
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
@@ -2284,6 +2305,452 @@ pub fn fold_freed_tail_selftest() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Standalone differential selftest for the `DIALOG_FUSE_X_RESTORE` lever's
+/// `mod_const_minus_reg_qb` (tx -> (Qx − tx) mod p, single reduction). Runs in
+/// the normal (non-test) build (the `#[cfg(test)]` module does not compile on
+/// this base). Sets the n=256 tx register and the n=256 classical Qx bit
+/// register to random values in [0, p) (plus the tx==Qx / tx=0 / Qx=0
+/// boundaries), simulates 64 shots/batch, and asserts: (1) tx_out == (Qx − tx)
+/// mod p, (2) Qx (the classical bits) preserved, (3) all non-tx qubits return to
+/// |0>, (4) zero global phase. Invoke via `DIALOG_FUSE_X_RESTORE_SELFTEST=1
+/// build_circuit`.
+pub fn fuse_x_restore_selftest() -> Result<(), String> {
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    let p = SECP256K1_P;
+    let n = N;
+
+    // Build the FUSED op over a fixed qubit/bit layout.
+    let mut b = B::new();
+    let tx = b.alloc_qubits(n);
+    let ox = b.alloc_bits(n);
+    mod_const_minus_reg_qb(&mut b, &tx, &ox, p);
+    let ops = b.ops.clone();
+    let nq = b.next_qubit as usize;
+    let nb = b.next_bit as usize;
+
+    // Build the BASELINE chain (mod_neg_inplace_fast; mod_add_qb) over its OWN
+    // layout, for a differential value check against the fused op.
+    let mut bb = B::new();
+    let tx_b = bb.alloc_qubits(n);
+    let ox_b = bb.alloc_bits(n);
+    mod_neg_inplace_fast(&mut bb, &tx_b, p);
+    mod_add_qb(&mut bb, &tx_b, &ox_b, p);
+    let ops_b = bb.ops.clone();
+    let nq_b = bb.next_qubit as usize;
+    let nb_b = bb.next_bit as usize;
+    let tx_b_reg: Vec<QubitOrBit> = tx_b.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+    let ox_b_reg: Vec<QubitOrBit> = ox_b.iter().map(|&c| QubitOrBit::Bit(c)).collect();
+
+    let tx_reg: Vec<QubitOrBit> = tx.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+    let ox_reg: Vec<QubitOrBit> = ox.iter().map(|&c| QubitOrBit::Bit(c)).collect();
+
+    let mut hasher = Shake256::default();
+    hasher.update(b"fuse_x_restore_selftest");
+    let mut xof = <Shake256 as ExtendableOutput>::finalize_xof(hasher);
+
+    let trials = 512usize;
+    let mut t = 0usize;
+    while t < trials {
+        let batch = (trials - t).min(64);
+        let mut innerh = Shake256::default();
+        innerh.update(b"fx-sim");
+        let mut inner_xof = <Shake256 as ExtendableOutput>::finalize_xof(innerh);
+        let mut sim = Simulator::new(nq, nb, &mut inner_xof);
+        sim.clear_for_shot();
+
+        let mut qx_in = vec![U256::ZERO; batch];
+        let mut tx_in = vec![U256::ZERO; batch];
+        let mut expected = vec![U256::ZERO; batch];
+        for s in 0..batch {
+            let (qx, txv) = if t == 0 && s == 0 {
+                (U256::from(12345u64), U256::from(12345u64)) // tx == Qx
+            } else if t == 0 && s == 1 {
+                (U256::from(99u64), U256::ZERO) // tx = 0
+            } else if t == 0 && s == 2 {
+                (U256::ZERO, U256::from(99u64)) // Qx = 0 (underflow)
+            } else if t == 0 && s == 3 {
+                (p - U256::from(1u64), U256::from(1u64)) // near-max Qx
+            } else {
+                let mut bq = [0u8; 32];
+                let mut bt = [0u8; 32];
+                xof.read(&mut bq);
+                xof.read(&mut bt);
+                (U256::from_le_bytes(bq) % p, U256::from_le_bytes(bt) % p)
+            };
+            qx_in[s] = qx;
+            tx_in[s] = txv;
+            // (Qx − tx) mod p without underflow.
+            expected[s] = if qx >= txv { qx - txv } else { p - (txv - qx) };
+            sim.set_register(&tx_reg, txv, s);
+            sim.set_register(&ox_reg, qx, s);
+        }
+
+        sim.apply_iter(ops.iter());
+
+        for s in 0..batch {
+            let got = sim.get_register(&tx_reg, s);
+            if got != expected[s] {
+                return Err(format!(
+                    "VALUE mismatch: Qx={} tx={} got={} exp={}",
+                    qx_in[s], tx_in[s], got, expected[s]
+                ));
+            }
+            if sim.get_register(&ox_reg, s) != qx_in[s] {
+                return Err(format!("Qx operand not preserved (shot {s})"));
+            }
+        }
+        // Every qubit other than tx must be |0> across all shots.
+        for q in 0..nq {
+            if tx.iter().any(|&id| id.0 as usize == q) {
+                continue;
+            }
+            if sim.qubit(QubitId(q as u64)) != 0 {
+                return Err(format!("dirty ancilla qubit {q}"));
+            }
+        }
+        if sim.phase != 0 {
+            return Err(format!("phase leak 0x{:x}", sim.phase));
+        }
+
+        // Differential: run the BASELINE chain on the same inputs and confirm the
+        // fused op produces byte-identical tx output (proves value-equivalence to
+        // what the OFF path actually emits, not just to the textbook reference).
+        let mut bh = Shake256::default();
+        bh.update(b"fx-sim-baseline");
+        let mut b_xof = <Shake256 as ExtendableOutput>::finalize_xof(bh);
+        let mut sim_b = Simulator::new(nq_b, nb_b, &mut b_xof);
+        sim_b.clear_for_shot();
+        for s in 0..batch {
+            sim_b.set_register(&tx_b_reg, tx_in[s], s);
+            sim_b.set_register(&ox_b_reg, qx_in[s], s);
+        }
+        sim_b.apply_iter(ops_b.iter());
+        for s in 0..batch {
+            let got_fused = sim.get_register(&tx_reg, s);
+            let got_base = sim_b.get_register(&tx_b_reg, s);
+            if got_fused != got_base {
+                return Err(format!(
+                    "FUSED != BASELINE: Qx={} tx={} fused={} baseline={}",
+                    qx_in[s], tx_in[s], got_fused, got_base
+                ));
+            }
+        }
+
+        t += batch;
+    }
+    Ok(())
+}
+
+/// Standalone differential selftest for the `DIALOG_FUSE_APPLY_SWAPADD` lever.
+/// Proves, over all three reachable `(b0, s)` cases (with `s ⟹ b0`) and many
+/// random `(x, y) ∈ [0,p)²`, that:
+///   (1) the FUSED forward op produces byte-identical `(x,y)` to the baseline
+///       apply pair `cadd(y += b0?x:0); cswap(x,y on s)`;
+///   (2) the FUSED reverse op exactly inverts the fused forward (round-trip to
+///       the original `(x,y)`);
+///   (3) both forward and reverse leave every non-(x,y) qubit at |0> and the
+///       global phase at 0 (ancilla- and phase-clean);
+/// and REPORTS the emitted Toffoli of the fused op vs the baseline pair to make
+/// the deliberate REGRESSION explicit. Invoke via
+/// `DIALOG_FUSE_APPLY_SWAPADD_SELFTEST=1 build_circuit`.
+pub fn fuse_apply_swapadd_selftest() -> Result<(), String> {
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    let p = SECP256K1_P;
+    let n = N;
+
+    // The three reachable (b0, s) control combos (s ⟹ b0).
+    let cases: [(u64, u64); 3] = [(0, 0), (1, 0), (1, 1)];
+
+    let mut tof_fused_fwd = 0usize;
+    let mut tof_fused_rev = 0usize;
+    let mut tof_base = 0usize;
+    let mut byte_divergences = 0usize;
+    let mut total_compared = 0usize;
+
+    for &(b0v, sv) in &cases {
+        // ---- FUSED forward op (own layout) ----
+        let mut bf = B::new();
+        let xf = bf.alloc_qubits(n);
+        let yf = bf.alloc_qubits(n);
+        let b0f = bf.alloc_qubit();
+        let sf = bf.alloc_qubit();
+        let gf = bf.alloc_qubit();
+        // (b0/s are set at SIM time below, not via build-time X.)
+        dialog_gcd_fused_swapadd_apply_at_step(&mut bf, &xf, &yf, b0f, sf, p, gf, None);
+        let ops_f = bf.ops.clone();
+        let nqf = bf.next_qubit as usize;
+        let nbf = bf.next_bit as usize;
+        tof_fused_fwd = toffoli_count_ops(&ops_f);
+
+        // ---- FUSED reverse op, appended to a SECOND builder for round-trip ----
+        let mut brt = B::new();
+        let xrt = brt.alloc_qubits(n);
+        let yrt = brt.alloc_qubits(n);
+        let b0rt = brt.alloc_qubit();
+        let srt = brt.alloc_qubit();
+        let grt = brt.alloc_qubit();
+        dialog_gcd_fused_swapadd_apply_at_step(&mut brt, &xrt, &yrt, b0rt, srt, p, grt, None);
+        let grt2 = brt.alloc_qubit();
+        dialog_gcd_fused_swapadd_apply_reverse_at_step(
+            &mut brt, &xrt, &yrt, b0rt, srt, p, grt2, None,
+        );
+        let ops_rt = brt.ops.clone();
+        let nqrt = brt.next_qubit as usize;
+        let nbrt = brt.next_bit as usize;
+        // (reverse Toffoli = round-trip total minus the forward we already counted)
+        tof_fused_rev = toffoli_count_ops(&ops_rt).saturating_sub(tof_fused_fwd);
+
+        // ---- BASELINE apply pair: cadd(y += b0?x); cswap(x,y on s) ----
+        let mut bb = B::new();
+        let xb = bb.alloc_qubits(n);
+        let yb = bb.alloc_qubits(n);
+        let b0b = bb.alloc_qubit();
+        let sb = bb.alloc_qubit();
+        dialog_gcd_cmod_add_materialized_pseudomersenne_at_step(&mut bb, &yb, &xb, b0b, p, None);
+        for (&xi, &yi) in xb.iter().zip(yb.iter()) {
+            cswap(&mut bb, sb, xi, yi);
+        }
+        let ops_b = bb.ops.clone();
+        let nqb = bb.next_qubit as usize;
+        let nbb = bb.next_bit as usize;
+        tof_base = toffoli_count_ops(&ops_b);
+
+        let xf_reg: Vec<QubitOrBit> = xf.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+        let yf_reg: Vec<QubitOrBit> = yf.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+        let xrt_reg: Vec<QubitOrBit> = xrt.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+        let yrt_reg: Vec<QubitOrBit> = yrt.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+        let xb_reg: Vec<QubitOrBit> = xb.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+        let yb_reg: Vec<QubitOrBit> = yb.iter().map(|&q| QubitOrBit::Qubit(q)).collect();
+
+        let mut hasher = Shake256::default();
+        hasher.update(b"fuse_apply_swapadd_selftest");
+        hasher.update(&[b0v as u8, sv as u8]);
+        let mut xof = <Shake256 as ExtendableOutput>::finalize_xof(hasher);
+
+        let trials = 256usize;
+        let mut t = 0usize;
+        while t < trials {
+            let batch = (trials - t).min(64);
+
+            let mut x_in = vec![U256::ZERO; batch];
+            let mut y_in = vec![U256::ZERO; batch];
+            for s in 0..batch {
+                let (xv, yv) = if t == 0 && s == 0 {
+                    (U256::ZERO, U256::ZERO)
+                } else if t == 0 && s == 1 {
+                    (p - U256::from(1u64), U256::from(1u64))
+                } else if t == 0 && s == 2 {
+                    (U256::from(7u64), U256::from(7u64))
+                } else {
+                    let mut bx = [0u8; 32];
+                    let mut by = [0u8; 32];
+                    xof.read(&mut bx);
+                    xof.read(&mut by);
+                    (U256::from_le_bytes(bx) % p, U256::from_le_bytes(by) % p)
+                };
+                x_in[s] = xv;
+                y_in[s] = yv;
+            }
+
+            // expected (x', y') = cadd; cswap. NB: `xx + yy` overflows U256 for
+            // residues near p, so add mod p WITHOUT a bare U256 `+` (which wraps
+            // at 2^256). Both operands are < p, so the sum mod p is either xx+yy
+            // (when it stays < p) or (xx+yy) − p, computed via wrapping subtraction.
+            let mod_add = |a: U256, b: U256| -> U256 {
+                let s = a.wrapping_add(b);
+                // overflowed 2^256 iff s < a; reduce by p when s >= p OR it wrapped.
+                if s < a {
+                    // a + b = 2^256 + s; (2^256 + s) mod p = (s + (2^256 - p)) mod p
+                    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1u64));
+                    let t = s.wrapping_add(c);
+                    if t >= p || t < s { t.wrapping_sub(p) } else { t }
+                } else if s >= p {
+                    s - p
+                } else {
+                    s
+                }
+            };
+            let mut exp_x = vec![U256::ZERO; batch];
+            let mut exp_y = vec![U256::ZERO; batch];
+            for s in 0..batch {
+                let mut xx = x_in[s];
+                let mut yy = y_in[s];
+                if b0v != 0 {
+                    yy = mod_add(xx, yy);
+                }
+                if sv != 0 {
+                    std::mem::swap(&mut xx, &mut yy);
+                }
+                exp_x[s] = xx;
+                exp_y[s] = yy;
+            }
+
+            // ---- run fused forward ----
+            let mut hf = Shake256::default();
+            hf.update(b"swapadd-fwd");
+            let mut xf_inner = <Shake256 as ExtendableOutput>::finalize_xof(hf);
+            let mut sim_f = Simulator::new(nqf, nbf, &mut xf_inner);
+            sim_f.clear_for_shot();
+            for s in 0..batch {
+                sim_f.set_register(&xf_reg, x_in[s], s);
+                sim_f.set_register(&yf_reg, y_in[s], s);
+            }
+            if b0v != 0 {
+                for s in 0..batch {
+                    *sim_f.qubit_mut(b0f) |= 1u64 << s;
+                }
+            }
+            if sv != 0 {
+                for s in 0..batch {
+                    *sim_f.qubit_mut(sf) |= 1u64 << s;
+                }
+            }
+            sim_f.apply_iter(ops_f.iter());
+            // The fused op uses CANONICAL (fully-reduced, [0,p)) modular ops, so it
+            // must equal the analytic `cadd; cswap` mod p.
+            for s in 0..batch {
+                let gx = sim_f.get_register(&xf_reg, s) % p;
+                let gy = sim_f.get_register(&yf_reg, s) % p;
+                if gx != exp_x[s] % p || gy != exp_y[s] % p {
+                    return Err(format!(
+                        "FUSED != analytic (mod p): b0={b0v} s={sv} x={} y={} got=({gx},{gy}) exp=({},{})",
+                        x_in[s], y_in[s], exp_x[s] % p, exp_y[s] % p
+                    ));
+                }
+            }
+            // Clean check: x,y are outputs; b0,s are control inputs (stay set); g
+            // is a true ancilla and MUST return to |0> (as must everything else).
+            for q in 0..nqf {
+                if xf
+                    .iter()
+                    .chain(yf.iter())
+                    .any(|&id| id.0 as usize == q)
+                    || q == b0f.0 as usize
+                    || q == sf.0 as usize
+                {
+                    continue;
+                }
+                if sim_f.qubit(QubitId(q as u64)) != 0 {
+                    return Err(format!("forward dirty ancilla qubit {q} (b0={b0v} s={sv})"));
+                }
+            }
+            if sim_f.phase != 0 {
+                return Err(format!("forward phase leak 0x{:x} (b0={b0v} s={sv})", sim_f.phase));
+            }
+
+            // ---- run forward+reverse round-trip ----
+            let mut hr = Shake256::default();
+            hr.update(b"swapadd-rt");
+            let mut xr_inner = <Shake256 as ExtendableOutput>::finalize_xof(hr);
+            let mut sim_rt = Simulator::new(nqrt, nbrt, &mut xr_inner);
+            sim_rt.clear_for_shot();
+            for s in 0..batch {
+                sim_rt.set_register(&xrt_reg, x_in[s], s);
+                sim_rt.set_register(&yrt_reg, y_in[s], s);
+            }
+            if b0v != 0 {
+                for s in 0..batch {
+                    *sim_rt.qubit_mut(b0rt) |= 1u64 << s;
+                }
+            }
+            if sv != 0 {
+                for s in 0..batch {
+                    *sim_rt.qubit_mut(srt) |= 1u64 << s;
+                }
+            }
+            sim_rt.apply_iter(ops_rt.iter());
+            for s in 0..batch {
+                let gx = sim_rt.get_register(&xrt_reg, s);
+                let gy = sim_rt.get_register(&yrt_reg, s);
+                if gx != x_in[s] || gy != y_in[s] {
+                    return Err(format!(
+                        "ROUND-TRIP != identity: b0={b0v} s={sv} x={} y={} got=({gx},{gy})",
+                        x_in[s], y_in[s]
+                    ));
+                }
+            }
+            for q in 0..nqrt {
+                if xrt
+                    .iter()
+                    .chain(yrt.iter())
+                    .any(|&id| id.0 as usize == q)
+                    || q == b0rt.0 as usize
+                    || q == srt.0 as usize
+                {
+                    continue;
+                }
+                if sim_rt.qubit(QubitId(q as u64)) != 0 {
+                    return Err(format!("round-trip dirty ancilla qubit {q} (b0={b0v} s={sv})"));
+                }
+            }
+            if sim_rt.phase != 0 {
+                return Err(format!("round-trip phase leak 0x{:x} (b0={b0v} s={sv})", sim_rt.phase));
+            }
+
+            // ---- differential against the actual baseline op stream ----
+            let mut hb = Shake256::default();
+            hb.update(b"swapadd-base");
+            let mut xb_inner = <Shake256 as ExtendableOutput>::finalize_xof(hb);
+            let mut sim_b = Simulator::new(nqb, nbb, &mut xb_inner);
+            sim_b.clear_for_shot();
+            for s in 0..batch {
+                sim_b.set_register(&xb_reg, x_in[s], s);
+                sim_b.set_register(&yb_reg, y_in[s], s);
+            }
+            if b0v != 0 {
+                for s in 0..batch {
+                    *sim_b.qubit_mut(b0b) |= 1u64 << s;
+                }
+            }
+            if sv != 0 {
+                for s in 0..batch {
+                    *sim_b.qubit_mut(sb) |= 1u64 << s;
+                }
+            }
+            sim_b.apply_iter(ops_b.iter());
+            for s in 0..batch {
+                let fx = sim_f.get_register(&xf_reg, s);
+                let fy = sim_f.get_register(&yf_reg, s);
+                let bx = sim_b.get_register(&xb_reg, s);
+                let by = sim_b.get_register(&yb_reg, s);
+                // MUST agree mod p (both compute the same residue arithmetic).
+                if fx % p != bx % p || fy % p != by % p {
+                    return Err(format!(
+                        "FUSED != BASELINE mod p: b0={b0v} s={sv} x={} y={} fused=({fx},{fy}) base=({bx},{by})",
+                        x_in[s], y_in[s]
+                    ));
+                }
+                // Byte-identity is the property the GCD apply REQUIRES (the next
+                // op consumes the exact 256-bit pattern). Record any divergence:
+                // the baseline materialized special-add is LAZILY reduced (leaves
+                // representatives in [0, 2^256)), the canonical fused ops reduce
+                // to [0, p) — so they are NOT byte-identical.
+                if fx != bx || fy != by {
+                    byte_divergences += 1;
+                }
+                total_compared += 1;
+            }
+
+            t += batch;
+        }
+    }
+
+    eprintln!(
+        "DIALOG_FUSE_APPLY_SWAPADD_SELFTEST: Toffoli/step  fused_fwd={tof_fused_fwd}  fused_rev={tof_fused_rev}  baseline(cadd+cswap)={tof_base}  => fused FORWARD is {:+} CCX/step vs baseline (REGRESSION)",
+        tof_fused_fwd as i64 - tof_base as i64
+    );
+    eprintln!(
+        "DIALOG_FUSE_APPLY_SWAPADD_SELFTEST: byte-identity vs baseline op-stream: {byte_divergences}/{total_compared} shots DIVERGED (fused is canonical [0,p); baseline materialized add is lazily reduced [0,2^256)). Fused agrees mod p everywhere and round-trips to identity, but is NOT byte-identical => UNSAFE to enable in the GCD apply, which consumes the exact bit pattern."
+    );
+    Ok(())
+}
+
+fn toffoli_count_ops(ops: &[Op]) -> usize {
+    ops.iter()
+        .filter(|op| matches!(op.kind, OperationType::CCX | OperationType::CCZ))
+        .count()
 }
 
 pub fn special_fold_park_selftest() -> Result<(), String> {

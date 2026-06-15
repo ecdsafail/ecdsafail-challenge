@@ -30,6 +30,12 @@ pub(crate) fn round84_emit_fused_square_xtail(
     } else {
         squaring_sub_from_acc_schoolbook_lowq_shift22(b, tx, lam, p);
     }
+    if dialog_fuse_c_form_enabled() {
+        // DIALOG_FUSE_C_FORM: the trailing `[+2·Qx, neg]` here and the c-form's
+        // `[−Qx, neg]` are fused into one `+3·Qx` in emit_dialog_gcd_raw_pa.
+        // Leave tx at the raw square-BODY output (dx − λ²); emit nothing here.
+        return;
+    }
     b.set_phase("round84_fused_square_xtail_add_double_ox");
     mod_add_double_qb(b, tx, ox, p);
     b.set_phase("round84_fused_square_xtail_negate_to_x3");
@@ -1537,13 +1543,22 @@ fn dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
     c_in: QubitId,
     borrowed: &[QubitId],
 ) {
-    let needed = a.len();
+    // Number of top source bits folded in-place via Cuccaro MAJ/UMA (each saves
+    // one live carry lane). Defaults to 0 → byte-identical to baseline.
+    let clean_top = dialog_gcd_apply_regular_ripple_topclean_bits().min(a.len().saturating_sub(1));
+    let needed = a.len() - clean_top;
     let borrowed = &borrowed[..borrowed.len().min(needed)];
     let owned = b.alloc_qubits(needed - borrowed.len());
     let mut carries = Vec::with_capacity(needed);
     carries.extend_from_slice(borrowed);
     carries.extend_from_slice(&owned);
-    cuccaro_add_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    if clean_top > 0 {
+        cuccaro_add_fast_low_to_ext_borrowed_carries_topclean(
+            b, a, acc_ext, c_in, &carries, clean_top,
+        );
+    } else {
+        cuccaro_add_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    }
     b.free_vec(&owned);
 }
 
@@ -1554,13 +1569,20 @@ fn dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
     c_in: QubitId,
     borrowed: &[QubitId],
 ) {
-    let needed = a.len();
+    let clean_top = dialog_gcd_apply_regular_ripple_topclean_bits().min(a.len().saturating_sub(1));
+    let needed = a.len() - clean_top;
     let borrowed = &borrowed[..borrowed.len().min(needed)];
     let owned = b.alloc_qubits(needed - borrowed.len());
     let mut carries = Vec::with_capacity(needed);
     carries.extend_from_slice(borrowed);
     carries.extend_from_slice(&owned);
-    cuccaro_sub_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    if clean_top > 0 {
+        cuccaro_sub_fast_low_to_ext_borrowed_carries_topclean(
+            b, a, acc_ext, c_in, &carries, clean_top,
+        );
+    } else {
+        cuccaro_sub_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
+    }
     b.free_vec(&owned);
 }
 
@@ -2257,6 +2279,67 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_with_clean_scratch
     b.free_vec(&f);
 }
 
+/// FUSED candidate for the apply-phase `cadd(y += b0?x:0); cswap(x,y on s)` pair
+/// (forward). The cswap moves the OLD x into the y register in the `s=1` case (a
+/// genuine content swap), so NO in-place add-only sequence reproduces it — the
+/// only reduction-free reformulation `if s {x←x+y; y←x_new−y} elif b0 {y←x+y}`
+/// needs a reverse-subtract / negate per the (proven, see module-level analysis)
+/// negative. This implementation therefore keeps the literal controlled swap and
+/// just performs the conditional modular add canonically (`cmod_add_qq`, which
+/// fully reduces to [0,p)). It is value-exact MOD P with `cadd; cswap` and is
+/// phase-clean, but it does NOT save Toffoli (a full canonical add + the same
+/// 256-CCX cswap) and is NOT byte-identical to the live lazily-reduced
+/// materialized add — see [`dialog_fuse_apply_swapadd_enabled`] and the selftest.
+///
+/// `g_scratch` is accepted for signature symmetry with the reverse and is left
+/// untouched (the reformulation it was meant for is not viable).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dialog_gcd_fused_swapadd_apply_at_step(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    b0: QubitId,
+    s: QubitId,
+    p: U256,
+    g_scratch: QubitId,
+    step: Option<usize>,
+) {
+    assert_eq!(x.len(), N);
+    assert_eq!(y.len(), N);
+    let _ = (g_scratch, step);
+    // y ← (y + b0?x) mod p, then the literal Fredkin swap on s.
+    b.set_phase("dialog_gcd_fused_swapadd_add");
+    cmod_add_qq(b, y, x, b0, p);
+    b.set_phase("dialog_gcd_fused_swapadd_swap");
+    for (&xi, &yi) in x.iter().zip(y.iter()) {
+        cswap(b, s, xi, yi);
+    }
+}
+
+/// REVERSE mirror of [`dialog_gcd_fused_swapadd_apply_at_step`]: the exact gate-
+/// inverse, equal to the circuit's reverse `cswap(x,y on s); csub(y -= b0?x:0)`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dialog_gcd_fused_swapadd_apply_reverse_at_step(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    b0: QubitId,
+    s: QubitId,
+    p: U256,
+    g_scratch: QubitId,
+    step: Option<usize>,
+) {
+    assert_eq!(x.len(), N);
+    assert_eq!(y.len(), N);
+    let _ = (g_scratch, step);
+    b.set_phase("dialog_gcd_fused_swapadd_reverse_swap");
+    for (&xi, &yi) in x.iter().zip(y.iter()) {
+        cswap(b, s, xi, yi);
+    }
+    b.set_phase("dialog_gcd_fused_swapadd_reverse_sub");
+    cmod_sub_qq(b, y, x, b0, p);
+}
+
 pub(crate) fn emit_dialog_gcd_raw_apply_bitvector(
     b: &mut B,
     dialog_log: &[QubitId],
@@ -2686,8 +2769,17 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
     }
 
     b.set_phase("dialog_gcd_raw_pa_c_ox_minus_rx");
-    mod_sub_qb(b, tx, ox, p);
-    mod_neg_inplace_fast(b, tx, p);
+    if dialog_fuse_c_form_enabled() {
+        // Fused cross-phase identity: the square-tail emitted nothing past the
+        // square body, so tx = dx − λ² here. The original chain
+        //   [+2·Qx, neg] (square-tail) then [−Qx, neg] (here)
+        // equals tx -> tx + 3·Qx mod p (two negs cancel; adds net +3·Qx),
+        // producing c = Qx − Rx directly without the Rx transient.
+        mod_add_triple_qb(b, tx, ox, p);
+    } else {
+        mod_sub_qb(b, tx, ox, p);
+        mod_neg_inplace_fast(b, tx, p);
+    }
     if dialog_gcd_raw_pa_stop_after_c_enabled() {
         return;
     }
@@ -2702,7 +2794,15 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
     mod_sub_qb(b, ty, oy, p);
 
     b.set_phase("dialog_gcd_raw_pa_x_restore");
-    mod_neg_inplace_fast(b, tx, p);
-    mod_add_qb(b, tx, ox, p);
+    if dialog_fuse_x_restore_enabled() {
+        // Single-reduction fusion of the [neg, +Qx] chain into one
+        // constant-minus-register modular op tx -> (Qx − tx) mod p, absorbing the
+        // negation's reduction into the subtract's own underflow fold. Value-exact
+        // (density-neutral) and independent of DIALOG_FUSE_C_FORM, so the two stack.
+        mod_const_minus_reg_qb(b, tx, ox, p);
+    } else {
+        mod_neg_inplace_fast(b, tx, p);
+        mod_add_qb(b, tx, ox, p);
+    }
 }
 

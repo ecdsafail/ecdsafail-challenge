@@ -39,6 +39,59 @@ pub const DIALOG_GCD_RAW_PA_STOP_AFTER_XTAIL_ENV: &str = "DIALOG_GCD_RAW_PA_STOP
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_C_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_C";
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_PAIR2_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_PAIR2";
 
+/// Cross-phase arithmetic-identity fusion of the square-tail `[+2·Qx, neg]` and
+/// the c-formation `[−Qx, neg]` into a single `+3·Qx mod p`. The two `mod_neg`
+/// cancel and the adds net to `+3·Qx`, so the whole chain reduces to
+/// `tx -> tx + 3·Qx mod p` applied to the square-BODY output (tx = dx − λ²),
+/// producing c = Qx − Rx directly without materializing the Rx transient.
+/// Default OFF: knob-unset emits the original 4-op chain byte-identically.
+pub const DIALOG_FUSE_C_FORM_ENV: &str = "DIALOG_FUSE_C_FORM";
+
+pub(crate) fn dialog_fuse_c_form_enabled() -> bool {
+    std::env::var(DIALOG_FUSE_C_FORM_ENV).ok().as_deref() == Some("1")
+}
+
+/// Single-reduction fusion of the dialog-PA x_restore chain `[neg, +Qx]` into one
+/// "constant-minus-register" modular op `tx -> (Qx − tx) mod p`. The baseline
+/// emits `mod_neg_inplace_fast` (one ~255-CCX MAJ-sweep negation + reduction)
+/// followed by `mod_add_qb` (a full vent-add + Solinas correction). Both produce
+/// the same value `(Qx − tx) mod p`, but in TWO reductions. The fused op loads Qx
+/// as a constant (0 CCX), forms `~tx + Qx + 1 = 2^n + (Qx − tx)` with ONE
+/// measurement-Cuccaro add, captures the top bit as the no-underflow flag, applies
+/// ONE conditional Solinas `−c` correction, and uncomputes the flag with one
+/// `cmp_lt`. Exact arithmetic (no truncation) ⟹ density-neutral / nonce-preserving,
+/// and structurally independent of `DIALOG_FUSE_C_FORM` (c-form acts on tx pre-
+/// pair2; x_restore acts on tx post-pair2), so the two stack.
+/// Default OFF: knob-unset emits the original `neg + add` chain byte-identically.
+pub const DIALOG_FUSE_X_RESTORE_ENV: &str = "DIALOG_FUSE_X_RESTORE";
+
+pub(crate) fn dialog_fuse_x_restore_enabled() -> bool {
+    std::env::var(DIALOG_FUSE_X_RESTORE_ENV).ok().as_deref() == Some("1")
+}
+
+/// EXPERIMENTAL / DEFAULT-OFF, DEMONSTRABLE-NEGATIVE lever. In the apply phase
+/// each step runs `cadd(y += b0?x:0)` then `cswap(x,y on s)` with `s = b0_and_b1`
+/// and the structural invariant `s ⟹ b0`. The cswap is a full-256-bit Fredkin
+/// (1 CCX/bit, ~66.7k CCX forward over the walk) that does NOT share work with the
+/// add's gated f-load. The ONLY value-exact reformulation that folds the swap into
+/// the add is, on the reachable `(b0, s)` support {(0,0),(1,0),(1,1)}:
+///   if s:        x ← (x + y) mod p   (y untouched, already = old x → swap target)
+///   elif b0:     y ← (x + y) mod p   (x untouched)
+///   else:        identity
+/// i.e. two controlled modular adds with the acc/addend roles swapped, gated on
+/// `s` and on `g = b0 ^ s` (= b0 & ¬s on the support; 0-Toffoli to synthesise via
+/// two CX). This is byte-exact to `cadd; cswap`, but it replaces ONE materialized
+/// add + ONE 256-CCX cswap with TWO materialized adds — strictly MORE Toffoli
+/// (the second full add ≫ the 256-CCX swap it removes). Shipped ONLY to make the
+/// negative reproducible on the live circuit (and proven value-exact by
+/// `fuse_apply_swapadd_selftest`). Keep OFF — knob-unset emits the original
+/// `cadd; cswap` chain byte-identically.
+pub const DIALOG_FUSE_APPLY_SWAPADD_ENV: &str = "DIALOG_FUSE_APPLY_SWAPADD";
+
+pub(crate) fn dialog_fuse_apply_swapadd_enabled() -> bool {
+    std::env::var(DIALOG_FUSE_APPLY_SWAPADD_ENV).ok().as_deref() == Some("1")
+}
+
 
 pub(crate) fn dialog_gcd_raw_apply_direct_special_add_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_APPLY_DIRECT_SPECIAL_ADD_ENV)
@@ -219,6 +272,23 @@ pub(crate) fn dialog_gcd_apply_final_windowed_fast_blocks() -> Option<usize> {
 
 pub(crate) fn dialog_gcd_apply_final_topclean_bits() -> usize {
     std::env::var("DIALOG_GCD_APPLY_FINAL_TOPCLEAN")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+/// Default-OFF lever (mirror of [`dialog_gcd_apply_final_topclean_bits`] for the
+/// REGULAR per-chunk apply ripple). In the regular (non-final) add+sub ripple,
+/// the borrowed-carries primitive keeps one carry lane live per source bit,
+/// including the top bit (the `acc_ext[n]` carry-out). Returns the number of
+/// top carry lanes to fold in-place via Cuccaro MAJ/UMA (which propagate the
+/// carry through `a[i]` itself rather than a separate ancilla), cutting the
+/// peak live-carry count by that many. Value-exact / reversible: the in-place
+/// MAJ/UMA fold computes the identical sum, just with a different (narrower)
+/// transient ancilla footprint. When unset (`= 0`), the regular ripple is
+/// byte-identical to baseline.
+pub(crate) fn dialog_gcd_apply_regular_ripple_topclean_bits() -> usize {
+    std::env::var("DIALOG_GCD_APPLY_REGULAR_RIPPLE_TOPCLEAN")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0)

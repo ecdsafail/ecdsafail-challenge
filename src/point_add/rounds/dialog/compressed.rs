@@ -88,24 +88,24 @@ const DIALOG_GCD_K5_HEAD11_DATA_WIRES: [usize; 11] =
 const DIALOG_GCD_K5_TAIL3_DATA_WIRES: [usize; 5] = [1, 10, 2, 3, 11];
 const DIALOG_GCD_K5_TAIL3_TOP32_RAW_WIRES: [usize; 9] = [0, 1, 2, 3, 4, 5, 10, 11, 12];
 const DIALOG_GCD_K5_TAIL3_TOP32_STREAM_SCRATCH_WIRES: [usize; 5] = [6, 7, 8, 9, 13];
-const DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT: u8 = 25;
+const DIALOG_GCD_K5_TAIL3_TOP32_CODE_CONSTANT: u8 = 29;
 const DIALOG_GCD_K5_TAIL3_TOP32_ENCODER_ANF: [&[u16]; 5] = [
-    &[1, 2, 4, 32, 34, 64, 128],
-    &[4, 10, 16, 20, 24, 32, 64, 136, 256],
-    &[1, 6, 8, 16, 34, 128],
-    &[6, 32, 64],
-    &[4, 6, 8, 10, 32, 80, 128, 130, 256],
+    &[1, 2, 4, 8, 16, 32, 64, 128, 5, 24],
+    &[1, 4, 8, 16, 32, 64, 256, 18, 34, 264],
+    &[1, 2, 16, 256, 18, 258, 132],
+    &[8, 32, 64, 128, 256, 65],
+    &[16, 256, 34, 72, 80],
 ];
 const DIALOG_GCD_K5_TAIL3_TOP32_DECODER_ANF: [&[u16]; 9] = [
-    &[0, 6, 7, 9, 10, 17, 19, 22, 23, 24, 25, 29, 31],
-    &[0, 2, 7, 8, 10, 14, 16, 19, 24],
-    &[0, 16, 17, 19, 20, 24, 25, 26, 28],
-    &[0, 1, 2, 3, 4, 5, 6, 8, 11, 12, 15, 16, 18, 21, 26, 28],
-    &[0, 3, 5, 6, 7, 8, 10, 11, 12, 14, 15, 16, 17, 18, 20, 21, 25],
-    &[26, 27],
-    &[2, 7, 10, 14, 16, 18, 22, 23, 24],
-    &[1, 6, 7, 8, 9, 10, 16, 18, 19, 20, 27, 28, 29, 30],
-    &[0, 9, 13, 22, 24, 28, 31],
+    &[0, 1, 5, 6, 7, 9, 14, 17, 18, 19, 20, 22, 24, 31],
+    &[4, 6, 7, 9, 10, 14, 16, 17, 18, 21, 22, 24, 27, 28],
+    &[2, 5, 8, 10, 13, 14, 15, 16, 18, 23, 24, 26, 30],
+    &[3, 7, 11, 15, 18, 19, 20, 21, 24, 26, 30],
+    &[0, 1, 3, 5, 6, 8, 9, 11, 12, 16, 18, 20, 23, 24, 25, 27, 28],
+    &[4, 5, 6, 7, 12, 13, 14, 15, 20, 22, 28, 30],
+    &[0, 3, 7, 10, 11, 12, 16, 19, 20, 22, 23, 29],
+    &[1, 3, 5, 6, 8, 9, 11, 12, 16, 20, 22, 23, 24, 25, 26, 29],
+    &[0, 3, 4, 5, 6, 11, 16, 17, 18, 21, 27, 29, 31],
 ];
 pub(crate) const DIALOG_GCD_K5_TAIL3_TOP32_SUPPORT: [u16; 32] = [
     0x124, 0x125, 0x12b, 0x129, 0x128, 0x12f, 0x12d, 0x14b,
@@ -235,6 +235,29 @@ fn dialog_gcd_k5_fable_wire(data: &[QubitId; 13], ancilla: QubitId, wire: usize)
     }
 }
 
+fn dialog_gcd_k5_codec_measured_discharge_enabled() -> bool {
+    // Measured phase-discharge of the FABLE-codec scratch ancilla.
+    //
+    // The codec ancilla (wire 13) is a transient AND scratch: across the gate
+    // list it is touched only by two symmetric compute/uncompute CCX triples
+    //   Ccx(7,8,13) ... Ccx(13,9,4) ... Ccx(7,8,13)
+    //   Ccx(4,6,13) ... Ccx(13,11,10) ... Ccx(4,6,13)
+    // so it strictly alternates 0 -> (cA & cB) -> 0. Each "uncompute" CCX (the
+    // one that returns the ancilla to |0>) clears an ancilla holding the clean
+    // basis value (cA & cB) computed by the matching prior CCX. That is exactly
+    // the Gidney measurement-AND-uncompute precondition, so it can be replaced
+    // by `hmr(anc, m); cz_if(cA, cB, m)` (0 Toffoli, value- and phase-exact).
+    //
+    // The decision keys off the runtime ancilla dirty-state (not gate index),
+    // so it is correct in all four contexts: compress/decompress x forward/
+    // reverse iteration. Default OFF: knob unset is byte-identical baseline.
+    dialog_gcd_k5_clean_block_enabled()
+        && std::env::var("DIALOG_GCD_K5_CODEC_MEASURED_DISCHARGE")
+            .ok()
+            .as_deref()
+            == Some("1")
+}
+
 fn dialog_gcd_k5_emit_fable_gate(
     b: &mut B,
     data: &[QubitId; 13],
@@ -255,12 +278,65 @@ fn dialog_gcd_k5_emit_fable_gate(
     }
 }
 
+// Emit one codec gate, tracking the ancilla (wire 13) dirty-state so that the
+// "uncompute" CCX on the ancilla (the one that returns it to |0>) is replaced
+// by a measured phase-discharge. `anc_dirty` is false when the ancilla holds
+// |0>, true when it holds a pending AND value.
+fn dialog_gcd_k5_emit_fable_gate_measured(
+    b: &mut B,
+    data: &[QubitId; 13],
+    ancilla: QubitId,
+    gate: DialogGcdK5FableGate,
+    anc_dirty: &mut bool,
+) {
+    match gate {
+        DialogGcdK5FableGate::Ccx(a, c, t) if t == 13 => {
+            // CCX targeting the ancilla: either a compute (anc 0 -> cA&cB) or an
+            // uncompute (anc cA&cB -> 0). Controls a,c are pure-data wires
+            // (never the ancilla) and are not modified between the matching
+            // compute and uncompute, so cz_if on the current control qubits is
+            // value-exact.
+            let ctrl_a = dialog_gcd_k5_fable_wire(data, ancilla, a);
+            let ctrl_c = dialog_gcd_k5_fable_wire(data, ancilla, c);
+            if *anc_dirty {
+                // Uncompute: ancilla holds (ctrl_a & ctrl_c). Discharge by
+                // measurement instead of emitting the clearing CCX. The cz_if
+                // cancels the measurement phase kickback (phase-exact); the
+                // ancilla qubit is reset to |0> by hmr and reusable.
+                let m = b.alloc_bit();
+                b.hmr(ancilla, m);
+                b.cz_if(ctrl_a, ctrl_c, m);
+                *anc_dirty = false;
+            } else {
+                // Compute: emit the CCX that loads (ctrl_a & ctrl_c) into anc.
+                b.ccx(ctrl_a, ctrl_c, ancilla);
+                *anc_dirty = true;
+            }
+        }
+        other => dialog_gcd_k5_emit_fable_gate(b, data, ancilla, other),
+    }
+}
+
 fn dialog_gcd_k5_emit_fable_codec(
     b: &mut B,
     data: &[QubitId; 13],
     ancilla: QubitId,
     inverse: bool,
 ) {
+    if dialog_gcd_k5_codec_measured_discharge_enabled() {
+        let mut anc_dirty = false;
+        if inverse {
+            for &gate in DIALOG_GCD_K5_FABLE_GATES.iter().rev() {
+                dialog_gcd_k5_emit_fable_gate_measured(b, data, ancilla, gate, &mut anc_dirty);
+            }
+        } else {
+            for &gate in DIALOG_GCD_K5_FABLE_GATES {
+                dialog_gcd_k5_emit_fable_gate_measured(b, data, ancilla, gate, &mut anc_dirty);
+            }
+        }
+        debug_assert!(!anc_dirty, "codec ancilla left dirty after measured discharge");
+        return;
+    }
     if inverse {
         for &gate in DIALOG_GCD_K5_FABLE_GATES.iter().rev() {
             dialog_gcd_k5_emit_fable_gate(b, data, ancilla, gate);
@@ -3969,6 +4045,27 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_block_lifecycle
                 b.reacquire_vec(scale_released_code);
             }
 
+            if dialog_fuse_apply_swapadd_enabled() {
+                // DIALOG_FUSE_APPLY_SWAPADD (default OFF): value-exact fused
+                // replacement of `cadd; cswap`. DELIBERATE Toffoli REGRESSION —
+                // shipped only to make the negative reproducible (the cswap's
+                // content-move is irreducible). knob-OFF skips this entirely.
+                b.set_phase("dialog_gcd_compressed_block_apply_swapadd");
+                let g = b.alloc_qubit();
+                dialog_gcd_fused_swapadd_apply_at_step(b, x, y, b0, b0_and_b1, p, g, Some(step));
+                b.free(g);
+                if stream_tail3 {
+                    let slot_raw = dialog_gcd_k5_tail3_top32_slot_raw(raw, slot);
+                    dialog_gcd_k5_tail3_top32_toggle_slot_raw_from_code(
+                        b,
+                        compressed_block,
+                        raw,
+                        slot,
+                    );
+                    b.free_vec(&slot_raw);
+                }
+                continue;
+            }
             b.set_phase("dialog_gcd_compressed_block_apply_cadd");
             if dialog_gcd_raw_apply_materialized_special_add_enabled() {
                 let owned_clean_scratch = if inplace_raw {
@@ -4231,6 +4328,16 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
                 raw[2 * slot + 1]
             };
 
+            if dialog_fuse_apply_swapadd_enabled() {
+                // DIALOG_FUSE_APPLY_SWAPADD reverse mirror (default OFF). Exact
+                // gate-inverse of the forward fused op; replaces `cswap; csub`.
+                b.set_phase("dialog_gcd_compressed_block_apply_reverse_swapadd");
+                let g = b.alloc_qubit();
+                dialog_gcd_fused_swapadd_apply_reverse_at_step(
+                    b, x, y, b0, b0_and_b1, p, g, Some(step),
+                );
+                b.free(g);
+            } else {
             b.set_phase("dialog_gcd_compressed_block_apply_reverse_cswap");
             for (&xi, &yi) in x.iter().zip(y.iter()) {
                 cswap(b, b0_and_b1, xi, yi);
@@ -4265,6 +4372,7 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_apply_bitvector_reverse_exact_b
             } else {
                 cmod_sub_qq_lowq(b, y, x, b0, p);
             }
+            } // end DIALOG_FUSE_APPLY_SWAPADD else (reverse cswap; csub)
 
             if !scale_released_code.is_empty() {
                 b.set_phase("dialog_gcd_compressed_block_apply_reverse_scale_release");

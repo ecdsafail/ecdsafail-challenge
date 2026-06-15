@@ -366,6 +366,149 @@ pub(crate) fn mod_add_double_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U
     unload_bits(b, &a, bits);
 }
 
+/// acc := acc + 3*bits mod p, for the classical bit register `bits`.
+///
+/// Cross-phase fusion target for `DIALOG_FUSE_C_FORM`: the dialog-PA square-tail
+/// (`+2·Qx; neg`) followed by the c-formation (`−Qx; neg`) is algebraically the
+/// single map `tx -> tx + 3·Qx mod p` (the two negs cancel; the adds net +3·Qx).
+/// This emits that map directly, skipping the materialization of the Rx
+/// transient that the original 4-op chain produces between the two negs.
+///
+/// Construction (all value-exact, same vent primitives as the rest of the tail):
+///   a = load(bits)              (= Qx)
+///   d = copy(a)                 (= Qx)            via CX
+///   d := 2·d mod p              (= 2·Qx)
+///   a := (a + d) mod p          (= 3·Qx)
+///   acc := (acc + a) mod p      (the +3·Qx)
+///   a := (a − d) mod p          (= Qx, restored)
+///   d := d/2 mod p              (= Qx)
+///   d := d ⊕ a  -> 0; free d                      via CX  (a == d == Qx here)
+///   unload(a, bits)
+pub(crate) fn mod_add_triple_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
+    let n = bits.len();
+    let a = load_bits(b, bits);
+    // d = copy of a (= Qx) via Clifford CX.
+    let d = b.alloc_qubits(n);
+    for i in 0..n {
+        b.cx(a[i], d[i]);
+    }
+    // d := 2·Qx via the cheap secp256k1 double walk (no expensive correction).
+    mod_double_inplace_fast(b, &d, p);
+    // acc := acc + 2·Qx + Qx = acc + 3·Qx, using two vent-adds (matching the
+    // baseline tail's one vent-add + one vent-sub Toffoli budget) and dropping
+    // the two measurement-Cuccaro negs of the original chain.
+    mod_add_qq_vent(b, acc, &d, p);
+    mod_add_qq_vent(b, acc, &a, p);
+    // Uncompute d back to 0 (halve -> Qx, then CX-uncopy) and unload a.
+    mod_halve_inplace_fast(b, &d, p);
+    for i in 0..n {
+        b.cx(a[i], d[i]);
+    }
+    b.free_vec(&d);
+    unload_bits(b, &a, bits);
+}
+
+/// `tx := (Qx − tx) mod p`, where `Qx` is the classical bit register `bits` and
+/// `tx ∈ [0, p)`. Single-reduction "constant-minus-register" fusion of the
+/// dialog-PA x_restore chain `mod_neg_inplace_fast(tx); mod_add_qb(tx, Qx)`
+/// (`tx -> (Qx − tx) mod p` in TWO reductions) into ONE reduction.
+///
+/// Construction (mirrors `mod_add_qq_vent`'s low-peak primitive budget — one
+/// clean Cuccaro add into an extended register, one vented conditional Solinas
+/// `−c`, one slow clean `cmp_lt` flag uncompute — but with the constant `Qx` as
+/// the minuend, kept live as the uncompute operand exactly like `mod_add_qq_vent`
+/// keeps its addend `a`). All gates are X/CX/CCX or vent (no fresh n-wide carry
+/// register, no measurement), so the peak matches the vent add and the result is
+/// phase-clean / `emit_inverse`-safe:
+///   a = load(bits)               (= Qx, n-bit, preserved throughout)
+///   tx := ~tx  (X-all, n bits)   (= 2^n − 1 − tx_orig)
+///   tx_ext := ~tx + Qx + 1       (= 2^n + (Qx − tx_orig)), carry → tx_ext[n]
+///   flag := tx_ext[n]            (= 1 iff Qx ≥ tx_orig, i.e. no underflow)
+///   clear tx_ext[n]              (drop the 2^n)
+///   if flag == 0 (Qx < tx_orig): tx_low −= c    (Solinas +p fold: −c on low n)
+///   uncompute flag: flag == NOT(Qx < tx_final)  (cmp_lt(Qx, tx_final))
+///   unload(a, bits)
+/// Both branches leave tx_low ∈ [0, p) holding (Qx − tx_orig) mod p exactly; the
+/// reduction is value-exact (no truncation) ⟹ density-neutral / nonce-preserving.
+pub(crate) fn mod_const_minus_reg_qb(b: &mut B, tx: &[QubitId], bits: &[BitId], p: U256) {
+    let n = tx.len();
+    assert_eq!(n, bits.len());
+    debug_assert_eq!(n, 256);
+
+    // Qx as an n-bit register (preserved for the flag uncompute below). Build an
+    // extended (n+1)-wide view of it for use as vent dirty scratch (top = 0).
+    let a = load_bits(b, bits);
+    let (a_ext, a_ovf) = ext_reg(b, &a);
+
+    let (tx_ext, tx_ovf) = ext_reg(b, tx);
+
+    // Step 1: ~tx over the low n bits (X is free in the metric). tx_ext now holds
+    // (2^n − 1 − tx_orig) in [0, 2^n), top bit 0.
+    for i in 0..n {
+        b.x(tx_ext[i]);
+    }
+
+    // Step 2: tx_ext := ~tx + Qx + 1, capturing the carry into tx_ext[n].
+    //   = (2^n − 1 − tx_orig) + Qx + 1 = 2^n + (Qx − tx_orig).
+    // The +1 is the |1> carry-in to the clean MAJ/UMA sweep, which restores it to
+    // |1>; X it back to |0> before freeing. `a` is preserved.
+    let cin = b.alloc_qubit();
+    b.x(cin);
+    cuccaro_add_low_to_ext_clean(b, &a, &tx_ext, cin);
+    b.x(cin);
+    b.free(cin);
+
+    // Step 3: flag := tx_ext[n] (= 1 iff Qx ≥ tx_orig). Clear the top bit (drop
+    // the 2^n): in the flag=1 case tx_low = Qx − tx_orig; in the flag=0 case
+    // tx_low = 2^n + (Qx − tx_orig) with Qx − tx_orig ∈ (−p, 0).
+    let flag = b.alloc_qubit();
+    b.cx(tx_ovf, flag);
+    b.cx(flag, tx_ovf);
+
+    // Step 4: underflow correction. If flag == 0 (Qx < tx_orig), the low register
+    // holds 2^n + (Qx − tx_orig) and the wanted result is that minus c (= the +p
+    // Solinas fold, since p = 2^n − c). Conditional subtract of c under !flag,
+    // vented onto a_ext (= Qx) as dirty scratch (+2 clean), same as the
+    // conditional `−c` in mod_add_qq_vent. c = 2^256 − p fits in c_low (64 bits).
+    let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
+    let c_low = c.as_limbs()[0];
+    let n1 = tx_ext.len();
+    b.x(flag);
+    {
+        let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
+        venting::cisub_dirty_2clean_classical(
+            b,
+            &tx_ext,
+            &a_ext[..n1 - 2],
+            &q_clean2,
+            c_low,
+            flag,
+        );
+        b.free(q_clean2[0]);
+        b.free(q_clean2[1]);
+    }
+    b.x(flag);
+
+    // Step 5: uncompute flag. tx_final = (Qx − tx_orig) mod p ∈ [0, p):
+    //   flag=1: tx_final = Qx − tx_orig ≤ Qx;
+    //   flag=0: tx_final = Qx − tx_orig + p > Qx.
+    // So flag == NOT(Qx < tx_final), i.e. flag == ~G for G := (Qx < tx_final).
+    // To drive flag → 0: x(flag) sends F → ~F == G, then cmp_lt_into XORs G,
+    // leaving G ⊕ G == 0 (same "flag = NOT(cmp)" uncompute pattern as
+    // mod_sub_qq_fast — single leading X, no trailing X). Qx (= a) is still live.
+    // Slow clean comparator (no carry register / no measurement), as in
+    // mod_add_qq_vent's flag uncompute.
+    b.x(flag);
+    cmp_lt_into(b, &a, &tx_ext[..n], flag);
+    b.free(flag);
+
+    unext_reg(b, tx_ovf);
+    unext_reg(b, a_ovf);
+    let _ = (tx_ext, a_ext);
+
+    unload_bits(b, &a, bits);
+}
+
 pub(crate) fn mod_sub_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
     // acc -= bits mod p. Uses fast mod_sub_qq via neg+add+neg.
     let a = load_bits(b, bits);
