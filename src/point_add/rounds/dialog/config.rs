@@ -39,7 +39,6 @@ pub const DIALOG_GCD_RAW_PA_STOP_AFTER_XTAIL_ENV: &str = "DIALOG_GCD_RAW_PA_STOP
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_C_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_C";
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_PAIR2_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_PAIR2";
 
-
 pub(crate) fn dialog_gcd_raw_apply_direct_special_add_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_APPLY_DIRECT_SPECIAL_ADD_ENV)
         .ok()
@@ -195,7 +194,10 @@ pub(crate) fn dialog_gcd_apply_final_lowq_enabled() -> bool {
 /// Hmr, so the Hmr's `h·rng` phase is cancelled by `cz_if(a, b, ·)`'s
 /// `(a&b)·rng`. Value-identical: the Hmr forces `h -> 0` just like the CCX did.
 pub(crate) fn dialog_gcd_fused_hclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_HCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_HCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 /// Default-OFF lever: in the apply-phase fused double_y, uncompute the `d`
@@ -212,7 +214,10 @@ pub(crate) fn dialog_gcd_fused_hclear_measured_enabled() -> bool {
 /// (double_y) only — in halve_y the matching `d` clear reads y[1] AFTER the
 /// csub fold has overwritten it, so the set-controls are no longer live there.
 pub(crate) fn dialog_gcd_fused_dclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_DCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_DCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 /// Default-OFF lever: in the apply-phase fused double_y, uncompute overflow
@@ -221,14 +226,20 @@ pub(crate) fn dialog_gcd_fused_dclear_measured_enabled() -> bool {
 /// `ovf2 == s2 & y[0]` at cleanup. Phase correction applies the same mux/AND
 /// expression against the Hmr bit, saving the stock CCX clears.
 pub(crate) fn dialog_gcd_fused_ovfclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 /// Default-OFF lever: in fused halve_y cleanup, uncompute `e` and `d` with
 /// Hmr + phase feedback from their current live overflow expressions:
 /// `e == (s2 ? ovf2 : ovf1)` and `d == s2 & ovf1`.
 pub(crate) fn dialog_gcd_fused_halve_edclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_HALVE_EDCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_HALVE_EDCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(crate) fn dialog_gcd_apply_final_windowed_fast_blocks() -> Option<usize> {
@@ -287,7 +298,6 @@ pub(crate) fn dialog_gcd_apply_replay_swap_host_enabled() -> bool {
         == Some("1")
 }
 
-
 pub(crate) fn dialog_gcd_raw_tobitvector_materialized_sub_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_TOBITVECTOR_MATERIALIZED_SUB_ENV)
         .ok()
@@ -305,10 +315,7 @@ pub(crate) fn dialog_gcd_raw_tobitvector_materialized_sub_enabled() -> bool {
 /// if absent the branch falls back to `cucc_*_ctrl_lowq`. Borrowed (never
 /// fresh-allocated) so the peak does not grow.
 pub(crate) fn dialog_gcd_ctrl_body_vented_enabled() -> bool {
-    std::env::var("DIALOG_GCD_CTRL_BODY_VENTED")
-        .ok()
-        .as_deref()
-        != Some("0")
+    std::env::var("DIALOG_GCD_CTRL_BODY_VENTED").ok().as_deref() != Some("0")
 }
 
 pub(crate) fn dialog_gcd_raw_tobitvector_variable_width_enabled() -> bool {
@@ -324,7 +331,6 @@ pub(crate) fn dialog_gcd_raw_tobitvector_borrow_future_log_carries_enabled() -> 
         .as_deref()
         == Some("1")
 }
-
 
 pub(crate) fn dialog_gcd_raw_ipmul_terminal_reuse_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE_ENV)
@@ -389,14 +395,12 @@ pub(crate) fn dialog_gcd_raw_pa_stop_after_pair2_enabled() -> bool {
         == Some("1")
 }
 
-
 pub(crate) const DIALOG_GCD_MAX_ITERATIONS: usize = 402;
 pub(crate) const DIALOG_GCD_RAW_LOG_BITS: usize = 2 * DIALOG_GCD_MAX_ITERATIONS;
 pub(crate) const DIALOG_GCD_SPECIAL_ADD_LSBS: usize = 73;
 pub(crate) const DIALOG_GCD_DEFAULT_COMPARE_BITS: usize = 77;
 pub(crate) const DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE: usize = 3;
 pub(crate) const DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS: usize = 5;
-
 
 pub(crate) fn dialog_gcd_compressed_sidecar_log_enabled() -> bool {
     std::env::var(DIALOG_GCD_COMPRESSED_SIDECAR_LOG_ENV)
@@ -426,10 +430,7 @@ pub(crate) fn dialog_gcd_k2_enabled() -> bool {
 
 pub(crate) fn dialog_gcd_k5_clean_block_enabled() -> bool {
     dialog_gcd_k2_enabled()
-        && std::env::var("DIALOG_GCD_K5_CLEAN_BLOCK")
-            .ok()
-            .as_deref()
-            == Some("1")
+        && std::env::var("DIALOG_GCD_K5_CLEAN_BLOCK").ok().as_deref() == Some("1")
 }
 
 /// Compressed bits per transcript block. K=2 packs an extra `shift2` bit per step
@@ -578,14 +579,10 @@ pub(crate) fn dialog_gcd_odd_u_lowbit_fastpath_enabled() -> bool {
         == Some("1")
 }
 
-
 pub(crate) fn dialog_gcd_k2_pair_compress_enabled() -> bool {
     dialog_gcd_k2_enabled()
         && !dialog_gcd_k5_clean_block_enabled()
-        && std::env::var("DIALOG_GCD_K2_PAIR_COMPRESS")
-            .ok()
-            .as_deref()
-            == Some("1")
+        && std::env::var("DIALOG_GCD_K2_PAIR_COMPRESS").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_sidecar_group_size() -> usize {

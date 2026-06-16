@@ -14,9 +14,8 @@
 
 use crate::point_add::{
     dialog_gcd_k5_head11_supports, dialog_gcd_k5_tail3_top32_supports,
-    dialog_gcd_k5_tail6_graph9_supports,
-    DIALOG_GCD_K5_TAIL6_GRAPH_SUPPORT, DIALOG_GCD_K5_TAIL7_SUPPORT,
-    DIALOG_GCD_PA9024_COMPARE_SCHEDULE, N, SECP256K1_P,
+    dialog_gcd_k5_tail6_graph9_supports, DIALOG_GCD_K5_TAIL6_GRAPH_SUPPORT,
+    DIALOG_GCD_K5_TAIL7_SUPPORT, DIALOG_GCD_PA9024_COMPARE_SCHEDULE, N, SECP256K1_P,
 };
 use alloy_primitives::U256;
 use ruint::Uint;
@@ -27,22 +26,58 @@ type U512 = Uint<512, 8>;
 /// Why a GCD factor failed the classical filter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HardReason {
-    WidthOverflow { step: usize },
-    BodyTrimMismatch { step: usize, active_width: usize, body_width: usize },
-    ComparatorMismatch { step: usize },
-    NonConvergence { steps_needed: usize },
-    HeadPairMismatch { pattern: u8 },
-    HeadK5Mismatch { pattern: u16 },
-    TailPairMismatch { pattern: u8 },
-    TailPairCrossMismatch { pattern: u16 },
-    Tail6GraphMismatch { pattern: u32 },
-    Tail6Graph9Mismatch { pattern: u32 },
-    Tail7Mismatch { pattern: u32 },
-    Tail3FixedLastMismatch { digit: u8 },
-    Tail3Top32Mismatch { pattern: u16 },
-    OddTailTripleMismatch { s2_mask: u8 },
-    FusedFoldCarryEscape { step: usize, reverse: bool },
-    SpecialFoldCarryEscape { step: usize, reverse: bool },
+    WidthOverflow {
+        step: usize,
+    },
+    BodyTrimMismatch {
+        step: usize,
+        active_width: usize,
+        body_width: usize,
+    },
+    ComparatorMismatch {
+        step: usize,
+    },
+    NonConvergence {
+        steps_needed: usize,
+    },
+    HeadPairMismatch {
+        pattern: u8,
+    },
+    HeadK5Mismatch {
+        pattern: u16,
+    },
+    TailPairMismatch {
+        pattern: u8,
+    },
+    TailPairCrossMismatch {
+        pattern: u16,
+    },
+    Tail6GraphMismatch {
+        pattern: u32,
+    },
+    Tail6Graph9Mismatch {
+        pattern: u32,
+    },
+    Tail7Mismatch {
+        pattern: u32,
+    },
+    Tail3FixedLastMismatch {
+        digit: u8,
+    },
+    Tail3Top32Mismatch {
+        pattern: u16,
+    },
+    OddTailTripleMismatch {
+        s2_mask: u8,
+    },
+    FusedFoldCarryEscape {
+        step: usize,
+        reverse: bool,
+    },
+    SpecialFoldCarryEscape {
+        step: usize,
+        reverse: bool,
+    },
     ApplyValueMismatch {
         reverse: bool,
         compare_step: Option<usize>,
@@ -78,9 +113,7 @@ pub struct ApplyHazardSummary {
 
 fn widen_u256(value: U256) -> U512 {
     let limbs = value.as_limbs();
-    U512::from_limbs([
-        limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0,
-    ])
+    U512::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0])
 }
 
 fn low_mask_512(bits: usize) -> U512 {
@@ -213,10 +246,8 @@ pub fn square_row_window_cleanup_summary(
                             let required_bits = ((trunc + 1)..=bits)
                                 .find(|&candidate_bits| {
                                     let shift = bits - candidate_bits;
-                                    let candidate_sum =
-                                        extract_512(sum, shift, candidate_bits);
-                                    let candidate_seg =
-                                        extract_512(seg, shift, candidate_bits);
+                                    let candidate_sum = extract_512(sum, shift, candidate_bits);
+                                    let candidate_seg = extract_512(seg, shift, candidate_bits);
                                     (candidate_sum < candidate_seg) == carry_out
                                 })
                                 .unwrap_or(bits);
@@ -291,10 +322,8 @@ pub fn square_row_window_cleanup_summary(
                             let required_bits = ((trunc + 1)..=bits)
                                 .find(|&candidate_bits| {
                                     let shift = bits - candidate_bits;
-                                    let candidate_diff =
-                                        extract_512(diff, shift, candidate_bits);
-                                    let candidate_seg =
-                                        extract_512(seg, shift, candidate_bits);
+                                    let candidate_diff = extract_512(diff, shift, candidate_bits);
+                                    let candidate_seg = extract_512(seg, shift, candidate_bits);
                                     let candidate_not_seg =
                                         low_mask_512(candidate_bits) ^ candidate_seg;
                                     (candidate_not_seg < candidate_diff) == borrow_out
@@ -370,11 +399,10 @@ impl DialogApplyFilterConfig {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&w| w > 0);
-        let fused_fold_step_windows =
-            std::env::var("DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS")
-                .ok()
-                .map(|s| parse_step_map(&s))
-                .unwrap_or_default();
+        let fused_fold_step_windows = std::env::var("DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS")
+            .ok()
+            .map(|s| parse_step_map(&s))
+            .unwrap_or_default();
         let special_fold_step_windows =
             std::env::var("DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS")
                 .ok()
@@ -495,8 +523,10 @@ impl DialogGcdFilterConfig {
         let body_carry_trims = std::env::var("DIALOG_GCD_BODY_CARRY_BAND_TRIMS")
             .ok()
             .and_then(|s| parse_trim_list(&s));
-        let pa9024_compare_schedule =
-            std::env::var("DIALOG_GCD_PA9024_COMPARE_SCHEDULE").ok().as_deref() == Some("1");
+        let pa9024_compare_schedule = std::env::var("DIALOG_GCD_PA9024_COMPARE_SCHEDULE")
+            .ok()
+            .as_deref()
+            == Some("1");
         let pa9024_compare_margin = std::env::var("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -511,39 +541,40 @@ impl DialogGcdFilterConfig {
             .ok()
             .map(|s| parse_step_map(&s))
             .unwrap_or_default();
-        let odd_u_lowbit_fastpath =
-            std::env::var("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH").ok().as_deref() == Some("1");
+        let odd_u_lowbit_fastpath = std::env::var("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH")
+            .ok()
+            .as_deref()
+            == Some("1");
         let k2 = std::env::var("DIALOG_GCD_K2").ok().as_deref() == Some("1");
-        let variable_width =
-            std::env::var("DIALOG_GCD_RAW_TOBITVECTOR_VARIABLE_WIDTH").ok().as_deref() != Some("0");
+        let variable_width = std::env::var("DIALOG_GCD_RAW_TOBITVECTOR_VARIABLE_WIDTH")
+            .ok()
+            .as_deref()
+            != Some("0");
         let raw_tobitvector_materialized_sub =
             std::env::var("DIALOG_GCD_RAW_TOBITVECTOR_MATERIALIZED_SUB")
                 .ok()
                 .as_deref()
                 != Some("0");
-        let tobitvector_cswap_body_trim =
-            std::env::var("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM")
-                .ok()
-                .as_deref()
-                == Some("1");
-        let tobitvector_shift_body_trim =
-            std::env::var("DIALOG_GCD_TOBITVECTOR_SHIFT_BODY_TRIM")
-                .ok()
-                .as_deref()
-                == Some("1");
-        let skip_zero_edge_tobit_fwd_cshift =
-            std::env::var("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT")
+        let tobitvector_cswap_body_trim = std::env::var("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM")
+            .ok()
+            .as_deref()
+            == Some("1");
+        let tobitvector_shift_body_trim = std::env::var("DIALOG_GCD_TOBITVECTOR_SHIFT_BODY_TRIM")
+            .ok()
+            .as_deref()
+            == Some("1");
+        let skip_zero_edge_tobit_fwd_cshift = std::env::var("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT")
+            .ok()
+            .as_deref()
+            == Some("1")
+            || std::env::var("DIALOG_GCD_SKIP_ZERO_EDGE_TOBIT_CSHIFT")
                 .ok()
                 .as_deref()
                 == Some("1")
-                || std::env::var("DIALOG_GCD_SKIP_ZERO_EDGE_TOBIT_CSHIFT")
-                    .ok()
-                    .as_deref()
-                    == Some("1")
-                || std::env::var("DIALOG_GCD_SKIP_ZERO_EDGE_TOBIT_FWD_CSHIFT")
-                    .ok()
-                    .as_deref()
-                    == Some("1");
+            || std::env::var("DIALOG_GCD_SKIP_ZERO_EDGE_TOBIT_FWD_CSHIFT")
+                .ok()
+                .as_deref()
+                == Some("1");
         let width_step_bumps = std::env::var("DIALOG_GCD_WIDTH_STEP_BUMPS")
             .ok()
             .map(|s| parse_step_map(&s))
@@ -553,8 +584,10 @@ impl DialogGcdFilterConfig {
             .map(|s| parse_step_map(&s))
             .unwrap_or_default();
         let k2_force0 = std::env::var("DIALOG_GCD_K2_FORCE0").ok().as_deref() == Some("1");
-        let strict_compare =
-            std::env::var("DIALOG_GCD_FILTER_STRICT_COMPARE").ok().as_deref() == Some("1");
+        let strict_compare = std::env::var("DIALOG_GCD_FILTER_STRICT_COMPARE")
+            .ok()
+            .as_deref()
+            == Some("1");
         let body_carry_trunc_w = std::env::var("DIALOG_GCD_BODY_CARRY_TRUNC_W")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -688,10 +721,7 @@ impl DialogGcdFilterConfig {
 fn body_carry_extra_notch(step: usize) -> usize {
     let mut extra = 0usize;
 
-    let trio_enabled = std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH")
-        .ok()
-        .as_deref()
-        != Some("0");
+    let trio_enabled = std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH").ok().as_deref() != Some("0");
     if trio_enabled {
         let trio_step = std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH_STEP")
             .ok()
@@ -744,10 +774,7 @@ fn parse_trim_list(s: &str) -> Option<Vec<usize>> {
     if s.trim().is_empty() {
         return None;
     }
-    let trims: Vec<usize> = s
-        .split(',')
-        .filter_map(|t| t.trim().parse().ok())
-        .collect();
+    let trims: Vec<usize> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
     if trims.is_empty() {
         None
     } else {
@@ -857,7 +884,10 @@ fn truncated_gcd_step_logged(
 ) -> Result<DialogGcdStepLog, HardReason> {
     let active_width = cfg.active_width(step);
     if (bitlen(*u) > active_width || bitlen(*v) > active_width)
-        && std::env::var("DIALOG_GCD_FILTER_STRICT_WIDTH").ok().as_deref() == Some("1")
+        && std::env::var("DIALOG_GCD_FILTER_STRICT_WIDTH")
+            .ok()
+            .as_deref()
+            == Some("1")
     {
         return Err(HardReason::WidthOverflow { step });
     }
@@ -911,7 +941,10 @@ fn truncated_gcd_step_logged(
                 sub_low_window(*v, *u, body_w)
             };
             if (full_v & window_mask(active_width)) != (trimmed_v & window_mask(active_width))
-                && std::env::var("DIALOG_GCD_FILTER_STRICT_BODY").ok().as_deref() == Some("1")
+                && std::env::var("DIALOG_GCD_FILTER_STRICT_BODY")
+                    .ok()
+                    .as_deref()
+                    == Some("1")
             {
                 return Err(HardReason::BodyTrimMismatch {
                     step,
@@ -940,11 +973,7 @@ fn truncated_gcd_step_logged(
         }
     }
 
-    Ok(DialogGcdStepLog {
-        b0,
-        b0_and_b1,
-        s2,
-    })
+    Ok(DialogGcdStepLog { b0, b0_and_b1, s2 })
 }
 
 fn truncated_gcd_step(
@@ -988,7 +1017,12 @@ fn full_gcd_step(u: &mut U256, v: &mut U256, cfg: &DialogGcdFilterConfig) {
 }
 
 /// Steps until `v == 0` under the full-width transcript, capped at `limit`.
-pub(crate) fn full_gcd_steps_until_zero(mut u: U256, mut v: U256, cfg: &DialogGcdFilterConfig, limit: usize) -> usize {
+pub(crate) fn full_gcd_steps_until_zero(
+    mut u: U256,
+    mut v: U256,
+    cfg: &DialogGcdFilterConfig,
+    limit: usize,
+) -> usize {
     let mut steps = 0usize;
     while !v.is_zero() && steps < limit {
         full_gcd_step(&mut u, &mut v, cfg);
@@ -1168,10 +1202,7 @@ fn tail_pair_codec_mode() -> Option<usize> {
     if std::env::var_os("ISLAND_IGNORE_TAIL_CODEC").is_some() {
         return None;
     }
-    if std::env::var("DIALOG_GCD_TAIL_CROSSBLOCK5")
-        .ok()
-        .as_deref()
-        == Some("1")
+    if std::env::var("DIALOG_GCD_TAIL_CROSSBLOCK5").ok().as_deref() == Some("1")
         && std::env::var("DIALOG_GCD_TAIL_PAIR_DIRECT_APPLY")
             .ok()
             .as_deref()
@@ -1257,11 +1288,7 @@ fn tail6_pattern(log: &[DialogGcdStepLog]) -> u32 {
 }
 
 fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
-    if std::env::var("DIALOG_GCD_K5_HEAD11_CODEC")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("DIALOG_GCD_K5_HEAD11_CODEC").ok().as_deref() == Some("1") {
         if log.len() < 5 {
             return Err(HardReason::HeadK5Mismatch { pattern: 0 });
         }
@@ -1278,11 +1305,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
             return Err(HardReason::HeadK5Mismatch { pattern });
         }
     }
-    if std::env::var("DIALOG_GCD_HEAD_PAIR_CODEC3")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("DIALOG_GCD_HEAD_PAIR_CODEC3").ok().as_deref() == Some("1") {
         if log.len() < 2 {
             return Err(HardReason::HeadPairMismatch { pattern: 0 });
         }
@@ -1306,9 +1329,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         && log.len() % 2 == 1
     {
         let entry = log.last().expect("odd transcript has a final step");
-        let digit = (entry.b0 as u8)
-            | ((entry.b0_and_b1 as u8) << 1)
-            | ((entry.s2 as u8) << 2);
+        let digit = (entry.b0 as u8) | ((entry.b0_and_b1 as u8) << 1) | ((entry.s2 as u8) << 2);
         if !matches!(digit, 1 | 3 | 4 | 5) {
             return Err(HardReason::TailPairMismatch { pattern: digit });
         }
@@ -1322,9 +1343,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         let s2_mask = log[tail..]
             .iter()
             .enumerate()
-            .fold(0u8, |mask, (slot, entry)| {
-                mask | ((entry.s2 as u8) << slot)
-            });
+            .fold(0u8, |mask, (slot, entry)| mask | ((entry.s2 as u8) << slot));
         if s2_mask != 0 {
             return Err(HardReason::OddTailTripleMismatch { s2_mask });
         }
@@ -1352,9 +1371,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
             == Some("1")
     {
         let entry = log.last().expect("tail3 codec requires a final step");
-        let digit = (entry.b0 as u8)
-            | ((entry.b0_and_b1 as u8) << 1)
-            | ((entry.s2 as u8) << 2);
+        let digit = (entry.b0 as u8) | ((entry.b0_and_b1 as u8) << 1) | ((entry.s2 as u8) << 2);
         if digit != 4 {
             return Err(HardReason::Tail3FixedLastMismatch { digit });
         }
@@ -1383,11 +1400,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         }
         return Ok(());
     }
-    if !ignore_tail_codec
-        && std::env::var("DIALOG_GCD_K5_TAIL7_CODEC")
-            .ok()
-            .as_deref()
-            == Some("1")
+    if !ignore_tail_codec && std::env::var("DIALOG_GCD_K5_TAIL7_CODEC").ok().as_deref() == Some("1")
     {
         let pattern = tail7_pattern(log);
         if !DIALOG_GCD_K5_TAIL7_SUPPORT.contains(&pattern) {
@@ -1395,11 +1408,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         }
         return Ok(());
     }
-    if std::env::var("DIALOG_GCD_K5_TAIL_PAIR1")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("DIALOG_GCD_K5_TAIL_PAIR1").ok().as_deref() == Some("1") {
         if !matches!(pattern, 0b100100 | 0b100101) {
             return Err(HardReason::TailPairMismatch { pattern });
         }
@@ -1431,10 +1440,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         if !supported {
             return Err(HardReason::TailPairCrossMismatch { pattern: joint });
         }
-        if std::env::var("DIALOG_GCD_TAIL_CROSSBLOCK5")
-            .ok()
-            .as_deref()
-            == Some("1")
+        if std::env::var("DIALOG_GCD_TAIL_CROSSBLOCK5").ok().as_deref() == Some("1")
             && !matches!(
                 joint,
                 0x924
@@ -1483,14 +1489,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
     {
         if !matches!(
             pattern,
-            0b100100
-                | 0b100101
-                | 0b101001
-                | 0b101011
-                | 0b101000
-                | 0b101101
-                | 0b101111
-                | 0b101100
+            0b100100 | 0b100101 | 0b101001 | 0b101011 | 0b101000 | 0b101101 | 0b101111 | 0b101100
         ) {
             return Err(HardReason::TailPairMismatch { pattern });
         }
@@ -1506,13 +1505,7 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         Some(3)
             if !matches!(
                 pattern,
-                0b011000
-                    | 0b011011
-                    | 0b100100
-                    | 0b100101
-                    | 0b101000
-                    | 0b101001
-                    | 0b101011
+                0b011000 | 0b011011 | 0b100100 | 0b100101 | 0b101000 | 0b101001 | 0b101011
             ) =>
         {
             if pattern == 0b101100
@@ -1548,15 +1541,9 @@ fn check_tail_pair_codec(log: &[DialogGcdStepLog]) -> Result<(), HardReason> {
         Some(4)
             if !dialog_gcd_tail_pair4_wide_enabled_for_filter()
                 && !matches!(
-                pattern,
-                0b011000
-                    | 0b011011
-                    | 0b100100
-                    | 0b100101
-                    | 0b101000
-                    | 0b101001
-                    | 0b101011
-            ) =>
+                    pattern,
+                    0b011000 | 0b011011 | 0b100100 | 0b100101 | 0b101000 | 0b101001 | 0b101011
+                ) =>
         {
             return Err(HardReason::TailPairMismatch { pattern });
         }
@@ -1625,32 +1612,23 @@ fn suffix_lt(a: U256, b: U256, bits: usize) -> bool {
     ((a >> lo) & window_mask(bits)) < ((b >> lo) & window_mask(bits))
 }
 
-fn required_suffix_compare_bits(
-    a: U256,
-    b: U256,
-    current_bits: usize,
-    desired: bool,
-) -> usize {
+fn required_suffix_compare_bits(a: U256, b: U256, current_bits: usize, desired: bool) -> usize {
     ((current_bits + 1)..=N)
         .find(|&bits| suffix_lt(a, b, bits) == desired)
         .unwrap_or(N)
 }
 
 fn fused_fold_delta(y: U256, s2: bool, reverse: bool) -> (U256, bool, bool) {
-    let e = if reverse {
-        bit_at(y, 0)
-    } else {
-        false
-    };
-    let d = if reverse {
-        s2 && bit_at(y, 1)
-    } else {
-        false
-    };
+    let e = if reverse { bit_at(y, 0) } else { false };
+    let d = if reverse { s2 && bit_at(y, 1) } else { false };
     let c = U256::MAX
         .wrapping_sub(SECP256K1_P)
         .wrapping_add(U256::from(1u64));
-    (c * U256::from(e as u64) + (c << 1) * U256::from(d as u64), e, d)
+    (
+        c * U256::from(e as u64) + (c << 1) * U256::from(d as u64),
+        e,
+        d,
+    )
 }
 
 fn fused_double(
@@ -1892,9 +1870,7 @@ fn check_point_add_apply_hazards_with_transcripts(
 ) -> Result<ApplyHazardSummary, HardReason> {
     check_tail_pair_codec(&dx_transcript.log)?;
     check_tail_pair_codec(&c_transcript.log)?;
-    if dx_transcript.terminal_u != U256::from(1u64)
-        || c_transcript.terminal_u != U256::from(1u64)
-    {
+    if dx_transcript.terminal_u != U256::from(1u64) || c_transcript.terminal_u != U256::from(1u64) {
         return Err(HardReason::NonConvergence {
             steps_needed: gcd_cfg.active_iterations + 1,
         });
@@ -2172,7 +2148,9 @@ mod tests {
             16,
         )
         .unwrap();
-        assert!(check_gcd_factor(factor, &cfg9).is_ok() || check_gcd_factor(factor, &cfg9).is_err());
+        assert!(
+            check_gcd_factor(factor, &cfg9).is_ok() || check_gcd_factor(factor, &cfg9).is_err()
+        );
         // Margin 8 tightens step-0 width; many factors overflow earlier.
         let early_w9 = cfg9.active_width(0);
         let early_w8 = cfg8.active_width(0);
