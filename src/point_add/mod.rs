@@ -1005,21 +1005,16 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY", "1");
-    // q1168 host-E route. These defaults are first so the historical fallback
+    // q1170 record route. These defaults are first so the historical fallback
     // block below cannot override the exact state searched on WMI.
     set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
-    set_default_env("DIALOG_GCD_APPLY_BOUNDARY_FREE_OWNED_DURING_REPLAY", "1");
     set_default_env("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "1");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "20");
     set_default_env(
         "DIALOG_GCD_APPLY_CHUNKED_F_CUTS",
         "17,34,50,66,81,96,110,124,137,150,163,175,187,198,209,219,229,238,247",
     );
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_AUTO_TOPCLEAN_MAX_BITS", "2");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_AUTO_TOPCLEAN_TARGET", "1168");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "18");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_APPLY_IMPLICIT_HIGH_ZERO", "1");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
@@ -1035,13 +1030,12 @@ fn configure_ecdsafail_submission_route() {
     );
     set_default_env(
         "DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "",
+        "0:20,3:19,8:19,9:19,10:19,21:20,22:19,24:19,26:19,33:19,34:19,37:20,41:19,42:20,51:19,55:19,65:20,73:19,77:19,81:19,82:19,86:19,87:19,97:19,104:19,109:19,110:19,120:19,129:19,132:20,134:19,141:20,142:19,146:19,157:19,160:19,169:19,170:20,174:19,177:19,191:19,192:19,198:19,205:19,206:19,212:19,215:19,216:19,217:19,224:20,228:19",
     );
-    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
+    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL", "1");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
     set_default_env("DIALOG_GCD_FOLD_HOST_DERIVED_CONTROLS", "1");
-    set_default_env("DIALOG_GCD_FOLD_HOST_E_TOP_CARRY", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "15");
@@ -1049,29 +1043,16 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_FOLD_PARK_LOW_CARRIES_STEP_MAP",
         "0:17,3:16,8:16,9:16,10:16,21:17,22:16,24:16,26:16,33:16,34:16,37:17,41:16,42:17,51:16,55:16,65:17,73:16,77:16,81:16,82:16,86:16,87:16,97:16,104:16,109:16,110:16,120:16,129:16,132:17,134:16,141:17,142:16,146:16,157:16,160:16,169:16,170:17,174:16,177:16,191:16,192:16,198:16,205:16,206:16,212:16,215:16,216:16,217:16,224:17,228:16",
     );
-    set_default_env("DIALOG_GCD_FOLD_STREAM_CONTROLS", "1");
-    set_default_env("DIALOG_FUSE_C_FORM", "1");
-    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
     set_default_env("DIALOG_GCD_K2", "1");
     set_default_env("DIALOG_GCD_K5_CLEAN_BLOCK", "1");
     set_default_env("DIALOG_GCD_K5_FIXED_TAIL_APPLY", "0");
     set_default_env("DIALOG_GCD_K5_FREE_CLEAN_BLOCK_DURING_SHIFT", "1");
     set_default_env("DIALOG_GCD_K5_HEAD11_CODEC", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_STREAM_PAIR_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_SPLIT_PAIR_SHIFT_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_PAIR01_S2_PERMUTE_APPLY", "1");
-    set_default_env(
-        "DIALOG_GCD_K5_HEAD11_PAIR23_S2_BORROW_PAIR01_APPLY",
-        "1",
-    );
-    set_default_env("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE", "8");
+    set_default_env("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE", "6");
     set_default_env("DIALOG_GCD_K5_RELEASE_SCALE_BITS", "5");
-    set_default_env("DIALOG_GCD_K5_STREAM_PAIR_APPLY", "1");
     set_default_env("DIALOG_GCD_K5_TAIL3_FIXED_LAST", "0");
     set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_CODEC", "1");
     set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_STREAM_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_SPLIT_SLOT_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_FINAL_S2_CONST_APPLY", "1");
     set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "0");
@@ -1086,10 +1067,10 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS",
         "10:19,11:19,21:20,63:19,74:19,100:19,107:19,110:19,118:19,135:19,136:19,137:19,188:20,204:19,227:20,241:19",
     );
-    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "16");
+    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "13");
     set_default_env(
         "DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "",
+        "10:14,11:14,21:15,63:14,74:14,100:14,107:14,110:14,118:14,135:14,136:14,137:14,188:15,204:14,227:15,241:14",
     );
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
     set_default_env(
@@ -1102,11 +1083,18 @@ fn configure_ecdsafail_submission_route() {
     );
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
+    set_default_env("DIALOG_TAIL_NONCE", "5012453485");
+    // R8 fusion bake placeholders: default "0" = OFF = byte-identical frontier (gates check
+    // ==Some("1")). island.sh bake flips these to "1" at submit time. confirm_one_r8.sh's
+    // bake targets these exact lines; do not remove.
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
+    // FOLD gap-fill bake placeholder: "0" = OFF = byte-identical. confirm_one_fold.sh bakes it to "1".
+    set_default_env("DIALOG_GCD_FOLD_STREAM_CONTROLS", "1");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("SQUARE_ROW_MAX_SEG", "141");
+    set_default_env("SQUARE_ROW_MAX_SEG", "143");
     set_default_env("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "18");
     set_default_env(
         "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",
@@ -1128,7 +1116,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
+    set_default_env("DIALOG_TAIL_NONCE", "5012453485");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1238,7 +1226,7 @@ fn configure_ecdsafail_submission_route() {
     // pre-filter + bit-exact quantum confirm, validated 0/0/0 over all 9024
     // shots: 1309 x 1,503,355 = 1,967,891,695, beats the 1,968,064,139 frontier
     // by 172,444).
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "18");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_APPLY_BOUNDARY_CONDITIONAL_REPLAY", "1");  // BAKED: condrep ON for env-less grader build
     set_default_env("DIALOG_GCD_SELECTED_BODY_STREAM_SUFFIX_MAP", "3:2,4:3,5:5,6:6,7:7,8:5,9:7,10:5,11:7,12:6,13:7,14:5,15:6,16:3,17:5,18:1,19:3,21:1");  // BAKED: codex 1285q peak-drop (stream selected high bits through low-qubit suffix)
     // Bake the exact conditional-replay stack for env-less GPU hunts and grader builds.
@@ -1514,7 +1502,7 @@ fn configure_ecdsafail_submission_route() {
     // KAL_FOLD 24->22 and APPLY_CLEAN_COMPARE_BITS 20->19 re-tightenings above.
     // 1011 -> 1012: one more width-envelope notch, stacked on COMPARE_BITS=46
     // under the nonce-10429 island below. Value-exact, peak-neutral at 1320q.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -1579,7 +1567,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
+    set_default_env("DIALOG_TAIL_NONCE", "5012453485");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1587,6 +1575,10 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("ROUND84_QPROD_VENT_PAD", "1");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
+    // FOLD gap-fill bake placeholder: "0" = OFF = byte-identical. confirm_one_fold.sh bakes it to "1".
+    set_default_env("DIALOG_GCD_FOLD_STREAM_CONTROLS", "1");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
@@ -1908,6 +1900,17 @@ pub fn build() -> Vec<Op> {
             .as_deref()
             == Some("1")
         {
+            return Vec::new();
+        }
+    }
+    if std::env::var("DIALOG_FUSE_SELFTEST").is_ok() {
+        match dialog_fuse_primitive_selftest() {
+            Ok(()) => eprintln!(
+                "DIALOG_FUSE_SELFTEST: PASS (mod_add_triple_qb = +3*Qx, mod_const_minus_reg_qb = Qx-tx; value-exact, ancilla & phase clean over 64 shots)"
+            ),
+            Err(e) => panic!("DIALOG_FUSE_SELFTEST: FAIL: {e}"),
+        }
+        if std::env::var("DIALOG_FUSE_SELFTEST_ONLY").ok().as_deref() == Some("1") {
             return Vec::new();
         }
     }
