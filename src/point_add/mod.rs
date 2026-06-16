@@ -1100,7 +1100,7 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_SPECIAL_UNDERFLOW_CLEAN_STEP_BITS",
         "3:21,5:21,10:23,11:22,14:22,17:20,27:22,33:20,34:22,38:21,42:22,47:21,50:22,51:21,53:20,54:21,58:21,60:21,65:21,67:23,68:25,73:20,74:20,75:23,77:21,78:20,84:21,89:23,91:22,95:22,98:26,103:21,109:22,110:22,114:22,118:22,127:26,135:20,136:20,137:22,143:21,149:21,152:20,154:26,155:20,156:22,157:20,158:26,166:20,178:20,181:20,186:24,188:25,191:21,194:20,198:20,200:21,201:21,202:23,203:23,204:22,212:25,213:20,214:22,221:20,223:21,228:21,231:23,243:21,246:20",
     );
-    set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
+    set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "1");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
     set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
@@ -1434,7 +1434,7 @@ fn configure_ecdsafail_submission_route() {
     // Stacked peak-1302 band-trim schedule + measured-ovfclear + F_CUT4=189 (tier-3 "safe lock"):
     // trims average executed Toffoli to 1,456,963 at peak 1302 qubits.
     set_default_env("DIALOG_GCD_BODY_CARRY_BAND_TRIMS", "0,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3");
-    set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
+    set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "1");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_STEPS", "8,9,10");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");

@@ -359,6 +359,25 @@ pub(crate) fn dialog_gcd_body_carry_band_trim(step: usize) -> Option<usize> {
     Some(trims[band])
 }
 
+pub(crate) fn dialog_gcd_shift_band_trim(step: usize) -> Option<usize> {
+    let trims = std::env::var("DIALOG_GCD_SHIFT_BAND_TRIMS").ok()?;
+    if trims.trim().is_empty() {
+        return None;
+    }
+    let trims: Vec<usize> = trims
+        .split(',')
+        .filter_map(|s| s.trim().parse::<usize>().ok())
+        .collect();
+    if trims.is_empty() {
+        return None;
+    }
+    let iters = dialog_gcd_active_iterations().max(1);
+    let band_size = ((iters + trims.len() - 1) / trims.len()).max(1);
+    let band = (step / band_size).min(trims.len() - 1);
+    Some(trims[band])
+}
+
+
 pub(crate) fn dialog_gcd_tobitvector_cswap_width(active_width: usize, step: usize) -> usize {
     if std::env::var("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM")
         .ok()
@@ -372,7 +391,9 @@ pub(crate) fn dialog_gcd_tobitvector_cswap_width(active_width: usize, step: usiz
 }
 
 pub(crate) fn dialog_gcd_tobitvector_shift_width(active_width: usize, step: usize) -> usize {
-    if std::env::var("DIALOG_GCD_TOBITVECTOR_SHIFT_BODY_TRIM")
+    if let Some(trim) = dialog_gcd_shift_band_trim(step) {
+        active_width.saturating_sub(trim).max(2)
+    } else if std::env::var("DIALOG_GCD_TOBITVECTOR_SHIFT_BODY_TRIM")
         .ok()
         .as_deref()
         == Some("1")
@@ -382,6 +403,7 @@ pub(crate) fn dialog_gcd_tobitvector_shift_width(active_width: usize, step: usiz
         active_width
     }
 }
+
 
 pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize) -> usize {
     let mut w = dialog_gcd_body_carry_band_trim(step).unwrap_or_else(|| {
