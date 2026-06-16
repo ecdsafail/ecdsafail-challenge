@@ -70,6 +70,9 @@ pub mod venting;
 
 pub mod dialog_gcd_classical_filter;
 
+mod trailmix_bridge;
+mod trailmix_port;
+
 mod emit;
 pub(crate) use emit::*;
 
@@ -1806,6 +1809,9 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("TRAILMIX_BRIDGE_DISABLE").ok().as_deref() != Some("1") {
+        return trailmix_bridge::build_trailmix_shrunken_pz_ops();
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
