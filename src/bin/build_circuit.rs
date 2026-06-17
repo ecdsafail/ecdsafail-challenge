@@ -8,7 +8,8 @@
 
 use quantum_ecc::circuit::Op;
 use quantum_ecc::point_add;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 const OPS_PATH: &str = "ops.bin";
@@ -25,21 +26,26 @@ const MAGIC: &[u8; 8] = b"QECCOPS1";
 const OP_BYTES: usize = 56;
 
 fn write_ops(ops: &[Op], path: &Path) -> std::io::Result<()> {
-    let mut buf = Vec::with_capacity(MAGIC.len() + 8 + ops.len() * OP_BYTES);
-    buf.extend_from_slice(MAGIC);
-    buf.extend_from_slice(&(ops.len() as u64).to_le_bytes());
-    for op in ops {
-        buf.extend_from_slice(&(op.kind as u32).to_le_bytes());
-        buf.extend_from_slice(&[0u8; 4]); // pad
-        buf.extend_from_slice(&op.q_control2.0.to_le_bytes());
-        buf.extend_from_slice(&op.q_control1.0.to_le_bytes());
-        buf.extend_from_slice(&op.q_target.0.to_le_bytes());
-        buf.extend_from_slice(&op.c_target.0.to_le_bytes());
-        buf.extend_from_slice(&op.c_condition.0.to_le_bytes());
-        buf.extend_from_slice(&op.r_target.0.to_le_bytes());
-    }
     let tmp = path.with_extension("bin.tmp");
-    fs::write(&tmp, &buf)?;
+    let mut w = BufWriter::new(File::create(&tmp)?);
+    w.write_all(MAGIC)?;
+    w.write_all(&(ops.len() as u64).to_le_bytes())?;
+    // Serialize each op into a fixed 56-byte record and stream it out, so we
+    // never materialize a second full copy of the op stream in memory.
+    let mut rec = [0u8; OP_BYTES];
+    for op in ops {
+        rec[0..4].copy_from_slice(&(op.kind as u32).to_le_bytes());
+        rec[4..8].copy_from_slice(&[0u8; 4]); // pad
+        rec[8..16].copy_from_slice(&op.q_control2.0.to_le_bytes());
+        rec[16..24].copy_from_slice(&op.q_control1.0.to_le_bytes());
+        rec[24..32].copy_from_slice(&op.q_target.0.to_le_bytes());
+        rec[32..40].copy_from_slice(&op.c_target.0.to_le_bytes());
+        rec[40..48].copy_from_slice(&op.c_condition.0.to_le_bytes());
+        rec[48..56].copy_from_slice(&op.r_target.0.to_le_bytes());
+        w.write_all(&rec)?;
+    }
+    w.flush()?;
+    drop(w);
     fs::rename(&tmp, path)?;
     Ok(())
 }
