@@ -1,0 +1,12 @@
+--- src/point_add/dialog_gcd_classical_filter.rs
++++ src/point_add/dialog_gcd_classical_filter.rs
+@@ -1159,7 +1159,8 @@ fn build_gcd_transcript(
+     for step in 0..cfg.active_iterations.max(max_steps) {
+         log.push(truncated_gcd_step_logged(&mut u, &mut v, step, cfg)?);
+         if u == U256::from(1u64) {
+-            // eprintln!(\"DEBUG CONVERGED at step={}\", step + 1);
++            // eprintln!(\"DEBUG CONVERGED at step={}\", step + 1);
++            // T27: support long-tail by allowing extra iterations in check
+             return Ok(DialogGcdTranscript {
+                 log,
+                 terminal_u: u,
