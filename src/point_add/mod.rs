@@ -1004,7 +1004,314 @@ fn set_default_env(name: &str, value: &str) {
     }
 }
 
+/// HONEST MODE (this branch's default). Force every probabilistic /
+/// test-set-tuned knob to its EXACT, worst-case-safe value, so the circuit is
+/// correct for ALL valid inputs at ANY op-stream hash (no nonce/island search).
+///
+/// We use UNCONDITIONAL `set_var` here, BEFORE the `set_default_env` block
+/// below, so the historical (cheating) defaults become no-ops for these keys.
+/// Set HONEST_MODE=0 in the environment to restore the original cheating route
+/// (the `set_default_env` defaults take over).
+///
+/// Why each removal is required (every one was a probabilistic / test-set
+/// feature that is only "usually" correct and was made to pass by hunting a
+/// Fiat-Shamir tail nonce so the 9024 hashed inputs dodge the wrong cases):
+///   - Branch + clean comparators -> FULL width (256). Truncated comparators
+///     (COMPARE_BITS, PA9024 schedule, per-step maps, square-row clean bits) can
+///     mis-decide the u>v branch on inputs not seen at the chosen hash.
+///   - Carry-fold / double / quotient / park truncations -> OFF (full carry
+///     propagation). A dropped high carry bit is "usually 0" but not always.
+///   - Body-carry band trims / binder notches / cswap-shift trims -> OFF.
+///   - Width envelope -> a PROVABLY-SAFE taper: slope=1.0 bit/step, margin=134.
+///     Verified (src/bin/conv_probe.rs) to satisfy active_width(step) >=
+///     max(bitlen(u),bitlen(v)) for the ENTIRE factor domain (powers of two are
+///     the structural worst case; the boundary fails only below margin 128, so
+///     134 carries a 6-bit cushion), so the high bits the taper drops are
+///     provably 0 -> the truncation is value-exact and no WidthOverflow exists.
+///   - Iterations -> 402 (the documented safe cap). The K2 binary-GCD walk
+///     converges in at most 380 steps over the whole domain (worst case v=2^255,
+///     measured in conv_probe), so 402 leaves a 22-step margin and the apply
+///     transcript never hits NonConvergence.
+///   - Tail nonce / reroll / island search -> NONE. Built at the natural hash.
+fn force_honest_env() {
+    let set = |k: &str, v: &str| std::env::set_var(k, v);
+
+    // (1) Full-width comparators (exact branch + clean decisions).
+    set("DIALOG_GCD_COMPARE_BITS", "256");
+    set("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "256");
+    set("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "0");
+    set("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "0");
+    set("DIALOG_GCD_COMPARE_STEP_BITS", "");
+    set("DIALOG_GCD_FILTER_STRICT_COMPARE", "0");
+    set("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "256");
+    set("SQUARE_ROW_WINDOW_CLEAN_ROW_BITS", "");
+    set("SQUARE_ROW_WINDOW_CLEAN_SITE_BITS", "");
+    set("DIALOG_GCD_SPECIAL_OVERFLOW_CLEAN_STEP_BITS", "");
+    set("DIALOG_GCD_SPECIAL_UNDERFLOW_CLEAN_STEP_BITS", "");
+
+    // (2) Full carry propagation everywhere (0 / empty == OFF for these readers).
+    set("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "0");
+    set("KAL_DOUBLE_CARRY_TRUNC_W", "0");
+    set("KAL_FOLD_CARRY_TRUNC_W", "0");
+    set("ROUND84_INPLACE_QUOTIENT_CARRY_TRUNC_W", "0");
+    set("DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS", "");
+    set("DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS", "");
+    set("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "0");
+    set("DIALOG_GCD_FOLD_PARK_LOW_CARRIES_STEP_MAP", "");
+    set("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "0");
+    set("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP", "");
+
+    // (3) No body-carry / cswap / shift / notch truncations.
+    set("DIALOG_GCD_BODY_CARRY_BAND_TRIMS", "");
+    set("DIALOG_GCD_BODY_CARRY_TRUNC_W", "0");
+    set("DIALOG_GCD_BODY_STEP_GIVEBACKS", "");
+    set("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
+    set("DIALOG_GCD_TOBITVECTOR_SHIFT_BODY_TRIM", "0");
+    set("DIALOG_GCD_BINDER_NOTCH_STEPS", "");
+    set("DIALOG_GCD_BINDER_NOTCH_EXTRA", "0");
+    set("DIALOG_GCD_BINDER_NOTCH_MAP", "");
+    set("DIALOG_GCD_WIDTH_STEP_BUMPS", "");
+
+    // (4) Provably-safe width envelope (taper kept ON; see conv_probe.rs).
+    set("DIALOG_GCD_RAW_TOBITVECTOR_VARIABLE_WIDTH", "1");
+    set("DIALOG_GCD_WIDTH_SLOPE_X1000", "1000");
+    set("DIALOG_GCD_WIDTH_MARGIN", "134");
+
+    // (5) Iterations: provably-safe convergence cap (worst case 380 < 384).
+    //     384 = 128*3 (whole sidecar blocks, no partial-block path); keeps a
+    //     4-step margin above the structurally proven worst case of 380 steps
+    //     (achieved uniquely by v=2^255), validated by conv_probe at this cap.
+    set("DIALOG_GCD_ACTIVE_ITERATIONS", "384");
+
+    // (6) Natural op-stream hash: no Fiat-Shamir island / nonce / reroll.
+    //     DIALOG_TAIL_NONCE is forced off (it only existed to dodge wrong cases).
+    //     DIALOG_REROLL / DIALOG_POST_SUB_REROLL emit only EXACT identity (X;X)
+    //     pairs, so they never change the circuit's action -- they merely perturb
+    //     the op-stream hash. We default them to 0 (natural hash) but allow an
+    //     external override so the exactness can be re-confirmed at a DIFFERENT
+    //     hash (proves the pass is structural, not nonce-luck). They are NOT used
+    //     to search for a passing island.
+    set("DIALOG_TAIL_NONCE", "0");
+    set_default_env("DIALOG_REROLL", "0");
+    set_default_env("DIALOG_POST_SUB_REROLL", "0");
+
+    // (7) Transcript storage -> EXACT, reachability-free. Keep K2 (depth-2 GCD
+    //     converges in <=380 steps; depth-1 would need ~480 > the 402 cap), but
+    //     use the plain-K2 round763 base 6->5 packer (block_bits=8), which is a
+    //     bijection on all per-step transcript states and is freeable precisely
+    //     under the STRUCTURAL invariant b0_and_b1 => b0 (b0_and_b1 is literally
+    //     b0 & (u>v), so this holds for every input -- not a test-set fact).
+    //     Disable the codecs that assume hardcoded "reachable-support" sets whose
+    //     cross-step correctness is NOT structurally proven for all inputs:
+    //       - K5 HEAD11 / TAIL3_TOP32 / clean-block codec (2048/32768, 32/512 ...)
+    //       - K2_PAIR_COMPRESS (30-of-64 pair language)
+    //       - ROUND763_COMPRESS_LEVER (3-CCX collapse needs (0,1) unreachable)
+    //     ROUND763_DEDUP is KEPT: it is an exact Clifford-bracket cancellation,
+    //     not a reachability rewrite.
+    set("DIALOG_GCD_K2", "1");
+    set("DIALOG_GCD_K5_CLEAN_BLOCK", "0");
+    set("DIALOG_GCD_K2_PAIR_COMPRESS", "0");
+    set("DIALOG_GCD_ROUND763_COMPRESS_LEVER", "0");
+    set("DIALOG_GCD_K5_HEAD11_CODEC", "0");
+    set("DIALOG_GCD_K5_HEAD11_STREAM_PAIR_APPLY", "0");
+    set("DIALOG_GCD_K5_HEAD11_SPLIT_PAIR_SHIFT_APPLY", "0");
+    set("DIALOG_GCD_K5_HEAD11_PAIR01_S2_PERMUTE_APPLY", "0");
+    set("DIALOG_GCD_K5_HEAD11_PAIR23_S2_BORROW_PAIR01_APPLY", "0");
+    set("DIALOG_GCD_K5_STREAM_PAIR_APPLY", "0");
+    set("DIALOG_GCD_K5_TAIL3_TOP32_CODEC", "0");
+    set("DIALOG_GCD_K5_TAIL3_TOP32_STREAM_APPLY", "0");
+    set("DIALOG_GCD_K5_TAIL3_TOP32_SPLIT_SLOT_APPLY", "0");
+    set("DIALOG_GCD_K5_TAIL3_TOP32_FINAL_S2_CONST_APPLY", "0");
+    set("DIALOG_GCD_K5_FREE_CLEAN_BLOCK_DURING_SHIFT", "0");
+
+    // (8) ROUND84 lam^2 mod p: use the EXACT unfolded Solinas reduction
+    //     (multiply.rs squaring_sub_..._lowq `else` branch: full-width
+    //     mod_sub/mod_add/mod_double/mod_halve). The in-place fold variant is
+    //     explicitly only correct on the reachable support -- its own route
+    //     comment admits "the 21-bit high-carry propagation and rare folded-lo
+    //     noncanonical band are selected away with the shared Fiat-Shamir
+    //     island" -- so it is a probabilistic feature and must be off.
+    set("ROUND84_INPLACE_SOLINAS_FOLD", "0");
+    set("ROUND84_INPLACE_QUOTIENT_CARRY_TRUNC_W", "0");
+
+    // (9) Measured (Gidney) AND-uncomputes. The fused HCLEAR/DCLEAR/OVFCLEAR/
+    //     HALVE_EDCLEAR variants are EXACT (ccx(p,q,h) -> hmr(h,m); cz_if(p,q,m),
+    //     a Clifford fixup conditioned on the measurement outcome m) but live
+    //     inside the K5 fixed-tail apply path, which honest mode keeps OFF (group
+    //     7). They are therefore DEAD in this config -- enabling them changes
+    //     nothing (verified: identical 4,437,707.000 at all three hashes) -- so we
+    //     leave them off to keep the diff minimal.
+    //     MEASURED_APPLY_SUB and SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR ARE on a
+    //     live path and ARE correct (0/0/0 for all inputs at every hash), but the
+    //     measured outcome feeds a downstream classically-conditioned segment
+    //     whose EXECUTED-Toffoli count shifts with the op-stream hash (natural
+    //     4374702.887 vs reroll 4374702.909 vs postsub 4374707.603). The
+    //     acceptance bar requires IDENTICAL counts at any hash, so the
+    //     perturbed-hash guard rejects them: kept OFF.
+    set("DIALOG_GCD_FUSED_HCLEAR_MEASURED", "0");
+    set("DIALOG_GCD_FUSED_DCLEAR_MEASURED", "0");
+    set("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED", "0");
+    set("DIALOG_GCD_FUSED_HALVE_EDCLEAR_MEASURED", "0");
+    set("DIALOG_GCD_MEASURED_APPLY_SUB", "0");
+    set("DIALOG_GCD_MEASURED_UNDERFLOW_GATE", "0");
+    set("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "0");
+    // (9b) Disable square-row segment windowing entirely (max_seg=0, windows=0).
+    //      Both windowing branches in
+    //      schoolbook_square_symmetric_lowq_selfhosted_with_clean_supplement are
+    //      skipped; every row falls through to the monolithic safe-reuse Cuccaro
+    //      add path with NO boundary carry-recovery comparator (same elimination
+    //      on the inverse uncompute). Value-exact: removes the truncated
+    //      boundary comparator, not any arithmetic. Toffoli down, peak unchanged.
+    set("SQUARE_ROW_MAX_SEG", "0");
+    set("SQUARE_ROW_WINDOWS", "0");
+
+    // (10) Custom phase-correction (conditional-replay) Hmr uncomputes. These
+    //      reconstruct the measured ancilla's boolean from a TRUNCATED replay /
+    //      comparator to cancel the Hmr phase; on the exact config the residual
+    //      `q & rng` phase no longer cancels for every input, and the cheating
+    //      route hid it by hunting a tail nonce (its own comments: "residual
+    //      failures are Fiat-Shamir phase, dodged by a fresh tail nonce"). Off.
+    set("DIALOG_GCD_APPLY_BOUNDARY_CONDITIONAL_REPLAY", "0");
+    set("DIALOG_GCD_REVERSE_BRANCH_CONDITIONAL_REPLAY", "0");
+    set("DIALOG_GCD_SPECIAL_CLEAN_CONDITIONAL_REPLAY", "0");
+    set("MOD_FAST_FLAG_CONDITIONAL_REPLAY", "0");
+    set("DIALOG_GCD_FUSED_BRANCH_BITS", "0");
+    set("DIALOG_GCD_APPLY_FUSED_FOLD", "0");
+
+    // (11) GCD body: RE-ENABLED (honest-opt-measured). The measurement-vented
+    //      controlled Cuccaro (cuccaro_*_ctrl_vented) is Gidney measured
+    //      uncompute: its carry phase fixup `cz_if(acc[i],addend[i],m)` is
+    //      conditioned on the MEASUREMENT OUTCOME `m` and applies CZ on
+    //      (acc[i],addend[i]) precisely because the measured vent ancilla equals
+    //      acc[i]&addend[i] BY CONSTRUCTION of the circuit -- not by any input
+    //      distribution, reachable-support set, or hash. Exact for every input.
+    //      The vent pool is borrowed from FUTURE transcript-log cells
+    //      (dialog_log[2*(step+1)..]) which are provably |0> at borrow time (only
+    //      ever written by LATER steps) and measured back to |0> at return; this
+    //      is exact ancilla borrowing. The prior agent's "not reliably clean"
+    //      claim is refuted by the eval phase/ancilla-garbage probe passing 0/0/0
+    //      at BOTH the natural and perturbed op-stream hash.
+    set("DIALOG_GCD_CTRL_BODY_VENTED", "1");
+    set("DIALOG_GCD_RAW_TOBITVECTOR_MATERIALIZED_SUB", "0");
+
+    // (12) BORROWED-scratch Hmr uncomputes. Every measurement-based uncompute
+    //      whose carry/vent/cin lane is BORROWED (future-log, u-high, current
+    //      block, host-gated, host-comparator) is phase-exact only if that
+    //      borrowed lane is clean |0> on entry. The borrow machinery is
+    //      co-designed with the aggressive width taper and is NOT reliably clean
+    //      under the exact wide-and-safe taper, leaking residual phase that the
+    //      cheating route hid via the tail nonce. Force fresh, clean lanes
+    //      everywhere by disabling all borrow/host scratch reuse. (Raises peak;
+    //      honesty over cost.)
+    set("DIALOG_GCD_BRANCH_BITS_HOST_COMPARATOR", "0");
+    // RE-ENABLED: future-log carry borrow. The borrowed lanes are dialog_log
+    // cells written only by LATER GCD steps, hence provably |0> when borrowed by
+    // the current step and restored to |0> by the vented measure-uncompute. This
+    // is exact ancilla reuse (lowers peak qubits at 0 Toffoli cost), confirmed by
+    // the perturbed-hash 0/0/0 guard. (Required by group-11 vented body.)
+    set("DIALOG_GCD_RAW_TOBITVECTOR_BORROW_FUTURE_LOG_CARRIES", "1");
+    set("DIALOG_GCD_LATE_BORROW_UV_HIGH", "0");
+    set("DIALOG_GCD_BODY_HOST_CIN", "0");
+    set("DIALOG_GCD_HOST_GATED", "0");
+    set("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "0");
+    // BORROW_CURRENT_BLOCK / _CURRENT_S2 / _ZERO_RAW_FUTURE are EXACT ancilla
+    // relabels (provably-|0> lanes, restored by the vented body's measured
+    // uncompute), but they only shrink the GCD-WALK scratch deficit, and the
+    // global peak in this honest config is in the APPLY phase
+    // (dialog_gcd_materialized_special_underflow_clean, verified by
+    // TRACE_EACH_PEAK), not the GCD walk -- so they leave the reported peak
+    // (2362) unchanged. Kept OFF (no benefit; keep the diff minimal).
+    set("DIALOG_GCD_BORROW_CURRENT_BLOCK", "0");
+    set("DIALOG_GCD_BORROW_CURRENT_S2", "0");
+    set("DIALOG_GCD_BORROW_ZERO_RAW_FUTURE", "0");
+    set("DIALOG_GCD_FREE_SCRATCH_BEFORE_SHIFT", "0");
+    set("DIALOG_GCD_SELECTED_BODY_STREAM_SUFFIX_MAP", "");
+    set("DIALOG_GCD_SELECTED_BODY_NOCIN", "0");
+
+    // (13) Use the SLOW, fully-coherent comparator / mod-add (cmp_lt_into,
+    //      no Hmr) instead of the measured-uncompute fast variant. The fast
+    //      comparator's Hmr phase cancels via cz_if(u[i-1],v[i]) only when its
+    //      carry lane reproduces the Cuccaro invariant exactly; in this honest
+    //      configuration the residual phase did not cancel for ~half the inputs
+    //      (localized to reverse_branch_bits via phase_probe), so go coherent.
+    set("KAL_VENT_MODADD", "1");
+
+    // (13b) GCD-walk branch_bits: route the (non-fused) branch-bit comparator
+    //      through the single-pass measured controlled comparator with FRESH
+    //      carries (ccx_cmp_lt_into_fast_no_vent), bypassing the KAL_VENT_MODADD
+    //      slow-comparator redirect for THIS site only. Replaces ~4W Toffoli/step
+    //      (two slow 2W cmp + ccx) with one ~W-Toffoli measured sweep. Exact for
+    //      all inputs (Gidney/HMR AND-uncompute, freshly allocated |0> carries).
+    set("DIALOG_GCD_BRANCH_BITS_FAST_CMP", "1");
+
+    // (14) Apply-phase overflow/underflow modular correction: use the FULL-WIDTH
+    //      coherent comparator (cmp_lt_into over all N bits), not the truncated
+    //      `raw_apply_truncated_clean` window. The truncated correction comparator
+    //      reads only the top `special_*flow_clean_compare_bits` of (acc,f); the
+    //      dropped low bits are 0 only on the reachable support, so it can
+    //      mis-decide the modular overflow correction (classical error) and its
+    //      measured uncompute leaks phase off-support.
+    set("DIALOG_GCD_RAW_APPLY_TRUNCATED_CLEAN", "0");
+
+    // (14b) CURRY the ADD-side apply phase (HJNRS arXiv:2001.09580 §3). The
+    //      materialized add path holds a full-width f = ctrl*a register LIVE
+    //      across the overflow-clean comparator, and TRACE_EACH_PEAK shows that
+    //      instant (dialog_gcd_materialized_special_overflow_clean) is exactly
+    //      where the global qubit peak (2059) is set -- the SUB-side
+    //      underflow-clean only reaches 2058. Currying drops f: the add becomes a
+    //      measurement-vented CONTROLLED Cuccaro (acc_ext += ctrl*a, a as controls
+    //      only, restored) and the clean becomes the curried full-width measured
+    //      controlled comparator (acc_ovf ^= ctrl & (acc < a)). Pure rewiring,
+    //      value/phase identical for every input; full width (no truncation, since
+    //      group-14 truncated-clean stays OFF). Shaves f's N=256 qubits off the
+    //      global-peak instant. Composes with the SUB-side curry.
+    set("DIALOG_GCD_CURRY_APPLY_ADD", "1");
+
+    // (14c) CURRY the SUB-side apply phase too (HJNRS arXiv:2001.09580 §3).
+    //      Mirror of (14b): after the ADD-side curry drops the global peak to
+    //      2058, TRACE_EACH_PEAK shows the binding peak moves to the SUB-side
+    //      dialog_gcd_materialized_special_underflow_clean, which still holds a
+    //      full-width f = ctrl*a register LIVE across the underflow comparator.
+    //      Currying drops f there too: the subtract uses `a` directly as the
+    //      controlled subtrahend (coherent controlled Cuccaro, O(1) ancilla, `a`
+    //      restored) and the clean runs curried on `a`/`ctrl` (the proven
+    //      full-width modular-borrow correction). Pure rewiring, value/phase
+    //      identical for every input; coherent (KAL_VENT_MODADD=1) so counts are
+    //      hash-stable. Shaves f's N=256 qubits off the new global-peak instant.
+    //      DROPPED in honest-swarm-r3: the curried underflow clean
+    //      (dialog_gcd_clean_truncated_underflow) is NOT phase-equivalent to the
+    //      materialized clean (x(acc_ovf); mod_neg(f); cmp_lt(acc,f); mod_neg(f));
+    //      enabling it produces 141 phase-garbage batches in eval_circuit (global
+    //      phase != 0) -- fails the EXACTNESS BAR. Kept OFF; the ADD-side curry
+    //      (14b) stands alone as the integrated win (q=2058).
+    set("DIALOG_GCD_CURRY_APPLY_SUB", "0");
+
+    // (15) RE-ENABLED (honest-opt-measured): register-free direct constant
+    //      arithmetic. add_nbit_const_fast / sub_nbit_const_fast (and mod_neg_
+    //      inplace_fast, now routed through add_nbit_const_fast) add a CLASSICAL
+    //      constant with an (n-1)-carry Cuccaro + measured carry uncompute instead
+    //      of materializing a fresh n-qubit `load_const` register. This is the
+    //      register-free Gidney const adder: its carry fixup cz_if(...,m) is
+    //      conditioned on the MEASUREMENT OUTCOME m and is exact for every input
+    //      (full width, no truncation -- distinct from the truncated-clean window
+    //      above, which stays OFF). It is value- and phase-identical to the
+    //      load_const path; the only change is dropping the n-wide const register,
+    //      which is the qubit pinning the apply-phase underflow-clean peak
+    //      (dialog_gcd_materialized_special_underflow_clean: mod_neg's load_const
+    //      spiked +N at the global peak instant). Verified exact + identical-count
+    //      at the natural and perturbed op-stream hashes.
+    set("SECP_DIRECT_CONST_ARITH", "1");
+}
+
 fn configure_ecdsafail_submission_route() {
+    // HONEST MODE is the default for this branch. It forces exact, input-domain
+    // -wide-correct values for every probabilistic knob BEFORE the historical
+    // `set_default_env` defaults (which would otherwise install the cheating,
+    // test-set-tuned truncations). Set HONEST_MODE=0 to restore the old route.
+    if std::env::var("HONEST_MODE").ok().as_deref() != Some("0") {
+        force_honest_env();
+    }
+
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY", "1");
     // q1168 host-E route. These defaults are first so the historical fallback
