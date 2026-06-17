@@ -68,6 +68,8 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
 pub mod venting;
 
+mod trailmix_port;
+
 pub mod dialog_gcd_classical_filter;
 
 mod emit;
@@ -91,6 +93,7 @@ fn d1_phase_corrected_product_core_active() -> bool {
 pub struct B {
     pub ops: Vec<Op>,
     pub count_only: bool,
+    pub(crate) fiat_hash: Option<Shake256>,
     pub counted_ops: usize,
     pub counted_kind_ops: [usize; 18],
     pub counted_phase_kind_ops: [usize; 18],
@@ -149,6 +152,7 @@ impl B {
         Self {
             ops: Vec::new(),
             count_only: false,
+            fiat_hash: None,
             counted_ops: 0,
             counted_kind_ops: [0; 18],
             counted_phase_kind_ops: [0; 18],
@@ -176,12 +180,37 @@ impl B {
     fn new_count_only() -> Self {
         let mut b = Self::new();
         b.count_only = true;
+        b.fiat_hash = Self::fiat_hash_from_env();
         b
+    }
+    fn fiat_hash_from_env() -> Option<Shake256> {
+        let ops_len = std::env::var("POINT_ADD_HASH_OPS_LEN")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())?;
+        let mut hasher = Shake256::default();
+        hasher.update(b"quantum_ecc-fiat-shamir-v2");
+        hasher.update(&ops_len.to_le_bytes());
+        Some(hasher)
+    }
+    pub(crate) fn update_fiat_hash_op(hasher: &mut Shake256, op: &Op) {
+        hasher.update(&[op.kind as u8]);
+        hasher.update(&op.q_control2.0.to_le_bytes());
+        hasher.update(&op.q_control1.0.to_le_bytes());
+        hasher.update(&op.q_target.0.to_le_bytes());
+        hasher.update(&op.c_target.0.to_le_bytes());
+        hasher.update(&op.c_condition.0.to_le_bytes());
+        hasher.update(&op.r_target.0.to_le_bytes());
+    }
+    pub(crate) fn clone_fiat_hash(&self) -> Option<Shake256> {
+        self.fiat_hash.clone()
     }
     fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
         self.counted_kind_ops[op.kind as usize] += 1;
         self.counted_phase_kind_ops[op.kind as usize] += 1;
+        if let Some(hasher) = &mut self.fiat_hash {
+            Self::update_fiat_hash_op(hasher, &op);
+        }
         if !self.count_only {
             self.ops.push(op);
         }
@@ -1806,6 +1835,9 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("POINT_ADD_DIALOG_ROUTE").ok().as_deref() != Some("1") {
+        return trailmix_port::build_builder().ops;
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
@@ -2420,6 +2452,391 @@ pub fn special_fold_park_selftest() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct LowqOneCofactorEnvelope {
+    pub peak_qubits: usize,
+    pub total_ops: usize,
+    pub toffoli_ops: usize,
+    pub peak_phase: &'static str,
+}
+
+/// Count-only envelope for the q936 orientation-aware one-cofactor lane.
+///
+/// This is an allocation and reusable-control skeleton, not the exact arithmetic
+/// primitive. The semantic oracle for the invariant remains
+/// `ecdsa-opus-prep/tools/oriented_one_cofactor_correctness.py`.
+pub fn lowq_oriented_one_cofactor_fused_update_envelope(
+    scratch_flags: usize,
+) -> LowqOneCofactorEnvelope {
+    const AMBIENT_OVERHEAD: usize = 252;
+    const A_W: usize = 88;
+    const B_W: usize = 90;
+    const OLD_COFACTOR_W: usize = 239;
+    const MATERIALIZED_COFACTOR_W: usize = 242;
+    const Q_W: usize = 18;
+    const BIT_STEPS: usize = 257;
+
+    let scratch_flags = scratch_flags.max(1);
+    let mut b = B::new_count_only();
+    b.set_phase("lowq.oriented_one_cofactor/ambient");
+    let ambient = b.alloc_qubits(AMBIENT_OVERHEAD);
+
+    b.set_phase("lowq.oriented_one_cofactor/static_hard");
+    let a = b.alloc_qubits(A_W);
+    let b_reg = b.alloc_qubits(B_W);
+    let old_cofactor = b.alloc_qubits(OLD_COFACTOR_W);
+    let materialized = b.alloc_qubits(MATERIALIZED_COFACTOR_W);
+    let q = b.alloc_qubits(Q_W);
+    let scratch = b.alloc_qubits(scratch_flags);
+
+    for i in 0..BIT_STEPS {
+        let flag = scratch[i % scratch.len()];
+        b.ccx(a[i % a.len()], old_cofactor[i % old_cofactor.len()], flag);
+        b.ccx(flag, b_reg[i % b_reg.len()], materialized[i % materialized.len()]);
+        b.ccx(a[i % a.len()], old_cofactor[i % old_cofactor.len()], flag);
+    }
+
+    b.set_phase("lowq.oriented_one_cofactor/free");
+    for qbit in scratch
+        .into_iter()
+        .chain(q)
+        .chain(materialized)
+        .chain(old_cofactor)
+        .chain(b_reg)
+        .chain(a)
+        .chain(ambient)
+    {
+        b.free(qbit);
+    }
+    b.set_phase("lowq.oriented_one_cofactor/done");
+
+    LowqOneCofactorEnvelope {
+        peak_qubits: b.peak_qubits as usize,
+        total_ops: b.counted_ops,
+        toffoli_ops: b.counted_kind_ops[OperationType::CCX as usize]
+            + b.counted_kind_ops[OperationType::CCZ as usize],
+        peak_phase: b.peak_phase,
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LowqShift1TriangularShearProbe {
+    pub shift: usize,
+    pub bits: usize,
+    pub checked_cases: usize,
+    pub peak_qubits: usize,
+    pub emitter_extra_peak_qubits: usize,
+    pub total_ops: usize,
+    pub toffoli_ops: usize,
+    pub hmr_ops: usize,
+    pub peak_phase: &'static str,
+}
+
+fn lowq_apply_mixed_mcx(
+    circ: &mut trailmix_port::circuit::Circuit,
+    x: &[trailmix_port::circuit::QReg],
+    controls: &[(usize, bool)],
+    target: usize,
+) {
+    for &(idx, want_one) in controls {
+        assert_ne!(idx, target, "mixed MCX target/control alias at bit {idx}");
+        if !want_one {
+            circ.x(&x[idx]);
+        }
+    }
+
+    let control_refs = controls
+        .iter()
+        .map(|&(idx, _)| &x[idx])
+        .collect::<Vec<_>>();
+    trailmix_port::arith::mcx::mcx_clean_k(circ, &control_refs, &x[target]);
+
+    for &(idx, want_one) in controls.iter().rev() {
+        if !want_one {
+            circ.x(&x[idx]);
+        }
+    }
+}
+
+fn lowq_shift_term_controls(shift: usize, j: usize, t: usize) -> Vec<Vec<(usize, bool)>> {
+    debug_assert!(shift >= 1);
+    debug_assert!(t >= shift && t < j);
+
+    let mut used = vec![false; j];
+    let mut adj = vec![Vec::<usize>::new(); j];
+    used[t] = true;
+    used[t - shift] = true;
+    for u in (t + 1)..j {
+        let v = u - shift;
+        adj[u].push(v);
+        adj[v].push(u);
+        used[u] = true;
+        used[v] = true;
+    }
+
+    let mut seen = vec![false; j];
+    let mut assignments = vec![Vec::<(usize, bool)>::new()];
+
+    for start in 0..j {
+        if !used[start] || seen[start] {
+            continue;
+        }
+        let mut stack = vec![(start, false)];
+        let mut color = vec![None::<bool>; j];
+        color[start] = Some(false);
+        seen[start] = true;
+        let mut component = Vec::<(usize, bool)>::new();
+        let mut root_value = None::<bool>;
+        let mut contradictory = false;
+
+        while let Some((node, node_color)) = stack.pop() {
+            component.push((node, node_color));
+            let pin = if node == t || node == t - shift {
+                Some(true)
+            } else {
+                None
+            };
+            if let Some(pin_value) = pin {
+                let needed_root = pin_value ^ node_color;
+                match root_value {
+                    Some(existing) if existing != needed_root => contradictory = true,
+                    None => root_value = Some(needed_root),
+                    _ => {}
+                }
+            }
+
+            for &next in &adj[node] {
+                let next_color = !node_color;
+                match color[next] {
+                    Some(existing) if existing != next_color => contradictory = true,
+                    Some(_) => {}
+                    None => {
+                        color[next] = Some(next_color);
+                        seen[next] = true;
+                        stack.push((next, next_color));
+                    }
+                }
+            }
+        }
+
+        if contradictory {
+            return Vec::new();
+        }
+
+        let roots = if let Some(root) = root_value {
+            vec![root]
+        } else {
+            vec![false, true]
+        };
+        let mut next_assignments = Vec::with_capacity(assignments.len() * roots.len());
+        for partial in &assignments {
+            for &root in &roots {
+                let mut expanded = partial.clone();
+                for &(idx, idx_color) in &component {
+                    expanded.push((idx, root ^ idx_color));
+                }
+                expanded.sort_by_key(|&(idx, _)| idx);
+                next_assignments.push(expanded);
+            }
+        }
+        assignments = next_assignments;
+    }
+
+    assignments
+}
+
+fn lowq_emit_shift_triangular_shear(
+    circ: &mut trailmix_port::circuit::Circuit,
+    x: &[trailmix_port::circuit::QReg],
+    shift: usize,
+) {
+    let bits = x.len();
+    assert!(shift >= 1, "shift must be non-zero");
+    assert!(shift < bits, "shift must be below register width");
+
+    // High-to-low is the point: every control is below the target bit and is
+    // therefore still the original input bit when the target is rewritten.
+    for j in (shift..bits).rev() {
+        circ.set_section(&format!("lowq.shift{shift}_triangular/bit_{j}"));
+        circ.cx(&x[j - shift], &x[j]);
+
+        // Carry into j for x + (x << shift):
+        //   c_j = XOR_t [generate_t AND propagate_{t+1..j-1}]
+        // generate_t is x[t] AND x[t-shift]. Each propagate is an inequality
+        // x[u] != x[u-shift]. The generated mixed-control terms enumerate only
+        // the free residue-chain roots, not all bits.
+        for t in shift..j {
+            for controls in lowq_shift_term_controls(shift, j, t) {
+                lowq_apply_mixed_mcx(circ, x, &controls, j);
+            }
+        }
+    }
+    circ.set_section(&format!("lowq.shift{shift}_triangular/done"));
+}
+
+fn lowq_set_reg_u128<R: XofReader>(
+    sim: &mut Simulator<'_, R>,
+    qs: &[QubitId],
+    val: u128,
+    shot: usize,
+) {
+    for (i, &q) in qs.iter().enumerate() {
+        if ((val >> i) & 1) != 0 {
+            *sim.qubit_mut(q) |= 1u64 << shot;
+        } else {
+            *sim.qubit_mut(q) &= !(1u64 << shot);
+        }
+    }
+}
+
+fn lowq_get_reg_u128<R: XofReader>(
+    sim: &Simulator<'_, R>,
+    qs: &[QubitId],
+    shot: usize,
+) -> u128 {
+    let mut out = 0u128;
+    for (i, &q) in qs.iter().enumerate() {
+        out |= u128::from((sim.qubit(q) >> shot) & 1) << i;
+    }
+    out
+}
+
+fn lowq_shift_expected_u128(val: u128, bits: usize, shift: usize) -> u128 {
+    let mask = if bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    };
+    (val + ((val << shift) & mask)) & mask
+}
+
+fn lowq_splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Real-gate probe for the pure-Q low-qubit lane:
+/// `x := x + (x << 1) mod 2^bits`, emitted high-to-low as mixed-control
+/// carry predicates over lower original bits.
+///
+/// This is still a micro-primitive, not a full point-add submission. Its job is
+/// to test whether the q936 count model has a plausible low-scratch arithmetic
+/// substrate once Toffoli count is no longer the objective.
+pub fn lowq_shift_triangular_shear_probe(
+    shift: usize,
+    bits: usize,
+    requested_cases: usize,
+) -> Result<LowqShift1TriangularShearProbe, String> {
+    if !(2..=120).contains(&bits) {
+        return Err(format!("bits must be in 2..=120 for this u128 probe, got {bits}"));
+    }
+    if shift == 0 || shift >= bits {
+        return Err(format!("shift must be in 1..bits, got shift={shift}, bits={bits}"));
+    }
+    if std::env::var("POINT_ADD_COUNT_ONLY").ok().as_deref() == Some("1") {
+        return Err("POINT_ADD_COUNT_ONLY=1 disables op emission; unset it for this probe".to_string());
+    }
+
+    let mut circ = trailmix_port::circuit::Circuit::new();
+    circ.set_section(&format!("lowq.shift{shift}_triangular/input"));
+    let x = circ.alloc_qreg_bits(&format!("shift{shift}_x"), bits);
+    let x_ids = x
+        .iter()
+        .map(|q| QubitId(u64::from(q.id())))
+        .collect::<Vec<_>>();
+
+    lowq_emit_shift_triangular_shear(&mut circ, &x, shift);
+
+    let b = circ.into_builder();
+    let ops = b.ops.clone();
+    let nq = b.next_qubit as usize;
+    let nb = b.next_bit as usize;
+    let toffoli_ops = b.counted_kind_ops[OperationType::CCX as usize]
+        + b.counted_kind_ops[OperationType::CCZ as usize];
+    let hmr_ops = b.counted_kind_ops[OperationType::Hmr as usize];
+
+    let exhaustive = bits <= 12 && requested_cases == 0;
+    let total_cases = if exhaustive {
+        1usize << bits
+    } else {
+        requested_cases.max(1)
+    };
+    let mask = if bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    };
+
+    let mut seed = Shake256::default();
+    seed.update(b"lowq-shift-triangular-shear-probe");
+    seed.update(&(shift as u64).to_le_bytes());
+    seed.update(&(bits as u64).to_le_bytes());
+    seed.update(&(total_cases as u64).to_le_bytes());
+    let mut xof = seed.finalize_xof();
+    let mut sim = Simulator::new(nq, nb, &mut xof);
+    let mut rng = 0xd1b5_4a32_d192_ed03u64 ^ ((bits as u64) << 32);
+    let mut checked = 0usize;
+
+    while checked < total_cases {
+        sim.clear_for_shot();
+        let batch = (total_cases - checked).min(64);
+        let mut inputs = Vec::with_capacity(batch);
+        for shot in 0..batch {
+            let val = if exhaustive {
+                (checked + shot) as u128
+            } else {
+                let lo = u128::from(lowq_splitmix64(&mut rng));
+                let hi = u128::from(lowq_splitmix64(&mut rng));
+                ((hi << 64) | lo) & mask
+            };
+            inputs.push(val);
+            lowq_set_reg_u128(&mut sim, &x_ids, val, shot);
+        }
+
+        sim.apply_iter(ops.iter());
+
+        for (shot, &input) in inputs.iter().enumerate() {
+            let got = lowq_get_reg_u128(&sim, &x_ids, shot);
+            let want = lowq_shift_expected_u128(input, bits, shift);
+            if got != want {
+                return Err(format!(
+                    "shift{shift} triangular shear mismatch bits={bits} case={} input={input:#x} got={got:#x} want={want:#x}",
+                    checked + shot,
+                ));
+            }
+        }
+        if sim.phase != 0 {
+            return Err(format!(
+                "shift{shift} triangular shear left phase garbage bits={bits} batch_start={checked} phase={:#x}",
+                sim.phase
+            ));
+        }
+        checked += batch;
+    }
+
+    Ok(LowqShift1TriangularShearProbe {
+        shift,
+        bits,
+        checked_cases: checked,
+        peak_qubits: b.peak_qubits as usize,
+        emitter_extra_peak_qubits: b.peak_qubits.saturating_sub(bits as u32) as usize,
+        total_ops: b.counted_ops,
+        toffoli_ops,
+        hmr_ops,
+        peak_phase: b.peak_phase,
+    })
+}
+
+pub fn lowq_shift1_triangular_shear_probe(
+    bits: usize,
+    requested_cases: usize,
+) -> Result<LowqShift1TriangularShearProbe, String> {
+    lowq_shift_triangular_shear_probe(1, bits, requested_cases)
 }
 
 
