@@ -69,6 +69,26 @@ pub(crate) fn dialog_gcd_ccx_cmp_gt_truncated_into_width(
     ccx_cmp_lt_into_fast(b, &v[start..], &u[start..], ctrl, target);
 }
 
+/// Same truncated-window controlled comparator as
+/// `dialog_gcd_ccx_cmp_gt_truncated_into_width`, but ALWAYS routed through the
+/// fresh-carries single-pass measured comparator (no_vent), so it stays the
+/// ~W-Toffoli fast path even when KAL_VENT_MODADD is set. Value-exact:
+/// `target ^= ctrl & (u > v)` over the top `compare_bits` of (u, v).
+pub(crate) fn dialog_gcd_ccx_cmp_gt_truncated_into_width_fast(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    ctrl: QubitId,
+    target: QubitId,
+    compare_bits: usize,
+) {
+    assert_eq!(u.len(), v.len());
+    assert!(!u.is_empty());
+    let compare_bits = compare_bits.min(u.len()).max(1);
+    let start = u.len() - compare_bits;
+    ccx_cmp_lt_into_fast_no_vent(b, &v[start..], &u[start..], ctrl, target);
+}
+
 pub(crate) fn dialog_gcd_branch_bits_host_comparator_enabled() -> bool {
     std::env::var("DIALOG_GCD_BRANCH_BITS_HOST_COMPARATOR")
         .ok()
@@ -1242,6 +1262,24 @@ pub(crate) fn dialog_gcd_cmod_add_materialized_pseudomersenne_with_clean_scratch
     }
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1u64));
 
+    // CURRIED ADD-side overflow clean (HJNRS arXiv:2001.09580 §3). When enabled
+    // and exact (full-width, no truncation), we materialize f = ctrl*a ONLY for
+    // the raw sum, then UNCOMPUTE AND FREE f BEFORE the overflow-clean comparator,
+    // and run the clean curried directly on `a` controlled by `ctrl`:
+    //     acc_ovf ^= ctrl & (acc < a).
+    // This is value/phase identical to the materialized clean acc_ovf ^= (acc < f)
+    // -- for ctrl=1, f=a so (acc<a)==(acc<f); for ctrl=0, f=0 and both the curried
+    // `ctrl & ...` and (acc<0) are never set. The win: TRACE_EACH_PEAK shows the
+    // GLOBAL qubit peak sits at this overflow-clean instant, where the materialized
+    // path keeps the full N-qubit f LIVE alongside the comparator's own N+1 fresh
+    // carries; freeing f first shaves N qubits off that exact instant. The clean
+    // uses the single-pass measured controlled comparator with FRESH |0> carries
+    // (ccx_cmp_lt_into_fast_no_vent), whose executed Toffoli count is unconditional
+    // CCX -> hash-independent. Works for windowed and plain raw-sum alike.
+    let curry_clean = dialog_gcd_curry_apply_add_enabled()
+        && !dialog_gcd_raw_apply_truncated_clean_enabled()
+        && N >= 2;
+
     let f = b.alloc_qubits(N);
     b.set_phase("dialog_gcd_materialized_special_load_addend");
     for i in 0..N {
@@ -1270,12 +1308,35 @@ pub(crate) fn dialog_gcd_cmod_add_materialized_pseudomersenne_with_clean_scratch
         cadd_nbit_const_fast(b, &acc[..DIALOG_GCD_SPECIAL_ADD_LSBS], c, acc_ovf);
     }
 
+    if curry_clean {
+        // Currying: f is needed ONLY for the raw sum (done). Uncompute + FREE it
+        // NOW, before the overflow-clean comparator, so f is not live at the
+        // global-peak clean instant. Then run the clean curried on `a`/`ctrl`.
+        b.set_phase("dialog_gcd_materialized_special_clear_addend");
+        for i in 0..N {
+            let m = b.alloc_bit();
+            b.hmr(f[i], m);
+            b.cz_if(ctrl, a[i], m);
+        }
+        b.free_vec(&f);
+
+        b.set_phase("dialog_gcd_materialized_special_overflow_clean");
+        // acc_ovf ^= ctrl & (acc < a). Full width, fresh measured |0> carries.
+        // Identical decision to the materialized acc_ovf ^= (acc < ctrl*a) for
+        // both ctrl values, for every input (no truncation).
+        ccx_cmp_lt_into_fast_no_vent(b, acc, a, ctrl, acc_ovf);
+        unext_reg(b, acc_ovf);
+        return;
+    }
+
     b.set_phase("dialog_gcd_materialized_special_overflow_clean");
     if dialog_gcd_raw_apply_truncated_clean_enabled() {
         let compare_start = N - dialog_gcd_special_overflow_clean_compare_bits(step);
         cmp_lt_into_fast(b, &acc[compare_start..], &f[compare_start..], acc_ovf);
     } else {
-        cmp_lt_into(b, acc, &f, acc_ovf);
+        // Forward overflow-clean: full-width measured (Gidney) comparator.
+        // Exact for every operand value (no truncation); ~N CCX vs slow 2N.
+        cmp_lt_into_measured_full(b, acc, &f, acc_ovf);
     }
     unext_reg(b, acc_ovf);
 
@@ -2384,6 +2445,151 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_with_clean_scratch
     }
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1u64));
 
+    if dialog_gcd_curry_apply_sub_enabled() && !dialog_gcd_raw_apply_truncated_clean_enabled() {
+        // CURRIED controlled modular subtract: acc := (acc - ctrl*a) mod p, with
+        // NO materialized f = ctrl*a register (HJNRS arXiv:2001.09580 §3). The
+        // operand `a` is used DIRECTLY as the controlled subtrahend; only O(1)
+        // extra ancilla (acc_ovf + an N+1th |0> subtrahend bit + c_in + scratch).
+        // TRACE_EACH_PEAK shows the global qubit peak (2058 after the ADD-side
+        // curry) is pinned by this SUB-side underflow-clean instant, where the
+        // materialized path keeps the full N-qubit f LIVE; freeing f (here: never
+        // materializing it) shaves N qubits off that exact instant.
+        let _ = clean_scratch; // honest path uses fresh O(1) ancilla, not borrowed
+
+        // SUB-side curry, MEASURED raw difference + register-free clean (mirror of
+        // the ADD-side curry, group 14b). f = ctrl*a is materialized ONLY for the
+        // cheap MEASURED (Gidney) raw difference, then UNCOMPUTED AND FREED BEFORE
+        // the underflow-clean comparator -- so f is NOT live at the global-peak
+        // clean instant (TRACE_EACH_PEAK: dialog_gcd_materialized_special_underflow
+        // _clean). This keeps the raw difference's ~1 CCX/bit measured cost (NOT
+        // the coherent controlled Cuccaro's ~3 CCX/bit) so the Toffoli count stays
+        // at the materialized baseline, while still shaving f's N=256 qubits off the
+        // peak. The clean then runs the register-free modular-borrow correction on
+        // `a`/`ctrl` directly.
+        let f = b.alloc_qubits(N);
+        b.set_phase("dialog_gcd_materialized_special_load_subtrahend");
+        for i in 0..N {
+            b.ccx(ctrl, a[i], f[i]);
+        }
+
+        let (acc_ext, acc_ovf) = ext_reg(b, acc);
+
+        b.set_phase("dialog_gcd_materialized_special_raw_difference");
+        // Raw difference acc_ext -= f, BIT-IDENTICAL to the materialized baseline
+        // path (same gate sequence, so the executed Toffoli count is unchanged):
+        // honest mode keeps DIALOG_GCD_MEASURED_APPLY_SUB=0, so use the coherent
+        // sub_nbit_qq exactly as the materialized `else` branch.
+        if dialog_gcd_measured_apply_sub_enabled() {
+            let c_in = b.alloc_qubit();
+            if let Some(w) = dialog_gcd_apply_window_blocks() {
+                cuccaro_sub_fast_windowed_low_to_ext(b, &f, &acc_ext, c_in, w);
+            } else {
+                let f_ovf = b.alloc_qubit();
+                let mut f_ext = f.clone();
+                f_ext.push(f_ovf);
+                cuccaro_sub_fast(b, &f_ext, &acc_ext, c_in);
+                b.free(f_ovf);
+            }
+            b.free(c_in);
+        } else {
+            let f_ovf = b.alloc_qubit();
+            let mut f_ext = f.clone();
+            f_ext.push(f_ovf);
+            sub_nbit_qq(b, &f_ext, &acc_ext);
+            b.free(f_ovf);
+        }
+
+        // Uncompute + FREE f NOW, before the clean, so it is not live at the peak.
+        b.set_phase("dialog_gcd_materialized_special_clear_subtrahend");
+        for i in 0..N {
+            let m = b.alloc_bit();
+            b.hmr(f[i], m);
+            b.cz_if(ctrl, a[i], m);
+        }
+        b.free_vec(&f);
+
+        b.set_phase("dialog_gcd_materialized_special_underflow_fold");
+        if let Some(w) = dialog_gcd_special_fold_carry_trunc_window(step) {
+            csub_nbit_const_direct_trunc_fast(
+                b,
+                &acc[..DIALOG_GCD_SPECIAL_ADD_LSBS],
+                c,
+                acc_ovf,
+                w,
+            );
+        } else {
+            csub_nbit_const_fast(b, &acc[..DIALOG_GCD_SPECIAL_ADD_LSBS], c, acc_ovf);
+        }
+
+        b.set_phase("dialog_gcd_materialized_special_underflow_clean");
+        // REGISTER-FREE modular-borrow correction, PHASE-EXACT to the materialized
+        // clean. The materialized clean is:
+        //     x(acc_ovf); mod_neg(f); cmp_lt(acc, f, acc_ovf); mod_neg(f)
+        // with f = ctrl*a, i.e. acc_ovf ^= 1 ^ (acc < (p - ctrl*a) mod p).
+        // We reproduce this WITHOUT materializing f by negating `a` IN PLACE
+        // (bracketed -> `a` restored) and gating the comparator on `ctrl`:
+        //     x(acc_ovf);
+        //     mod_neg(a);                              a := (p - a) mod p
+        //     acc_ovf ^= ctrl & (acc < (p - a) mod p); ccx_cmp_lt(acc, a, ctrl, acc_ovf)
+        //     mod_neg(a);                              restore a
+        // Equivalence for every input value:
+        //   ctrl=0: materialized f=0 -> g=(p-0) mod p=0 -> (acc<0)=false -> +0.
+        //           curried: ctrl & ... = 0 -> +0.                          [match]
+        //   ctrl=1: materialized g=(p-a) mod p; curried g=(p-a) mod p with
+        //           ctrl=1 -> (acc < (p-a) mod p).                          [match]
+        // (Includes a=0: both give g=0, contribution false.) This compares
+        // against the TRUE prime modulus p (via mod_neg's p+1 const add), NOT
+        // against 2^256-1 (the dropped r3 curry's bug). mod_neg routes through
+        // add_nbit_const_fast which is register-free under SECP_DIRECT_CONST_ARITH
+        // (no n-wide load_const), so f's N=256 qubits never exist at this peak
+        // instant. ccx_cmp_lt_into_fast is coherent under KAL_VENT_MODADD=1.
+        let _ = step;
+        if std::env::var("CURRY_SUB_DIAG_MATCLEAN").as_deref() == Ok("1") {
+            // DIAGNOSTIC: transiently materialize f ONLY for the clean and run the
+            // EXACT materialized clean. Isolates whether the phase leak is in the
+            // curried raw-difference path or in the register-free clean math.
+            let f = b.alloc_qubits(N);
+            for i in 0..N {
+                b.ccx(ctrl, a[i], f[i]);
+            }
+            b.x(acc_ovf);
+            mod_neg_inplace_fast(b, &f, p);
+            cmp_lt_into_measured_full(b, acc, &f, acc_ovf);
+            mod_neg_inplace_fast(b, &f, p);
+            for i in (0..N).rev() {
+                b.ccx(ctrl, a[i], f[i]);
+            }
+            b.free_vec(&f);
+            unext_reg(b, acc_ovf);
+            return;
+        }
+        // The materialized clean computes (f = ctrl*a):
+        //   x(acc_ovf); mod_neg(f); cmp_lt(acc,f,acc_ovf); mod_neg(f)
+        // i.e. acc_ovf ^= 1 ^ (acc < mod_neg(ctrl*a)). NOTE mod_neg(0) = p (not 0):
+        // ~0 + (p+1) = 2^256-1 + p+1 = p (mod 2^256). So:
+        //   ctrl=0: g=p   -> (acc<p)=1 -> acc_ovf ^= 1^1 = 0.        [no change]
+        //   ctrl=1: g=mod_neg(a) (=p-a for a>0, =p for a=0)
+        //                 -> acc_ovf ^= 1 ^ (acc < g) = ctrl & (acc >= g).
+        // Hence register-free: acc_ovf ^= ctrl & (acc >= mod_neg(a)). We negate `a`
+        // UNCONDITIONALLY (bracketed -> restored; mod_neg's phase self-cancels as a
+        // forward/inverse pair, proven by the CURRY_SUB_DIAG_MATCLEAN run) and gate
+        // BOTH the (acc>=g) flip AND the comparator on ctrl so ctrl=0 contributes 0
+        // exactly (NO unconditional x(acc_ovf), which was the prior bug that left
+        // acc_ovf=1 for every ctrl=0 step -> phase garbage). a=0 edge: mod_neg(0)=p,
+        // (acc>=p)=0 -> matches materialized's 0. Compares against the TRUE prime p.
+        // Use the SINGLE-PASS measured controlled comparator (~n CCX), the same
+        // one the ADD-side curry uses, NOT the KAL_VENT double-coherent
+        // ccx_cmp_lt_into_fast (~4n CCX) -- keeps the clean's Toffoli at the
+        // materialized baseline. Its hmr/cz_if AND-uncompute is phase-exact for
+        // every input (fresh |0> carries).
+        mod_neg_inplace_fast(b, a, p);
+        b.cx(ctrl, acc_ovf); // acc_ovf ^= ctrl  (the "1 ^" gated by ctrl)
+        ccx_cmp_lt_into_fast_no_vent(b, acc, a, ctrl, acc_ovf); // acc_ovf ^= ctrl & (acc < g)
+        mod_neg_inplace_fast(b, a, p); // restore a   => net: acc_ovf ^= ctrl & (acc >= g)
+        unext_reg(b, acc_ovf);
+        return;
+    }
+
     let f = b.alloc_qubits(N);
     b.set_phase("dialog_gcd_materialized_special_load_subtrahend");
     for i in 0..N {
@@ -2592,7 +2798,9 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_borrowed_subtrahen
     } else {
         b.x(acc_ovf);
         mod_neg_inplace_fast(b, f, p);
-        cmp_lt_into_fast(b, acc, f, acc_ovf);
+        // Reverse underflow-clean: full-width measured (Gidney) comparator.
+        // Operands are fresh full-N registers; exact for every value, ~N CCX.
+        cmp_lt_into_measured_full(b, acc, f, acc_ovf);
         mod_neg_inplace_fast(b, f, p);
     }
     unext_reg(b, acc_ovf);

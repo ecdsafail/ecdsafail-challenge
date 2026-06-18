@@ -320,10 +320,15 @@ pub(crate) fn mod_neg_inplace_fast(b: &mut B, v: &[QubitId], p: U256) {
     for &q in v {
         b.x(q);
     }
-    let n = v.len();
-    let ca = load_const(b, n, p.wrapping_add(U256::from(1)));
-    add_nbit_qq_fast(b, &ca, v);
-    unload_const(b, &ca, p.wrapping_add(U256::from(1)));
+    // v := ~v + (p+1) == -v (mod 2^n) for the secp range. Route the constant add
+    // through add_nbit_const_fast so the SECP_DIRECT_CONST_ARITH knob can pick the
+    // register-free direct const adder (n-1 carries + measured carry uncompute)
+    // instead of materializing a fresh n-qubit `load_const` register. Both are
+    // value- AND phase-identical (the direct adder's carry fixup cz_if(...,m) is
+    // conditioned on the measurement outcome, exact for every input); the only
+    // difference is the direct path drops the n-wide const register, which is the
+    // qubit pinning the apply-phase underflow-clean peak.
+    add_nbit_const_fast(b, v, p.wrapping_add(U256::from(1)));
 }
 
 
