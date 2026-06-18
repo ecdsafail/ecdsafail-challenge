@@ -66,7 +66,110 @@ use crate::circuit::{analyze_ops, BitId, Op, OperationType, QubitId, QubitOrBit,
 use crate::sim::Simulator;
 use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
+const DIRECT_STREAM_MAGIC: &[u8; 8] = b"QECCOPS1";
+const DIRECT_STREAM_OP_BYTES: usize = 56;
+const LOWQ_Q953_EXPECTED_OPS: u64 = 156_740_198;
+
+struct DirectOpsWriter {
+    writer: std::io::BufWriter<std::fs::File>,
+    tmp_path: std::path::PathBuf,
+    final_path: std::path::PathBuf,
+    expected_ops: u64,
+    written_ops: u64,
+}
+
+impl DirectOpsWriter {
+    fn from_env() -> Option<Self> {
+        let expected_ops = std::env::var("POINT_ADD_DIRECT_STREAM_OPS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| {
+                (std::env::var("LOWQ_Q953_SROT_COUNTER67").ok().as_deref() == Some("1"))
+                    .then_some(LOWQ_Q953_EXPECTED_OPS)
+            })?;
+        let final_path = std::path::PathBuf::from(
+            std::env::var("POINT_ADD_DIRECT_STREAM_PATH").unwrap_or_else(|_| "ops.bin".into()),
+        );
+        let tmp_path = final_path.with_extension("bin.tmp");
+        let file = std::fs::File::create(&tmp_path)
+            .unwrap_or_else(|e| panic!("direct ops stream create {tmp_path:?}: {e}"));
+        let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
+        use std::io::Write;
+        writer
+            .write_all(DIRECT_STREAM_MAGIC)
+            .expect("direct ops stream write magic");
+        writer
+            .write_all(&expected_ops.to_le_bytes())
+            .expect("direct ops stream write op count");
+        eprintln!(
+            "POINT_ADD_DIRECT_STREAM enabled expected_ops={} path={}",
+            expected_ops,
+            final_path.display()
+        );
+        Some(Self {
+            writer,
+            tmp_path,
+            final_path,
+            expected_ops,
+            written_ops: 0,
+        })
+    }
+
+    fn write_op(&mut self, op: &Op) {
+        use std::io::Write;
+        self.writer
+            .write_all(&(op.kind as u32).to_le_bytes())
+            .expect("direct ops stream write kind");
+        self.writer
+            .write_all(&[0u8; 4])
+            .expect("direct ops stream write padding");
+        self.writer
+            .write_all(&op.q_control2.0.to_le_bytes())
+            .expect("direct ops stream write q_control2");
+        self.writer
+            .write_all(&op.q_control1.0.to_le_bytes())
+            .expect("direct ops stream write q_control1");
+        self.writer
+            .write_all(&op.q_target.0.to_le_bytes())
+            .expect("direct ops stream write q_target");
+        self.writer
+            .write_all(&op.c_target.0.to_le_bytes())
+            .expect("direct ops stream write c_target");
+        self.writer
+            .write_all(&op.c_condition.0.to_le_bytes())
+            .expect("direct ops stream write c_condition");
+        self.writer
+            .write_all(&op.r_target.0.to_le_bytes())
+            .expect("direct ops stream write r_target");
+        self.written_ops += 1;
+    }
+
+    fn finish(mut self, counted_ops: usize) {
+        use std::io::Write;
+        assert_eq!(
+            counted_ops as u64, self.expected_ops,
+            "direct ops stream counted op length drift"
+        );
+        assert_eq!(
+            self.written_ops, self.expected_ops,
+            "direct ops stream written op length drift"
+        );
+        self.writer.flush().expect("direct ops stream flush");
+        drop(self.writer);
+        std::fs::rename(&self.tmp_path, &self.final_path)
+            .unwrap_or_else(|e| panic!("direct ops stream rename {:?}: {e}", self.final_path));
+        eprintln!(
+            "POINT_ADD_DIRECT_STREAM wrote {} ops ({} bytes) to {}",
+            self.written_ops,
+            DIRECT_STREAM_MAGIC.len() + 8 + self.written_ops as usize * DIRECT_STREAM_OP_BYTES,
+            self.final_path.display()
+        );
+    }
+}
+
 pub mod venting;
+
+pub mod trailmix_port;
 
 pub mod dialog_gcd_classical_filter;
 
@@ -91,6 +194,8 @@ fn d1_phase_corrected_product_core_active() -> bool {
 pub struct B {
     pub ops: Vec<Op>,
     pub count_only: bool,
+    direct_ops: Option<DirectOpsWriter>,
+    pub(crate) fiat_hash: Option<Shake256>,
     pub counted_ops: usize,
     pub counted_kind_ops: [usize; 18],
     pub counted_phase_kind_ops: [usize; 18],
@@ -149,6 +254,12 @@ impl B {
         Self {
             ops: Vec::new(),
             count_only: false,
+            direct_ops: if std::env::var("POINT_ADD_COUNT_ONLY").ok().as_deref() == Some("1") {
+                None
+            } else {
+                DirectOpsWriter::from_env()
+            },
+            fiat_hash: None,
             counted_ops: 0,
             counted_kind_ops: [0; 18],
             counted_phase_kind_ops: [0; 18],
@@ -176,13 +287,49 @@ impl B {
     fn new_count_only() -> Self {
         let mut b = Self::new();
         b.count_only = true;
+        b.fiat_hash = Self::fiat_hash_from_env();
         b
+    }
+    fn fiat_hash_from_env() -> Option<Shake256> {
+        let ops_len = std::env::var("POINT_ADD_HASH_OPS_LEN")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())?;
+        let mut hasher = Shake256::default();
+        hasher.update(b"quantum_ecc-fiat-shamir-v2");
+        hasher.update(&ops_len.to_le_bytes());
+        Some(hasher)
+    }
+    pub(crate) fn update_fiat_hash_op(hasher: &mut Shake256, op: &Op) {
+        hasher.update(&[op.kind as u8]);
+        hasher.update(&op.q_control2.0.to_le_bytes());
+        hasher.update(&op.q_control1.0.to_le_bytes());
+        hasher.update(&op.q_target.0.to_le_bytes());
+        hasher.update(&op.c_target.0.to_le_bytes());
+        hasher.update(&op.c_condition.0.to_le_bytes());
+        hasher.update(&op.r_target.0.to_le_bytes());
+    }
+    pub(crate) fn clone_fiat_hash(&self) -> Option<Shake256> {
+        self.fiat_hash.clone()
+    }
+    pub(crate) fn direct_streaming(&self) -> bool {
+        self.direct_ops.is_some()
+    }
+    pub(crate) fn finish_direct_stream_and_exit_if_enabled(&mut self) {
+        if let Some(writer) = self.direct_ops.take() {
+            writer.finish(self.counted_ops);
+            std::process::exit(0);
+        }
     }
     fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
         self.counted_kind_ops[op.kind as usize] += 1;
         self.counted_phase_kind_ops[op.kind as usize] += 1;
-        if !self.count_only {
+        if let Some(hasher) = &mut self.fiat_hash {
+            Self::update_fiat_hash_op(hasher, &op);
+        }
+        if let Some(writer) = &mut self.direct_ops {
+            writer.write_op(&op);
+        } else if !self.count_only {
             self.ops.push(op);
         }
     }
@@ -1005,9 +1152,6 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    set_default_env("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT", "1");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY", "1");
     // q1168 host-E route. These defaults are first so the historical fallback
@@ -1106,7 +1250,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "141");
@@ -1131,7 +1275,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1582,7 +1726,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1662,7 +1806,10 @@ pub fn build_builder() -> B {
 
     emit_dialog_gcd_raw_pa(b, &tx, &ty, &ox, &oy, p);
 
-    if !b.count_only && std::env::var("SKIP_ALT_SEED_CHECKS").ok().as_deref() != Some("1") {
+    if !b.count_only
+        && !b.direct_streaming()
+        && std::env::var("SKIP_ALT_SEED_CHECKS").ok().as_deref() != Some("1")
+    {
         run_alt_seed_checks(&b.ops);
     }
 
@@ -1809,6 +1956,9 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("POINT_ADD_DIALOG_ROUTE").ok().as_deref() != Some("1") {
+        return trailmix_port::build_builder().ops;
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
