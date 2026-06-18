@@ -68,6 +68,8 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
 pub mod venting;
 
+pub mod trailmix_port;
+
 pub mod dialog_gcd_classical_filter;
 
 mod emit;
@@ -91,6 +93,7 @@ fn d1_phase_corrected_product_core_active() -> bool {
 pub struct B {
     pub ops: Vec<Op>,
     pub count_only: bool,
+    pub(crate) fiat_hash: Option<Shake256>,
     pub counted_ops: usize,
     pub counted_kind_ops: [usize; 18],
     pub counted_phase_kind_ops: [usize; 18],
@@ -149,6 +152,7 @@ impl B {
         Self {
             ops: Vec::new(),
             count_only: false,
+            fiat_hash: None,
             counted_ops: 0,
             counted_kind_ops: [0; 18],
             counted_phase_kind_ops: [0; 18],
@@ -176,12 +180,37 @@ impl B {
     fn new_count_only() -> Self {
         let mut b = Self::new();
         b.count_only = true;
+        b.fiat_hash = Self::fiat_hash_from_env();
         b
+    }
+    fn fiat_hash_from_env() -> Option<Shake256> {
+        let ops_len = std::env::var("POINT_ADD_HASH_OPS_LEN")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())?;
+        let mut hasher = Shake256::default();
+        hasher.update(b"quantum_ecc-fiat-shamir-v2");
+        hasher.update(&ops_len.to_le_bytes());
+        Some(hasher)
+    }
+    pub(crate) fn update_fiat_hash_op(hasher: &mut Shake256, op: &Op) {
+        hasher.update(&[op.kind as u8]);
+        hasher.update(&op.q_control2.0.to_le_bytes());
+        hasher.update(&op.q_control1.0.to_le_bytes());
+        hasher.update(&op.q_target.0.to_le_bytes());
+        hasher.update(&op.c_target.0.to_le_bytes());
+        hasher.update(&op.c_condition.0.to_le_bytes());
+        hasher.update(&op.r_target.0.to_le_bytes());
+    }
+    pub(crate) fn clone_fiat_hash(&self) -> Option<Shake256> {
+        self.fiat_hash.clone()
     }
     fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
         self.counted_kind_ops[op.kind as usize] += 1;
         self.counted_phase_kind_ops[op.kind as usize] += 1;
+        if let Some(hasher) = &mut self.fiat_hash {
+            Self::update_fiat_hash_op(hasher, &op);
+        }
         if !self.count_only {
             self.ops.push(op);
         }
@@ -1806,6 +1835,9 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("POINT_ADD_DIALOG_ROUTE").ok().as_deref() != Some("1") {
+        return trailmix_port::build_builder().ops;
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
