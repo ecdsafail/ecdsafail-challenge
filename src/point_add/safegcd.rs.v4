@@ -1,0 +1,362 @@
+//! Safegcd v2-s5: negate-before-dm fix + NX=259 + high-bit correction in apply_inverse.
+//! LOG_BITS=4 stores b0,b1,e_odd,e_neg per step.
+use super::*;
+use crate::point_add::N;
+use alloy_primitives::U256;
+
+const DEFAULT_SAFEGCD_ITERS: usize = 741;
+const LOG_BITS: usize = 4; // b0, b1, e_odd, e_neg
+const NX: usize = N + 3; // 259-bit registers (N=256, +3 for overflow safety)
+
+pub(crate) fn safegcd_iters() -> usize {
+    std::env::var("SAFEGCD_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_SAFEGCD_ITERS)
+}
+pub(crate) fn safegcd_enabled() -> bool { std::env::var("SAFEGCD").ok().as_deref() == Some("1") }
+
+fn cswap(b: &mut B, ctrl: QubitId, a: QubitId, bb: QubitId) {
+    if a == bb { return; } b.cx(bb, a); b.ccx(ctrl, a, bb); b.cx(bb, a);
+}
+fn load_u256_ext(b: &mut B, reg: &[QubitId], val: U256) {
+    for i in 0..N { if val.bit(i) { b.x(reg[i]); } }
+}
+fn cnot_reg(b: &mut B, ctrl: QubitId, reg: &[QubitId]) {
+    for &q in reg { b.cx(ctrl, q); }
+}
+
+fn arith_shift_right_w(b: &mut B, reg: &[QubitId], sign_anc: QubitId, w: usize) {
+    b.cx(reg[w-1], sign_anc);
+    for i in 0..w-1 { b.swap(reg[i], reg[i+1]); }
+    b.swap(sign_anc, reg[w-1]);
+}
+fn arith_unshift_right_w(b: &mut B, reg: &[QubitId], sign_anc: QubitId, w: usize) {
+    b.swap(sign_anc, reg[w-1]);
+    for i in (0..w-1).rev() { b.swap(reg[i], reg[i+1]); }
+    b.cx(reg[w-1], sign_anc);
+}
+fn logical_shift_right_w(b: &mut B, reg: &[QubitId], w: usize) {
+    for i in 0..w-1 { b.swap(reg[i], reg[i+1]); }
+}
+fn logical_unshift_right_w(b: &mut B, reg: &[QubitId], w: usize) {
+    for i in (0..w-1).rev() { b.swap(reg[i], reg[i+1]); }
+}
+
+const DB: usize = 12;
+fn delta_inc(b: &mut B, d: &[QubitId]) {
+    let c = b.alloc_qubits(DB-1);
+    b.x(d[0]); b.cx(d[0], c[0]);
+    for i in 1..DB-1 { b.ccx(d[i], c[i-1], c[i]); }
+    for i in 1..DB { b.cx(c[i-1], d[i]); }
+    for i in (1..DB-1).rev() { b.ccx(d[i], c[i-1], c[i]); }
+    b.cx(d[0], c[0]); b.free_vec(&c);
+}
+fn delta_dec(b: &mut B, d: &[QubitId]) {
+    for i in 0..DB { b.x(d[i]); } delta_inc(b, d); for i in 0..DB { b.x(d[i]); }
+}
+fn cdelta_inc(b: &mut B, d: &[QubitId], ctrl: QubitId) {
+    let anc = b.alloc_qubit();
+    let c = b.alloc_qubits(DB-1);
+    b.cx(ctrl, d[0]);
+    b.ccx(ctrl, d[0], c[0]);
+    for i in 1..DB-1 {
+        b.ccx(d[i], c[i-1], anc);
+        b.ccx(ctrl, anc, c[i]);
+        b.ccx(d[i], c[i-1], anc);
+    }
+    for i in 1..DB { b.ccx(ctrl, c[i-1], d[i]); }
+    for i in (1..DB-1).rev() {
+        b.ccx(d[i], c[i-1], anc);
+        b.ccx(ctrl, anc, c[i]);
+        b.ccx(d[i], c[i-1], anc);
+    }
+    b.ccx(ctrl, d[0], c[0]);
+    b.free(anc);
+    b.free_vec(&c);
+}
+fn cdelta_dec(b: &mut B, d: &[QubitId], ctrl: QubitId) {
+    for i in 0..DB { b.cx(ctrl, d[i]); }
+    cdelta_inc(b, d, ctrl);
+    for i in 0..DB { b.cx(ctrl, d[i]); }
+}
+fn delta_nz_compute(b: &mut B, delta: &[QubitId]) -> (QubitId, Vec<QubitId>) {
+    let s = b.alloc_qubits(6); let nz = s[5];
+    for p in 0..3 { let a=delta[2*p]; let bb=delta[2*p+1]; let c=s[p]; b.cx(a,c); b.cx(bb,c); b.ccx(a,bb,c); }
+    b.cx(s[0],s[3]); b.cx(s[1],s[3]); b.ccx(s[0],s[1],s[3]);
+    b.cx(s[2],s[4]);
+    b.cx(s[3],nz); b.cx(s[4],nz); b.ccx(s[3],s[4],nz); (nz, s)
+}
+fn delta_nz_uncompute(b: &mut B, delta: &[QubitId], s: &[QubitId]) {
+    let nz=s[5]; b.ccx(s[3],s[4],nz); b.cx(s[4],nz); b.cx(s[3],nz); b.cx(s[2],s[4]);
+    b.ccx(s[0],s[1],s[3]); b.cx(s[1],s[3]); b.cx(s[0],s[3]);
+    for p in (0..3).rev() { let a=delta[2*p]; let bb=delta[2*p+1]; let c=s[p]; b.ccx(a,bb,c); b.cx(bb,c); b.cx(a,c); }
+}
+
+pub(crate) fn emit_safegcd_tobitvector_steps(
+    b: &mut B, u: &[QubitId], v: &[QubitId],
+    d: &[QubitId], e: &[QubitId],
+    dialog_log: &[QubitId], have_de: bool, p: U256,
+    sign_log: &[QubitId],
+) -> Vec<QubitId> {
+    let iters = safegcd_iters();
+    assert!(dialog_log.len() >= LOG_BITS*iters);
+    if have_de { assert_eq!(d.len(), NX); assert_eq!(e.len(), NX); }
+    assert_eq!(u.len(), NX); assert_eq!(v.len(), NX);
+
+    let one = b.alloc_qubits(NX); b.x(one[0]);
+    let delta = b.alloc_qubits(DB); b.x(delta[0]);
+
+    for step in 0..iters {
+        let b0 = dialog_log[LOG_BITS*step];
+        let b1 = dialog_log[LOG_BITS*step + 1];
+        let e_odd = if have_de { dialog_log[LOG_BITS*step + 2] } else { QubitId(0) };
+        let e_neg = if have_de { dialog_log[LOG_BITS*step + 3] } else { QubitId(0) };
+
+        b.cx(v[0], b0);
+
+        let (dnz, dscr) = delta_nz_compute(b, &delta);
+        let ds = b.alloc_qubit(); b.cx(delta[DB-1], ds); b.x(ds);
+        let t1 = b.alloc_qubit(); b.ccx(ds, dnz, t1); b.ccx(t1, b0, b1); b.ccx(ds, dnz, t1);
+        b.free(t1); b.x(ds); b.cx(delta[DB-1], ds); b.free(ds);
+        delta_nz_uncompute(b, &delta, &dscr);
+
+        for i in 0..NX { cswap(b, b1, u[i], v[i]); }
+        if have_de { for i in 0..NX { cswap(b, b1, d[i], e[i]); } }
+
+        cnot_reg(b, b1, &v[..NX]);
+        if have_de { cnot_reg(b, b1, &e[..NX]); }
+
+        let b1b0 = b.alloc_qubit(); b.ccx(b1, b0, b1b0);
+        let ci1 = b.alloc_qubit(); let s1 = b.alloc_qubit();
+        cuccaro_add_ctrl_lowq(b, &one, &v[..NX], b1b0, ci1, s1);
+        b.free(s1); b.free(ci1);
+        if have_de {
+            let cd = b.alloc_qubit(); let sd = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &one, &e[..NX], b1b0, cd, sd);
+            b.free(sd); b.free(cd);
+        }
+        b.free(b1b0);
+
+        let ci = b.alloc_qubit(); let sc = b.alloc_qubit();
+        cuccaro_add_ctrl_lowq(b, &u[..NX], &v[..NX], b0, ci, sc);
+        b.free(sc); b.free(ci);
+        if have_de {
+            let cd = b.alloc_qubit(); let sd = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &d[..NX], &e[..NX], b0, cd, sd);
+            b.free(sd); b.free(cd);
+        }
+
+        // v2-s5: negate-before-dm fix for e register
+        if have_de {
+            // Save e_odd (parity) and e_neg (sign) after additions
+            b.cx(e[0], e_odd);
+            b.cx(e[NX-1], e_neg);
+
+            // Step 1: If e_neg, negate to get |e| = NOT(e) + 1
+            cnot_reg(b, e_neg, &e[..NX]);
+            let cn = b.alloc_qubit(); let sn = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &one, &e[..NX], e_neg, cn, sn);
+            b.free(sn); b.free(cn);
+
+            // Step 2: dm — add p if odd (using saved e_odd which equals parity of |e|)
+            let p_reg = b.alloc_qubits(NX); load_u256_ext(b, &p_reg, p);
+            let cm = b.alloc_qubit(); let sm = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &p_reg, &e[..NX], e_odd, cm, sm);
+            b.free(sm); b.free(cm);
+            load_u256_ext(b, &p_reg, p); b.free_vec(&p_reg);
+
+            // Step 3: shift right (logical, no sign fill needed after negate)
+            logical_shift_right_w(b, e, NX);
+
+            // Step 4: If e_neg, restore sign: p - dm(|e|) = NOT(e) + 1 + p
+            cnot_reg(b, e_neg, &e[..NX]);
+            let cr = b.alloc_qubit(); let sr = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &one, &e[..NX], e_neg, cr, sr);
+            b.free(sr); b.free(cr);
+            let p_reg2 = b.alloc_qubits(NX); load_u256_ext(b, &p_reg2, p);
+            let cr2 = b.alloc_qubit(); let sr2 = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &p_reg2, &e[..NX], e_neg, cr2, sr2);
+            b.free(sr2); b.free(cr2);
+            load_u256_ext(b, &p_reg2, p); b.free_vec(&p_reg2);
+        }
+
+        // Delta update
+        let b1s = b.alloc_qubit(); b.cx(b1, b1s);
+        for i in 0..DB { b.cx(b1s, delta[i]); }
+        delta_inc(b, &delta);
+        cdelta_inc(b, &delta, b1s);
+        b.cx(b1, b1s); b.free(b1s);
+
+        arith_shift_right_w(b, v, sign_log[step], NX);
+    }
+
+    b.x(one[0]); b.free_vec(&one);
+    delta
+}
+
+pub(crate) fn emit_safegcd_tobitvector_steps_reverse(
+    b: &mut B, u: &[QubitId], v: &[QubitId],
+    d: &[QubitId], e: &[QubitId],
+    dialog_log: &[QubitId], have_de: bool, p: U256,
+    sign_log: &[QubitId],
+    delta: &[QubitId],
+) {
+    let iters = safegcd_iters();
+    assert!(dialog_log.len() >= LOG_BITS*iters);
+    if have_de { assert_eq!(d.len(), NX); assert_eq!(e.len(), NX); }
+    assert_eq!(u.len(), NX); assert_eq!(v.len(), NX);
+    assert_eq!(delta.len(), DB);
+
+    let one = b.alloc_qubits(NX); b.x(one[0]);
+
+    for step in (0..iters).rev() {
+        let b0 = dialog_log[LOG_BITS*step];
+        let b1 = dialog_log[LOG_BITS*step + 1];
+        let e_odd = if have_de { dialog_log[LOG_BITS*step + 2] } else { QubitId(0) };
+        let e_neg = if have_de { dialog_log[LOG_BITS*step + 3] } else { QubitId(0) };
+
+        // Reverse v shift first (last forward op)
+        arith_unshift_right_w(b, v, sign_log[step], NX);
+
+        // Reverse delta update
+        let b1s = b.alloc_qubit(); b.cx(b1, b1s);
+        cdelta_dec(b, &delta, b1s);
+        delta_dec(b, &delta);
+        for i in 0..DB { b.cx(b1s, delta[i]); }
+        b.cx(b1, b1s); b.free(b1s);
+
+        // Reverse e operations (happened before delta/v in forward, so after in reverse)
+        if have_de {
+            // Undo Step 4: reverse NOT(e) + 1 + p → sub p, sub 1, NOT
+            let p_reg2 = b.alloc_qubits(NX); load_u256_ext(b, &p_reg2, p);
+            let cr2 = b.alloc_qubit(); let sr2 = b.alloc_qubit();
+            cuccaro_sub_ctrl_lowq(b, &p_reg2, &e[..NX], e_neg, cr2, sr2);
+            b.free(sr2); b.free(cr2);
+            load_u256_ext(b, &p_reg2, p); b.free_vec(&p_reg2);
+            let cr = b.alloc_qubit(); let sr = b.alloc_qubit();
+            cuccaro_sub_ctrl_lowq(b, &one, &e[..NX], e_neg, cr, sr);
+            b.free(sr); b.free(cr);
+            cnot_reg(b, e_neg, &e[..NX]);
+
+            // Undo Step 3: unshift right
+            logical_unshift_right_w(b, e, NX);
+
+            // Undo Step 2: subtract p if odd
+            let p_reg = b.alloc_qubits(NX); load_u256_ext(b, &p_reg, p);
+            let cm = b.alloc_qubit(); let sm = b.alloc_qubit();
+            cuccaro_sub_ctrl_lowq(b, &p_reg, &e[..NX], e_odd, cm, sm);
+            b.free(sm); b.free(cm);
+            load_u256_ext(b, &p_reg, p); b.free_vec(&p_reg);
+
+            // Undo Step 1: reverse negate → sub 1, NOT
+            let cn = b.alloc_qubit(); let sn = b.alloc_qubit();
+            cuccaro_sub_ctrl_lowq(b, &one, &e[..NX], e_neg, cn, sn);
+            b.free(sn); b.free(cn);
+            cnot_reg(b, e_neg, &e[..NX]);
+
+            // Uncompute e_odd, e_neg
+            b.cx(e[NX-1], e_neg);
+            b.cx(e[0], e_odd);
+        }
+
+        // Reverse cswap/additions
+        let ci = b.alloc_qubit(); let sc = b.alloc_qubit();
+        cuccaro_sub_ctrl_lowq(b, &u[..NX], &v[..NX], b0, ci, sc);
+        b.free(sc); b.free(ci);
+        if have_de {
+            let cd = b.alloc_qubit(); let sd = b.alloc_qubit();
+            cuccaro_sub_ctrl_lowq(b, &d[..NX], &e[..NX], b0, cd, sd);
+            b.free(sd); b.free(cd);
+        }
+
+        let b1b0 = b.alloc_qubit(); b.ccx(b1, b0, b1b0);
+        let ci1 = b.alloc_qubit(); let s1 = b.alloc_qubit();
+        cuccaro_sub_ctrl_lowq(b, &one, &v[..NX], b1b0, ci1, s1);
+        b.free(s1); b.free(ci1);
+        if have_de {
+            let cd = b.alloc_qubit(); let sd = b.alloc_qubit();
+            cuccaro_sub_ctrl_lowq(b, &one, &e[..NX], b1b0, cd, sd);
+            b.free(sd); b.free(cd);
+        }
+        b.ccx(b1, b0, b1b0); b.free(b1b0);
+
+        if have_de { cnot_reg(b, b1, &e[..NX]); }
+        cnot_reg(b, b1, &v[..NX]);
+
+        for i in 0..NX { cswap(b, b1, u[i], v[i]); }
+        if have_de { for i in 0..NX { cswap(b, b1, d[i], e[i]); } }
+
+        let (dnz, dscr) = delta_nz_compute(b, &delta);
+        let ds = b.alloc_qubit(); b.cx(delta[DB-1], ds); b.x(ds);
+        let t1 = b.alloc_qubit(); b.ccx(ds, dnz, t1); b.ccx(t1, b0, b1); b.ccx(ds, dnz, t1);
+        b.free(t1); b.x(ds); b.cx(delta[DB-1], ds); b.free(ds);
+        delta_nz_uncompute(b, &delta, &dscr);
+
+        b.cx(v[0], b0);
+    }
+
+    b.x(delta[0]);
+    b.x(one[0]); b.free_vec(&one);
+}
+
+fn safegcd_apply_inverse(b: &mut B, target: &[QubitId], d: &[QubitId], u: &[QubitId], p: U256) {
+    // Copy low 256 bits of d to target
+    for i in 0..N { b.cx(d[i], target[i]); }
+    
+    // Correct for high bits of d: d mod p = d_lo + Σ (d[i] * 2^i mod p)
+    // For NX=259, high bits are d[256], d[257], d[258]
+    // 2^256 mod p = 2^32 + 977
+    let c: u64 = (1u64 << 32) + 977; // 2^32 + 977
+    for i in N..NX {
+        let shift = i - N;
+        // correction = 2^shift * c mod p (always fits in N bits for small shifts)
+        let correction = (U256::from(1u64) << shift) * U256::from(c);
+        if correction < p {
+            let corr_reg = b.alloc_qubits(N); // N-bit register
+            load_u256_ext(b, &corr_reg, correction);
+            let ci = b.alloc_qubit(); let sc = b.alloc_qubit();
+            cuccaro_add_ctrl_lowq(b, &corr_reg, &target[..N], d[i], ci, sc);
+            b.free(sc); b.free(ci);
+            load_u256_ext(b, &corr_reg, correction); // unload
+            b.free_vec(&corr_reg);
+        }
+    }
+    
+    // Apply u_neg correction: if u negative, target = p - target
+    let u_neg = b.alloc_qubit(); b.cx(u[NX-1], u_neg);
+    cnot_reg(b, u_neg, &target[..N]);
+    let p1c = b.alloc_qubits(N); load_u256_ext(b, &p1c, p + U256::from(1u64));
+    let ci = b.alloc_qubit(); let sc = b.alloc_qubit();
+    cuccaro_add_ctrl_lowq(b, &p1c, &target[..N], u_neg, ci, sc);
+    b.free(sc); b.free(ci);
+    load_u256_ext(b, &p1c, p + U256::from(1u64)); b.free_vec(&p1c);
+    b.cx(u[NX-1], u_neg); b.free(u_neg);
+}
+
+pub(crate) fn emit_safegcd_raw_quotient(b: &mut B, factor: &[QubitId], target: &[QubitId], p: U256) {
+    let u = b.alloc_qubits(NX); load_u256_ext(b, &u, p);
+    let v = b.alloc_qubits(NX); for i in 0..N { b.swap(v[i], factor[i]); }
+    let have_de = true;
+    let d = b.alloc_qubits(NX); let e = b.alloc_qubits(NX); b.x(e[0]);
+    let dialog_log = b.alloc_qubits(LOG_BITS * safegcd_iters());
+    let sign_log = b.alloc_qubits(safegcd_iters());
+
+    let delta = emit_safegcd_tobitvector_steps(b, &u, &v, &d, &e, &dialog_log, have_de, p, &sign_log);
+    safegcd_apply_inverse(b, target, &d, &u, p);
+    emit_safegcd_tobitvector_steps_reverse(b, &u, &v, &d, &e, &dialog_log, have_de, p, &sign_log, &delta);
+
+    b.free_vec(&delta);
+    b.free_vec(&sign_log);
+    b.x(e[0]); b.free_vec(&e); b.free_vec(&d);
+    for i in 0..N { b.swap(v[i], factor[i]); } b.free_vec(&v);
+    load_u256_ext(b, &u, p); b.free_vec(&u);
+    b.free_vec(&dialog_log);
+}
+
+pub(crate) fn emit_safegcd_raw_pa(
+    b: &mut B, tx: &[QubitId], ty: &[QubitId], ox: &[BitId], oy: &[BitId], p: U256,
+) {
+    mod_sub_qb(b, tx, ox, p); mod_sub_qb(b, ty, oy, p);
+    emit_safegcd_raw_quotient(b, tx, ty, p);
+    mod_sub_qb(b, tx, ox, p); mod_neg_inplace_fast(b, tx, p);
+    emit_dialog_gcd_raw_ipmul(b, tx, ty, p);
+    mod_sub_qb(b, ty, oy, p); mod_neg_inplace_fast(b, tx, p); mod_add_qb(b, tx, ox, p);
+}

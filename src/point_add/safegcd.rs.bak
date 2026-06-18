@@ -1,0 +1,247 @@
+//! Safegcd (Bernstein-Yang 2019) modular inversion for secp256k1.
+//!
+//! Self-contained module. Activates when `SAFEGCD=1`.
+
+use super::*;
+use crate::point_add::N;
+use alloy_primitives::U256;
+
+// ── Constants ──
+
+const DEFAULT_SAFEGCD_ITERS: usize = 741;
+
+pub(crate) fn safegcd_iters() -> usize {
+    std::env::var("SAFEGCD_ITERS")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_SAFEGCD_ITERS)
+}
+
+pub(crate) fn safegcd_enabled() -> bool {
+    std::env::var("SAFEGCD").ok().as_deref() == Some("1")
+}
+
+// ── Primitive gates ──
+
+fn cswap(b: &mut B, ctrl: QubitId, a: QubitId, bb: QubitId) {
+    if a == bb { return; }
+    b.cx(bb, a);
+    b.ccx(ctrl, a, bb);
+    b.cx(bb, a);
+}
+
+fn shift_right(b: &mut B, reg: &[QubitId]) {
+    let n = reg.len();
+    for i in 0..n.saturating_sub(1) { b.swap(reg[i], reg[i + 1]); }
+}
+
+fn unshift_right(b: &mut B, reg: &[QubitId]) {
+    let n = reg.len();
+    for i in (0..n.saturating_sub(1)).rev() { b.swap(reg[i], reg[i + 1]); }
+}
+
+fn load_u256(b: &mut B, reg: &[QubitId], val: U256) {
+    for i in 0..N { if val.bit(i) { b.x(reg[i]); } }
+}
+
+// ── Delta arithmetic (quantum ripple-carry) ──
+
+const DB: usize = 14;
+
+fn safegcd_delta_inc(b: &mut B, d: &[QubitId]) {
+    b.x(d[0]);
+    for i in 1..DB {
+        if i == 1 {
+            b.x(d[0]);
+            b.cx(d[0], d[1]);
+            b.x(d[0]);
+        }
+        if i == 2 {
+            b.ccx(d[0], d[1], d[2]);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Safegcd tobitvector (forward divsteps)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub(crate) fn emit_safegcd_tobitvector_steps(
+    b: &mut B, u: &[QubitId], v: &[QubitId], dialog_log: &[QubitId],
+) {
+    let iters = safegcd_iters();
+    assert_eq!(u.len(), N);
+    assert_eq!(v.len(), N);
+    assert!(dialog_log.len() >= 2 * iters);
+
+    let delta = b.alloc_qubits(DB);
+    b.x(delta[0]);
+
+    for step in 0..iters {
+        let b0 = dialog_log[2 * step];
+        let b1 = dialog_log[2 * step + 1];
+
+        // b0 = v[0]
+        b.cx(v[0], b0);
+
+        // b1 = (delta >= 0) AND b0 (approximation of delta > 0)
+        let ds = b.alloc_qubit();
+        b.cx(delta[DB - 1], ds); // ds = MSB (1=neg, 0=nonneg)
+        b.x(ds);                  // ds = NOT MSB = (delta >= 0)
+        b.ccx(ds, b0, b1);
+        b.x(ds);
+        b.cx(delta[DB - 1], ds);
+        b.free(ds);
+
+        // Conditional swap
+        for i in 0..N { cswap(b, b1, u[i], v[i]); }
+
+        // Conditional add (controlled by b0)
+        let c_in = b.alloc_qubit();
+        let scratch = b.alloc_qubit();
+        cuccaro_add_ctrl_lowq(b, &u[..N], &v[..N], b0, c_in, scratch);
+        b.free(scratch);
+        b.free(c_in);
+
+        // Delta update: delta += 1, then if b1: negate+add2
+        safegcd_delta_inc(b, &delta);
+
+        let b1s = b.alloc_qubit();
+        b.cx(b1, b1s);
+        for i in 0..DB { b.cx(b1s, delta[i]); }
+        safegcd_delta_inc(b, &delta); // complete negate
+        safegcd_delta_inc(b, &delta); // add 2
+        for i in 0..DB { b.cx(b1s, delta[i]); }
+        b.cx(b1, b1s);
+        b.free(b1s);
+
+        // Shift v right
+        shift_right(b, v);
+    }
+
+    b.x(delta[0]);
+    b.free_vec(&delta);
+}
+
+/// Reverse safegcd divsteps.
+pub(crate) fn emit_safegcd_tobitvector_steps_reverse(
+    b: &mut B, u: &[QubitId], v: &[QubitId], dialog_log: &[QubitId],
+) {
+    let iters = safegcd_iters();
+    assert_eq!(u.len(), N);
+    assert_eq!(v.len(), N);
+    assert!(dialog_log.len() >= 2 * iters);
+
+    let delta = b.alloc_qubits(DB);
+    b.x(delta[0]);
+
+    for step in (0..iters).rev() {
+        let b0 = dialog_log[2 * step];
+        let b1 = dialog_log[2 * step + 1];
+
+        unshift_right(b, v);
+
+        // Reverse add
+        let c_in = b.alloc_qubit();
+        let scratch = b.alloc_qubit();
+        cuccaro_sub_ctrl_lowq(b, &u[..N], &v[..N], b0, c_in, scratch);
+        b.free(scratch);
+        b.free(c_in);
+
+        // Reverse cswap
+        for i in 0..N { cswap(b, b1, u[i], v[i]); }
+
+        // Reverse branch bits
+        let ds = b.alloc_qubit();
+        b.cx(delta[DB - 1], ds);
+        b.x(ds);
+        b.ccx(ds, b0, b1);
+        b.x(ds);
+        b.cx(delta[DB - 1], ds);
+        b.free(ds);
+
+        b.cx(v[0], b0);
+    }
+
+    b.x(delta[0]);
+    b.free_vec(&delta);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Safegcd quotient
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Extract inverse from transcript (simplified apply).
+fn safegcd_apply_reverse(
+    b: &mut B, dialog_log: &[QubitId], x: &[QubitId], y: &[QubitId],
+) {
+    let iters = safegcd_iters();
+    assert!(dialog_log.len() >= 2 * iters);
+    assert_eq!(x.len(), N);
+    assert_eq!(y.len(), N);
+
+    for step in 0..iters {
+        let _b0 = dialog_log[2 * step];
+        let b1 = dialog_log[2 * step + 1];
+        for i in 0..N { cswap(b, b1, x[i], y[i]); }
+        // Conditional subtract: not implemented in simplified version
+        // The apply phase is best-effort for first pass
+    }
+}
+
+pub(crate) fn emit_safegcd_raw_quotient(
+    b: &mut B, factor: &[QubitId], target: &[QubitId], p: U256,
+) {
+    assert_eq!(factor.len(), N);
+    assert_eq!(target.len(), N);
+
+    let u = b.alloc_qubits(N);
+    load_u256(b, &u, p);
+
+    let v = b.alloc_qubits(N);
+    for i in 0..N { b.swap(v[i], factor[i]); }
+
+    let dialog_log = b.alloc_qubits(2 * safegcd_iters());
+
+    emit_safegcd_tobitvector_steps(b, &u, &v, &dialog_log);
+
+    // Apply: extract inverse
+    safegcd_apply_reverse(b, &dialog_log, target, factor);
+    // FIXME: proper apply with modular subtraction
+
+    emit_safegcd_tobitvector_steps_reverse(b, &u, &v, &dialog_log);
+
+    for i in 0..N { b.swap(v[i], factor[i]); }
+    b.free_vec(&v);
+    load_u256(b, &u, p);
+    b.free_vec(&u);
+    b.free_vec(&dialog_log);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Safegcd point-addition
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub(crate) fn emit_safegcd_raw_pa(
+    b: &mut B, tx: &[QubitId], ty: &[QubitId],
+    ox: &[BitId], oy: &[BitId], p: U256,
+) {
+    assert_eq!(tx.len(), N);
+    assert_eq!(ty.len(), N);
+    assert_eq!(ox.len(), N);
+    assert_eq!(oy.len(), N);
+
+    mod_sub_qb(b, tx, ox, p);
+    mod_sub_qb(b, ty, oy, p);
+
+    emit_safegcd_raw_quotient(b, tx, ty, p);
+
+    // Post-quotient steps (matching dialog GCD)
+    mod_sub_qb(b, tx, ox, p);
+    mod_neg_inplace_fast(b, tx, p);
+
+    emit_dialog_gcd_raw_ipmul(b, tx, ty, p);
+
+    mod_sub_qb(b, ty, oy, p);
+
+    mod_neg_inplace_fast(b, tx, p);
+    mod_add_qb(b, tx, ox, p);
+}
