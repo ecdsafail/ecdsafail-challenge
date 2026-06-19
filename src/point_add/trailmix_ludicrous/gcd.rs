@@ -196,7 +196,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
     }
 
     let subtracted = circ.alloc_qubit();
-    let swap_flag = circ.alloc_qubit();
+    let mut swap_flag: Option<QubitId> = None;
     let s2 = circ.alloc_qubit(); // the single jump=2 extra-shift flag
     let t1 = circ.alloc_qubit(); // step-0 shift1-fired flag (= x even)
 
@@ -247,23 +247,25 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         circ.cx(v[0], subtracted);
 
         // 3) swap decision. Step 0: u=q, v=x<q always, so (v<u)=1 deterministically,
-        //    so swap_flag = subtracted (one CX). Else the narrow top-k comparator
+        //    so swap = subtracted and no separate swap flag is needed. Else the narrow top-k comparator
         //    decides swap_flag ^= subtracted AND (v < u).
-        if i == 0 {
-            circ.cx(subtracted, swap_flag);
+        let swp = if i == 0 {
+            subtracted
         } else {
+            let sf = *swap_flag.get_or_insert_with(|| circ.alloc_qubit());
             controlled_swap_decision_v_lt_u(
                 circ,
                 &subtracted,
                 &v[..current_n],
                 &u[..current_n],
                 cmp_eff,
-                &swap_flag,
+                &sf,
             );
-        }
+            sf
+        };
         // 4) cswap(swap_flag, u, v).
         for j in 0..current_n {
-            circ.cswap(swap_flag, u[j], v[j]);
+            circ.cswap(swp, u[j], v[j]);
         }
         // 5) v -= subtracted * u (controlled mod-free subtract on the active width;
         //    post-swap v >= u so no borrow on a fitting input). X-sandwich add.
@@ -280,14 +282,25 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         // tape. Forward iter order matches apply_step_reverse's order, so the tape is
         // never materialized for the apply -> the apply adders run in the GCD's headroom.
         if let Some((xr, yr)) = apply_inv {
-            apply_step_reverse(circ, i, &subtracted, &swap_flag, &s2, &t1, xr, yr);
+            apply_step_reverse(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
         }
 
         // 6) record the symbol into fresh |0> slots (returning the ancilla to |0>).
         let slots: Vec<QubitId> = (0..sym_bits).map(|_| circ.alloc_qubit()).collect();
         circ.swap(subtracted, slots[0]);
-        circ.swap(swap_flag, slots[1]);
+        if i == 0 {
+            circ.cx(slots[0], slots[1]);
+        } else {
+            circ.swap(swp, slots[1]);
+        }
         circ.swap(s2, slots[2]);
+        if i == 0 {
+            debug_assert_eq!(window_plan[win_idx], super::codec::DialogCodec::Step0);
+            let data = super::codec::compress_step0_with_t1(circ, t1, &slots);
+            tape.extend(data);
+            win_idx += 1;
+            continue;
+        }
         pending.extend(slots);
 
         // When the current window's symbols are complete, compress it inline.
@@ -311,10 +324,10 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         circ.zero_and_free(q);
     }
     circ.zero_and_free(subtracted);
-    circ.zero_and_free(swap_flag);
+    if let Some(swap_flag) = swap_flag {
+        circ.zero_and_free(swap_flag);
+    }
     circ.zero_and_free(s2);
-    // Prepend t1: tape = [t1, win_0 code bits, ..]  (compressed layout).
-    tape.insert(0, t1);
     assert_eq!(tape.len(), super::codec::dialog_tape_qubits(n3, iters));
     tape
 }
@@ -351,8 +364,9 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
     circ.x(u[0]);
 
     let subtracted = circ.alloc_qubit();
-    let swap_flag = circ.alloc_qubit();
+    let mut swap_flag: Option<QubitId> = Some(circ.alloc_qubit());
     let s2 = circ.alloc_qubit();
+    let mut step0_t1: Option<QubitId> = None;
 
     for i in (0..iters).rev() {
         let current_n = (SCHED_J2[i] as usize).max(1);
@@ -372,13 +386,28 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             let cb = codec.code_bits();
             let tlen = tape.len();
             let data: Vec<QubitId> = tape.split_off(tlen - cb);
-            pending = codec.decompress_window(circ, &data);
+            if codec == super::codec::DialogCodec::Step0 {
+                let (t1, raw) = super::codec::decompress_step0_with_t1(circ, &data);
+                step0_t1 = Some(t1);
+                pending = raw;
+            } else {
+                pending = codec.decompress_window(circ, &data);
+            }
         }
         // Pull the last symbol (3 bits) off `pending` into the ancilla.
         let plen = pending.len();
         let cur: Vec<QubitId> = pending.split_off(plen - 3);
         circ.swap(subtracted, cur[0]);
-        circ.swap(swap_flag, cur[1]);
+        let swp = if i == 0 {
+            circ.cx(subtracted, cur[1]);
+            subtracted
+        } else {
+            let sf = *swap_flag
+                .as_ref()
+                .expect("swap flag live for non-step0 replay");
+            circ.swap(sf, cur[1]);
+            sf
+        };
         circ.swap(s2, cur[2]);
         // Free the 3 now-|0> symbol slots here -- before the apply -- so they are not
         // carried as dead live qubits through the apply + GCD-undo, where they would
@@ -393,8 +422,8 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         // order matching apply_step_forward's order, so the tape is never materialized
         // for the apply -> the apply adders run in the (reverse) GCD's headroom.
         if let Some((xr, yr)) = apply_fwd {
-            let t1 = tape[0];
-            apply_step_forward(circ, i, &subtracted, &swap_flag, &s2, &t1, xr, yr);
+            let t1 = step0_t1.unwrap_or(subtracted);
+            apply_step_forward(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
         }
 
         // Inverse step (reverse op order): sub^-1, cswap^-1, cmp^-1, subtracted^-1,
@@ -403,22 +432,20 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         controlled_add_active(circ, &subtracted, &u[..current_n], &v[..current_n]);
         // b) cswap^-1 (involutory).
         for j in 0..current_n {
-            circ.cswap(swap_flag, u[j], v[j]);
+            circ.cswap(swp, u[j], v[j]);
         }
         // c) uncompute swap_flag. Step 0 is a CNOT (swap_flag == subtracted). For
         //    i>=1 the flag holds `subtracted AND (v<u)`; clear it by measurement-vent
         //    (hmr + capped Z-recompute under push_condition) -- ~half the normal
         //    comparator's Toffoli, scorer-discounted ~0.5 more.
-        if i == 0 {
-            circ.cx(subtracted, swap_flag);
-        } else {
+        if i != 0 {
             super::comparator::swap_decision_uncompute_vented(
                 circ,
                 &subtracted,
                 &v[..current_n],
                 &u[..current_n],
                 cmp_eff,
-                &swap_flag,
+                &swp,
             );
         }
         // d) subtracted^-1: cx(v[0], subtracted) (v[0] still post-shift parity).
@@ -429,17 +456,22 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         circ.cx(v[0], s2);
         // f) shift1 inverse: i>=1 unconditional left-shift; i==0 gated on t1.
         if i == 0 {
-            controlled_left_shift(circ, &tape[0], &v[..current_n]);
-            circ.x(tape[0]);
-            circ.cx(v[0], tape[0]);
+            let t1 = step0_t1.expect("step0 t1 decompressed");
+            controlled_left_shift(circ, &t1, &v[..current_n]);
+            circ.x(t1);
+            circ.cx(v[0], t1);
         } else {
             left_shift(circ, &v[..current_n]);
         }
 
         // (symbol slots already freed before the apply, above). At i==0 drain t1.
         if i == 0 {
-            let t1 = tape.pop().expect("t1 prefix");
+            let t1 = step0_t1.take().expect("step0 t1 present");
             circ.zero_and_free(t1);
+        }
+        if i == 1 {
+            let sf = swap_flag.take().expect("swap flag still allocated");
+            circ.zero_and_free(sf);
         }
     }
     assert!(tape.is_empty(), "tape not fully drained");
@@ -455,7 +487,9 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         circ.zero_and_free(q);
     }
     circ.zero_and_free(subtracted);
-    circ.zero_and_free(swap_flag);
+    if let Some(swap_flag) = swap_flag {
+        circ.zero_and_free(swap_flag);
+    }
     circ.zero_and_free(s2);
 }
 
@@ -719,4 +753,3 @@ fn clear_zeroed_drift(circ: &mut B, reg: &[QubitId]) {
         }
     }
 }
-
