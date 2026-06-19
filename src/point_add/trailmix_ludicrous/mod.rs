@@ -135,13 +135,101 @@ fn step<T: Copy>(slot: &mut (Vec<T>, usize), exhausted: T) -> T {
     v
 }
 
+fn env_i32(name: &str, default: i32) -> i32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(default)
+}
+
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn sub_delta(v: usize, name: &str) -> usize {
+    if v == usize::MAX {
+        v
+    } else {
+        v.saturating_sub(env_usize(name, 0))
+    }
+}
+
+fn range_adjust_usize(idx: usize, v: usize, prefix: &str) -> usize {
+    if v == usize::MAX {
+        return v;
+    }
+    let adj = env_i32(&format!("{prefix}_ADJUST"), 0);
+    if adj == 0 {
+        return v;
+    }
+    let after = env_usize(&format!("{prefix}_ADJUST_AFTER"), 0);
+    let before = env_usize(&format!("{prefix}_ADJUST_BEFORE"), usize::MAX);
+    if idx >= after && idx < before {
+        (v as i32).saturating_add(adj).max(0) as usize
+    } else {
+        v
+    }
+}
+
+fn range_adjust_i32(idx: usize, v: i32, prefix: &str) -> i32 {
+    if v == i32::MAX || v < 0 {
+        return v;
+    }
+    let adj = env_i32(&format!("{prefix}_ADJUST"), 0);
+    if adj == 0 {
+        return v;
+    }
+    let after = env_usize(&format!("{prefix}_ADJUST_AFTER"), 0);
+    let before = env_usize(&format!("{prefix}_ADJUST_BEFORE"), usize::MAX);
+    if idx >= after && idx < before {
+        v.saturating_add(adj).max(0)
+    } else {
+        v
+    }
+}
+
 fn next_gcd_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX)) }
-fn next_cout_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX)) }
-fn next_fold() -> i32 { SCHED.with(|s| step(&mut s.borrow_mut().fold, i32::MAX)) }
+fn next_cout_k() -> usize {
+    SCHED.with(|s| {
+        let mut s = s.borrow_mut();
+        let idx = s.cout_k.1;
+        let v = sub_delta(step(&mut s.cout_k, usize::MAX), "TLM_COUT_K_DELTA");
+        range_adjust_usize(idx, v, "TLM_COUT_K")
+    })
+}
+fn next_fold() -> i32 {
+    SCHED.with(|s| {
+        let mut s = s.borrow_mut();
+        let idx = s.fold.1;
+        let mut v = step(&mut s.fold, i32::MAX);
+        let delta = env_usize("TLM_FOLD_DELTA", 0) as i32;
+        if v != i32::MAX && v >= 0 && delta != 0 {
+            v = v.saturating_sub(delta);
+        }
+        range_adjust_i32(idx, v, "TLM_FOLD")
+    })
+}
 fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255)) }
 fn next_cmp_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX)) }
-fn next_ffg() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().ffg, usize::MAX)) }
-fn next_hyb_v() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX)) }
+fn next_ffg() -> usize {
+    SCHED.with(|s| {
+        let mut s = s.borrow_mut();
+        let idx = s.ffg.1;
+        let v = sub_delta(step(&mut s.ffg, usize::MAX), "TLM_FFG_DELTA");
+        range_adjust_usize(idx, v, "TLM_FFG")
+    })
+}
+fn next_hyb_v() -> usize {
+    SCHED.with(|s| {
+        let mut s = s.borrow_mut();
+        let idx = s.hyb_v.1;
+        let v = sub_delta(step(&mut s.hyb_v, usize::MAX), "TLM_HYB_V_DELTA");
+        range_adjust_usize(idx, v, "TLM_HYB_V")
+    })
+}
 fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
 
 /// Load the product-min jump schedule onto the thread-local cursors.

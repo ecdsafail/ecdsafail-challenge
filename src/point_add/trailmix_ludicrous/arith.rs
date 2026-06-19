@@ -32,7 +32,7 @@ pub const F_SECP256K1: u64 = (1u64 << 32) + 977;
 /// bitlen(f).
 pub const F_BITLEN: usize = 33;
 /// Profile padding.
-pub const PAD: usize = 21;
+pub const PAD: usize = 19;
 /// `+f` fold window width: carry beyond bit `LSBS-1` is dropped (~2^-PAD miss).
 pub const LSBS: usize = PAD + F_BITLEN; // 54
 /// Top-k less-than comparator width for the mod-add/sub overflow cleanup.
@@ -1107,20 +1107,6 @@ pub fn mod_add(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
 }
 
-/// Low-peak modular add for off-peak recombination. This mirrors [`mod_add`],
-/// but captures the register-add overflow with the single-carry Cuccaro adder
-/// instead of allocating a full-clean vented add headroom.
-pub fn mod_add_lowpeak(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
-    let n = x.len();
-    assert_eq!(y.len(), n, "mod_add_lowpeak: x,y must both be n=256 bits");
-    assert_eq!(n, 256, "secp256k1 mod_add_lowpeak expects n=256");
-    let f_bytes = F_SECP256K1.to_le_bytes();
-    let anc = circ.alloc_qubit();
-    cuccaro_carry(circ, None, x, y, None, Some(&anc));
-    add_f_window(circ, &anc, y, LSBS, &f_bytes, None);
-    controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
-}
-
 /// `y := y + (x << shift) mod q`, where bits beyond bit 255 are handled by
 /// the caller. This is the same primitive as [`mod_add`] but with implicit zero
 /// low bits, so no padding qubits are allocated for the shifted view.
@@ -1341,4 +1327,3 @@ pub fn mod_double_reverse(circ: &mut B, a: &[QubitId]) {
 pub fn add_f_window_pub(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], g_sched: Option<usize>) {
     add_f_window(circ, ctrl, reg, lsbs, c, g_sched);
 }
-

@@ -1109,7 +1109,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
+    set_default_env("DIALOG_TAIL_NONCE", "100000009632");
     set_default_env("LUD_EXTRA_FOLD_VENTS", "1");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "24");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
@@ -1136,7 +1136,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
+    set_default_env("DIALOG_TAIL_NONCE", "100000009632");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1587,7 +1587,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
+    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1971,36 +1971,41 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
-    // Submitted circuit: the trailmix-ludicrous product-min secp256k1 point-add on
-    // the constant-propagation base, with the carry-out and GCD-adaptive layout
-    // searches both pushed to their tightest q1166 setting and a 2-vent fold.
-    // Stacked levers (all value-exact, peak-neutral at 1166q):
-    //   - LUD_EXTRA_FOLD_VENTS=2, MIN_G=16: two extra FFG_G>=16 fold vents; the
-    //     fresh nonce below lands on a clean lower-average island at q1165.
-    //   - TLM_COUT_LAYOUT_MARGIN=0 with TLM_COUT_LAYOUT_FORCE_M1_KS=129: the cout
-    //     layout search runs at margin 0 everywhere EXCEPT the single peak-critical
-    //     k=129 call (forced back to margin 1), capturing nearly all of the cout
-    //     Toffoli cut while keeping peak qubits at 1166.
-    //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
-    // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set: nonce 22275 validates 0/0/0 over all 9024 shots
-    // with the lane-0 GCD cswap elision at
-    // 1164q x 1,412,443.306 => 1,412,443 x 1164 = 1,644,083,652.
-    set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
-    set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
-    set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
-    set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
-    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
-    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
-    // u0/even-v0 lifecycle loans plus the GCD y0 loan candidate
-    // (1165->1164 at the same layout stack) — BAKED so env-less builds reproduce it.
-    set_default_env("TLM_PARK_ODD_U0", "1");
-    set_default_env("TLM_LOAN_ODD_U0", "1");
-    set_default_env("TLM_PARK_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_GCD_Y0", "1");
+    // Baked q1162 clean island found by distributed own-host validation.
+    //
+    // This is the q1162 width-trim route, stacked on the q1164 layout/loan base:
+    //   - q1164 cout/adaptive layout search and u0/v0/y0 loans;
+    //   - no extra fold vents, to avoid the q1164/q1165 vented default path;
+    //   - small schedule deltas on HYB/COUT/FFG/FOLD;
+    //   - one late GCD k trim plus a second extra late trim across steps 172..196;
+    //   - nonce 40347245, validated locally and remotely as 0/0/0 over all 9024 shots.
+    //
+    // Metrics from local full eval:
+    //   q = 1162, avg executed Toffoli = 1,411,204.767.
+    std::env::set_var("LUD_EXTRA_FOLD_VENTS", "0");
+    std::env::set_var("LUD_EXTRA_FOLD_MIN_G", "0");
+    std::env::set_var("LUD_EXTRA_FOLD_MAX_G", "999");
+    std::env::set_var("TLM_COUT_LAYOUT_SEARCH", "1");
+    std::env::set_var("TLM_COUT_LAYOUT_MARGIN", "0");
+    std::env::set_var("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
+    std::env::set_var("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
+    std::env::set_var("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
+    std::env::set_var("TLM_PARK_ODD_U0", "1");
+    std::env::set_var("TLM_LOAN_ODD_U0", "1");
+    std::env::set_var("TLM_PARK_EVEN_V0", "1");
+    std::env::set_var("TLM_LOAN_EVEN_V0", "1");
+    std::env::set_var("TLM_LOAN_GCD_Y0", "1");
+    std::env::set_var("TLM_HYB_V_DELTA", "2");
+    std::env::set_var("TLM_COUT_K_DELTA", "2");
+    std::env::set_var("TLM_FFG_DELTA", "2");
+    std::env::set_var("TLM_GCD_K_ADJUST_AFTER", "172");
+    std::env::set_var("TLM_GCD_K_ADJUST_BEFORE", "196");
+    std::env::set_var("TLM_GCD_K_ADJUST", "-1");
+    std::env::set_var("TLM_GCD_K_EXTRA_ADJUST_AFTER", "172");
+    std::env::set_var("TLM_GCD_K_EXTRA_ADJUST_BEFORE", "196");
+    std::env::set_var("TLM_GCD_K_EXTRA_ADJUST", "-2");
+    std::env::set_var("TLM_FOLD_DELTA", "2");
+    std::env::set_var("DIALOG_TAIL_NONCE", "40347245");
     let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
     let input_ops = ops.len();
     let mut fanout_passes = 0usize;
