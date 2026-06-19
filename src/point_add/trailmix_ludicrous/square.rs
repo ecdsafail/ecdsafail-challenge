@@ -15,7 +15,7 @@
 //!   PAD = 21  (the +f window carry-drop -> ~2^-PAD per-fire approximation,
 //!              inherited from `super::arith`'s mod-sub / mod-double folds).
 
-use super::arith::{mod_double, mod_double_reverse, mod_sub};
+use super::arith::{self, mod_add_shifted_low, mod_sub, mod_sub_shifted_low, F_SECP256K1, LSBS};
 use super::{B, BExt};
 use crate::circuit::{QubitId};
 
@@ -31,9 +31,67 @@ fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     circ.cz_if_bit(*a, *b, bit);
 }
 
-/// Set bits of f = 2^32 + 977 = bits {0,4,6,7,8,9,32}. `lambda^2 == lo + f*hi`,
-/// so `f*hi = sum_{j in F_BITS} hi*2^j` -- one mod-double ramp + mod-sub per bit.
-const F_BITS: [usize; 7] = [0, 4, 6, 7, 8, 9, 32];
+/// NAF of f = 2^32 + 977:
+/// f = 2^32 + 2^10 - 2^6 + 2^4 + 1.
+const F_NAF_TERMS: [(usize, ShiftOp); 5] = [
+    (0, ShiftOp::Sub),
+    (4, ShiftOp::Sub),
+    (6, ShiftOp::Add),
+    (10, ShiftOp::Sub),
+    (32, ShiftOp::Sub),
+];
+
+#[derive(Copy, Clone)]
+enum ShiftOp {
+    Add,
+    Sub,
+}
+
+fn add_f_window_shifted(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], offset: usize) {
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    arith::add_f_window_pub(circ, ctrl, &reg[offset..], LSBS, &f_bytes, None);
+}
+
+fn sub_f_window_shifted(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], offset: usize) {
+    for q in &reg[offset..offset + LSBS] {
+        circ.x(*q);
+    }
+    add_f_window_shifted(circ, ctrl, reg, offset);
+    for q in &reg[offset..offset + LSBS] {
+        circ.x(*q);
+    }
+}
+
+fn apply_shifted_hi_term(
+    circ: &mut B,
+    hi: &[QubitId],
+    output_reg: &[QubitId],
+    shift: usize,
+    op: ShiftOp,
+) {
+    let n = hi.len();
+    assert_eq!(n, 256, "hi must be 256 bits");
+    assert!(shift < n, "shift must be less than 256");
+
+    match op {
+        ShiftOp::Add => mod_add_shifted_low(circ, &hi[..n - shift], output_reg, shift),
+        ShiftOp::Sub => {
+            if shift == 0 {
+                mod_sub(circ, hi, output_reg);
+            } else {
+                mod_sub_shifted_low(circ, &hi[..n - shift], output_reg, shift);
+            }
+        }
+    }
+
+    for t in 0..shift {
+        let ctrl = &hi[n - shift + t];
+        match op {
+            ShiftOp::Add => add_f_window_shifted(circ, ctrl, output_reg, t),
+            ShiftOp::Sub => sub_f_window_shifted(circ, ctrl, output_reg, t),
+        }
+    }
+}
 
 /// `slice += row` (mod 2^slice.len) via `arith::hybrid_add_adaptive`. `slice` is
 /// exactly one bit wider than `row` (one carry slot); the row carry rides into that top
@@ -159,10 +217,9 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
 /// with [`symmetric_square_into_prod`] (~n(n-1)/2 CCX).
 /// Stage 2 (reduce): `lambda < q < 2^256 => lambda^2 < q^2 < 2^512`,
 /// so `hi = prod>>256 < q`. With `2^256 == f (mod q)`, `lambda^2 == lo + f*hi`.
-/// Subtract `lo` from `output`, then for each set bit j of f walk `hi` in place
-/// by [`mod_double`] and subtract `hi*2^j mod q`; restore `hi` with the matched
-/// reverse doublings. Uses `arith::mod_sub` (uncontrolled normal Cuccaro
-/// register sub).
+/// Subtract `lo` from `output`, then subtract the NAF expansion of `f*hi` by
+/// reading `hi` at fixed bit offsets. This avoids mutating/restoring `hi` via
+/// the old modular-doubling ramp.
 /// Stage 3: uncompute `prod` (gate-reverse of Stage 1).
 ///
 /// Value note (carried-over miss probability): each `mod_double` / `mod_sub`
@@ -181,8 +238,6 @@ pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], o
     // Stage 2: output -= (lo + f*hi) mod q, operating on prod's own halves.
     //   lo = prod[0..n]                                  (n-bit, lo can be >= q)
     //   hi = prod[n..2n]                                 (n-bit, hi < q)
-    // mod_double needs a 257-bit operand whose top bit is |0>; one inserted pad
-    // above hi supplies that overflow slot (restored, removed at the end).
     {
 
         // --- lo term: output -= lo mod q ---
@@ -192,29 +247,10 @@ pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], o
         // UNCONTROLLED: no |1>-gated register-sub CCX.
         mod_sub(circ, &prod[0..n], output_reg);
 
-        let pad_hi = circ.alloc_qubit();
-        let mut hi_ext: Vec<QubitId> = prod[n..2 * n].to_vec();
-        hi_ext.push(pad_hi); // index 2n = overflow slot, |0>
-
-        // --- hi terms: output -= (hi*2^j mod q) for each f-bit j ---
-        let mut shifted = 0usize;
-        for &j in &F_BITS {
-            while shifted < j {
-                mod_double(circ, &hi_ext); // hi *= 2 mod q (257-bit, pad restored)
-                shifted += 1;
-            }
-            mod_sub(circ, &hi_ext[0..n], output_reg);
+        let hi = &prod[n..2 * n];
+        for &(j, op) in &F_NAF_TERMS {
+            apply_shifted_hi_term(circ, hi, output_reg, j, op);
         }
-        // restore hi to its raw value (matched-reverse the doublings). mod_double
-        // is built from a swap chain (self-inverse) + a +f window (NOT self-
-        // inverse), so a literal re-run does NOT undo it -- use the value-inverse
-        // mod_double_reverse (one halving per forward doubling).
-        while shifted > 0 {
-            mod_double_reverse(circ, &hi_ext);
-            shifted -= 1;
-        }
-
-        circ.zero_and_free(pad_hi);
     }
 
     // Stage 3: uncompute prod (gate-reverse of Stage 1).

@@ -1986,13 +1986,9 @@ pub fn build() -> Vec<Op> {
     // schedule-supported set: nonce 22275 validates 0/0/0 over all 9024 shots
     // with the lane-0 GCD cswap elision at
     // 1164q x 1,412,443.306 => 1,412,443 x 1164 = 1,644,083,652.
-    // 1163 hunt row (PAD 19/20 + late-GCD-k trim + apply-schedule relaxations) —
-    // overrides the 1164 fold-vent values (set_default_env is first-wins, so these
-    // MUST replace the prior LUD_EXTRA_FOLD_* lines, not append after them).
-    set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
-    set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "100000688994");
+    set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
+    set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
+    set_default_env("DIALOG_TAIL_NONCE", "800006524");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
@@ -2005,14 +2001,6 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_PARK_EVEN_V0", "1");
     set_default_env("TLM_LOAN_EVEN_V0", "1");
     set_default_env("TLM_LOAN_GCD_Y0", "1");
-    // 1163 apply-schedule relaxations + late-GCD-k carry-layout trim (peak 1164->1163).
-    set_default_env("TLM_HYB_V_DELTA", "2");
-    set_default_env("TLM_COUT_K_DELTA", "1");
-    set_default_env("TLM_FOLD_DELTA", "1");
-    set_default_env("TLM_FFG_DELTA", "2");
-    set_default_env("TLM_GCD_K_ADJUST_AFTER", "172");
-    set_default_env("TLM_GCD_K_ADJUST_BEFORE", "196");
-    set_default_env("TLM_GCD_K_ADJUST", "-1");
     let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
     let input_ops = ops.len();
     let mut fanout_passes = 0usize;
