@@ -15,7 +15,7 @@
 //!   PAD = 21  (the +f window carry-drop -> ~2^-PAD per-fire approximation,
 //!              inherited from `super::arith`'s mod-sub / mod-double folds).
 
-use super::arith::{self, mod_add_shifted_low, mod_sub, mod_sub_shifted_low, F_SECP256K1, LSBS};
+use super::arith::{self, cuccaro_carry, mod_add_lowpeak, mod_add_shifted_low, mod_sub, mod_sub_shifted_low, F_SECP256K1, LSBS};
 use super::{B, BExt};
 use crate::circuit::{QubitId};
 
@@ -208,6 +208,116 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
     }
 }
 
+fn alloc_zeroes(circ: &mut B, n: usize) -> Vec<QubitId> {
+    (0..n).map(|_| circ.alloc_qubit()).collect()
+}
+
+fn free_zeroes(circ: &mut B, qs: Vec<QubitId>) {
+    for q in qs {
+        circ.zero_and_free(q);
+    }
+}
+
+fn flipped(op: ShiftOp) -> ShiftOp {
+    match op {
+        ShiftOp::Add => ShiftOp::Sub,
+        ShiftOp::Sub => ShiftOp::Add,
+    }
+}
+
+fn apply_full_width(circ: &mut B, operand: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+    assert_eq!(operand.len(), N, "full-width modular operand must be 256 bits");
+    match op {
+        ShiftOp::Add => mod_add_lowpeak(circ, operand, output_reg),
+        ShiftOp::Sub => mod_sub(circ, operand, output_reg),
+    }
+}
+
+fn apply_unshifted_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+    assert!(value.len() <= N, "unshifted value must fit in 256 bits");
+    let pads = alloc_zeroes(circ, N - value.len());
+    let mut operand = Vec::with_capacity(N);
+    operand.extend_from_slice(value);
+    operand.extend_from_slice(&pads);
+    apply_full_width(circ, &operand, output_reg, op);
+    free_zeroes(circ, pads);
+}
+
+fn apply_f_times_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+    assert!(value.len() <= N, "f-fold value must fit in 256 bits");
+    let pads = alloc_zeroes(circ, N + 1 - value.len());
+    let mut ext = Vec::with_capacity(N + 1);
+    ext.extend_from_slice(value);
+    ext.extend_from_slice(&pads);
+
+    let mut shifted = 0usize;
+    for &(shift, sub_f_op) in &F_NAF_TERMS {
+        while shifted < shift {
+            arith::mod_double(circ, &ext);
+            shifted += 1;
+        }
+        let term_op = match op {
+            ShiftOp::Sub => sub_f_op,
+            ShiftOp::Add => flipped(sub_f_op),
+        };
+        apply_full_width(circ, &ext[..N], output_reg, term_op);
+    }
+    while shifted > 0 {
+        arith::mod_double_reverse(circ, &ext);
+        shifted -= 1;
+    }
+
+    free_zeroes(circ, pads);
+}
+
+fn apply_shifted_128(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+    assert!(value.len() <= N + 2, "128-shifted half product must be at most 258 bits");
+    let low_len = value.len().min(128);
+    let low_pads = alloc_zeroes(circ, 128);
+    let high_pads = alloc_zeroes(circ, 128 - low_len);
+    let mut operand = Vec::with_capacity(N);
+    operand.extend_from_slice(&low_pads);
+    operand.extend_from_slice(&value[..low_len]);
+    operand.extend_from_slice(&high_pads);
+    apply_full_width(circ, &operand, output_reg, op);
+    free_zeroes(circ, high_pads);
+    free_zeroes(circ, low_pads);
+
+    if value.len() > 128 {
+        apply_f_times_value(circ, &value[128..], output_reg, op);
+    }
+}
+
+fn build_sum_hi_lo(circ: &mut B, lambda: &[QubitId]) -> Vec<QubitId> {
+    let sum = alloc_zeroes(circ, 129);
+    for i in 0..128 {
+        circ.cx(lambda[i], sum[i]);
+    }
+    cuccaro_carry(circ, None, &lambda[128..N], &sum[..128], None, Some(&sum[128]));
+    sum
+}
+
+fn unbuild_sum_hi_lo(circ: &mut B, lambda: &[QubitId], sum: Vec<QubitId>) {
+    let hi_pad = circ.alloc_qubit();
+    let mut hi_ext = Vec::with_capacity(129);
+    hi_ext.extend_from_slice(&lambda[128..N]);
+    hi_ext.push(hi_pad);
+
+    for q in &sum {
+        circ.x(*q);
+    }
+    cuccaro_carry(circ, None, &hi_ext, &sum, None, None);
+    for q in &sum {
+        circ.x(*q);
+    }
+
+    circ.zero_and_free(hi_pad);
+    for i in 0..128 {
+        circ.cx(lambda[i], sum[i]);
+    }
+    free_zeroes(circ, sum);
+}
+
 /// Unconditional `output_reg -= lambda^2 mod q` (secp256k1), normal throughout.
 ///
 /// `lambda` is `n = 256` bits (lambda < q); `output_reg` is `n = 256` bits and
@@ -231,29 +341,33 @@ pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], o
     assert_eq!(lambda.len(), n, "lambda must be n=256 bits (< q)");
     assert_eq!(output_reg.len(), n, "output must be n=256 bits (< q)");
 
-    // Stage 1: prod = lambda^2 (integer, 2n bits).
-    let mut prod: Vec<QubitId> = Vec::with_capacity(2 * n);
-    symmetric_square_into_prod(circ, lambda, &mut prod);
+    // Karatsuba:
+    //   lambda = hi*2^128 + lo
+    //   A=lo^2, B=hi^2, C=(lo+hi)^2
+    //   lambda^2 = A + (C-A-B)*2^128 + B*2^256.
+    // Consume each half-square before building the next to keep the square off
+    // the global peak and avoid the three-product live set.
+    let sum = build_sum_hi_lo(circ, lambda);
 
-    // Stage 2: output -= (lo + f*hi) mod q, operating on prod's own halves.
-    //   lo = prod[0..n]                                  (n-bit, lo can be >= q)
-    //   hi = prod[n..2n]                                 (n-bit, hi < q)
-    {
+    let mut c_prod: Vec<QubitId> = Vec::with_capacity(2 * sum.len());
+    symmetric_square_into_prod(circ, &sum, &mut c_prod);
+    apply_shifted_128(circ, &c_prod, output_reg, ShiftOp::Sub);
+    symmetric_square_into_prod_reverse(circ, &sum, c_prod);
 
-        // --- lo term: output -= lo mod q ---
-        // lo = prod[0..n] is a full integer < 2^256 (not pre-reduced), but
-        // mod_sub subtracts mod q, which is the value we want:
-        // lambda^2 mod q == (lo + f*hi) mod q == (lo mod q + ...).
-        // UNCONTROLLED: no |1>-gated register-sub CCX.
-        mod_sub(circ, &prod[0..n], output_reg);
+    let lo = &lambda[..128];
+    let mut a_prod: Vec<QubitId> = Vec::with_capacity(2 * lo.len());
+    symmetric_square_into_prod(circ, lo, &mut a_prod);
+    apply_unshifted_value(circ, &a_prod, output_reg, ShiftOp::Sub);
+    apply_shifted_128(circ, &a_prod, output_reg, ShiftOp::Add);
+    symmetric_square_into_prod_reverse(circ, lo, a_prod);
 
-        let hi = &prod[n..2 * n];
-        for &(j, op) in &F_NAF_TERMS {
-            apply_shifted_hi_term(circ, hi, output_reg, j, op);
-        }
-    }
+    let hi = &lambda[128..N];
+    let mut b_prod: Vec<QubitId> = Vec::with_capacity(2 * hi.len());
+    symmetric_square_into_prod(circ, hi, &mut b_prod);
+    apply_shifted_128(circ, &b_prod, output_reg, ShiftOp::Add);
+    apply_f_times_value(circ, &b_prod, output_reg, ShiftOp::Sub);
+    symmetric_square_into_prod_reverse(circ, hi, b_prod);
 
-    // Stage 3: uncompute prod (gate-reverse of Stage 1).
-    symmetric_square_into_prod_reverse(circ, lambda, prod);
+    unbuild_sum_hi_lo(circ, lambda, sum);
 }
 
