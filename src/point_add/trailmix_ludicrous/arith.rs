@@ -1107,6 +1107,20 @@ pub fn mod_add(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
 }
 
+/// Low-peak modular add for off-peak recombination. This mirrors [`mod_add`],
+/// but captures the register-add overflow with the single-carry Cuccaro adder
+/// instead of allocating a full-clean vented add headroom.
+pub fn mod_add_lowpeak(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
+    let n = x.len();
+    assert_eq!(y.len(), n, "mod_add_lowpeak: x,y must both be n=256 bits");
+    assert_eq!(n, 256, "secp256k1 mod_add_lowpeak expects n=256");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    cuccaro_carry(circ, None, x, y, None, Some(&anc));
+    add_f_window(circ, &anc, y, LSBS, &f_bytes, None);
+    controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
+}
+
 /// `y := y + (x << shift) mod q`, where bits beyond bit 255 are handled by
 /// the caller. This is the same primitive as [`mod_add`] but with implicit zero
 /// low bits, so no padding qubits are allocated for the shifted view.
