@@ -313,41 +313,6 @@ impl DialogCodec {
     }
 }
 
-/// Step-0-only codec that folds the separate `t1` prefix into the first dialog
-/// symbol. The reachable triples `(t1, subtracted, s2)` are only four cases:
-/// `(0,1,0)`, `(1,1,0)`, `(1,1,1)`, `(1,0,1)`. They are not an affine subspace,
-/// so one nonlinear gate is needed to clear a wire while keeping a reversible map.
-#[must_use]
-pub fn compress_step0_with_t1(circ: &mut B, t1: QubitId, raw: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw.len(), 3, "step0 raw symbol is [sub, swap, s2]");
-    let sub = raw[0];
-    let swap = raw[1];
-    let s2 = raw[2];
-    circ.cx(sub, swap);
-    circ.cx(sub, t1);
-    circ.x(sub);
-    circ.ccx(t1, s2, sub);
-    circ.zero_and_free(sub);
-    circ.zero_and_free(swap);
-    vec![t1, s2]
-}
-
-/// Inverse of [`compress_step0_with_t1`]. Returns the restored `t1` qubit plus
-/// the raw `[sub, swap, s2]` symbol slots.
-#[must_use]
-pub fn decompress_step0_with_t1(circ: &mut B, data: &[QubitId]) -> (QubitId, Vec<QubitId>) {
-    assert_eq!(data.len(), 2, "step0+t1 code is two bits");
-    let t1 = data[0];
-    let s2 = data[1];
-    let sub = circ.alloc_qubit();
-    let swap = circ.alloc_qubit();
-    circ.ccx(t1, s2, sub);
-    circ.x(sub);
-    circ.cx(sub, t1);
-    circ.cx(sub, swap);
-    (t1, vec![sub, swap, s2])
-}
-
 /// Ordered region schedule for the all-triple product-min config: Step0 first,
 /// then triples, then a small Pair/Raw tail. `(n3, n5)` are sized as the
 /// product-min selector does (`n3 = iters/3`, `n5 = 0`); `iters` is the schedule
@@ -384,12 +349,12 @@ pub fn jump_dialog_regions(n3: usize, iters: usize) -> Vec<(DialogCodec, usize)>
 }
 
 /// Persistent compressed-tape qubits for the `(n3)` all-triple dialog codec at
-/// `iters` symbols: sum over regions of `code_bits * count`. Step0's code bits
-/// include the first-shift `t1` bit, so no separate prefix is resident.
+/// `iters` symbols: `1` (t1) + sum over regions of `code_bits * count`.
 #[must_use]
 pub fn dialog_tape_qubits(n3: usize, iters: usize) -> usize {
-    jump_dialog_regions(n3, iters)
+    1 + jump_dialog_regions(n3, iters)
         .into_iter()
         .map(|(codec, count)| codec.code_bits() * count)
         .sum::<usize>()
 }
+

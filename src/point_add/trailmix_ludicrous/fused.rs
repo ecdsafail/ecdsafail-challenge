@@ -29,19 +29,6 @@ fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     circ.cz_if_bit(*a, *b, bit);
 }
 
-/// Toggle `d AND NOT e` into `dne`, given the live intersection `cc = e AND d`.
-/// The Boolean identity `d & !e = d ^ (e & d)` replaces one CCX with two CX.
-/// This is an involution, so the same sequence clears `dne` after use.
-fn toggle_dnot_e_from_intersection(
-    circ: &mut B,
-    d: &QubitId,
-    cc: &QubitId,
-    dne: &QubitId,
-) {
-    circ.cx(*d, *dne);
-    circ.cx(*cc, *dne);
-}
-
 /// Carry-propagate `c` into the pure-propagation tail `y[..]` via a cascade of
 /// prefix-controlled increments (`mcx_clean_k`, log* ancillae): the clean-tail
 /// fold's tail [nv, L).
@@ -74,12 +61,9 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     let mut cc = Some(circ.alloc_qubit());
     circ.ccx(*e, *d, *cc.as_ref().unwrap());
     let mut dne = Some(circ.alloc_qubit());
-    toggle_dnot_e_from_intersection(
-        circ,
-        d,
-        cc.as_ref().unwrap(),
-        dne.as_ref().unwrap(),
-    );
+    circ.x(*e);
+    circ.ccx(*e, *d, *dne.as_ref().unwrap());
+    circ.x(*e);
     let mut sxor = Some(circ.alloc_qubit());
     circ.cx(*e, *sxor.as_ref().unwrap());
     circ.cx(*d, *sxor.as_ref().unwrap());
@@ -138,7 +122,9 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
         }
         if i == LAST_AND {
             let dn = dne.take().unwrap();
-            toggle_dnot_e_from_intersection(circ, d, cc.as_ref().unwrap(), &dn);
+            circ.x(*e);
+            clear_and(circ, &dn, e, d);
+            circ.x(*e);
             circ.zero_and_free(dn);
             let c = cc.take().unwrap();
             clear_and(circ, &c, e, d);
@@ -168,7 +154,9 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
             circ.ccx(*e, *d, c);
             cc = Some(c);
             let dn = circ.alloc_qubit();
-            toggle_dnot_e_from_intersection(circ, d, cc.as_ref().unwrap(), &dn);
+            circ.x(*e);
+            circ.ccx(*e, *d, dn);
+            circ.x(*e);
             dne = Some(dn);
         }
         if i == LAST_DERIVED {
@@ -219,7 +207,9 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     let so = sor.take().unwrap();
     let cc = cc.take().unwrap();
     let dne = dne.take().unwrap();
-    toggle_dnot_e_from_intersection(circ, d, &cc, &dne);
+    circ.x(*e);
+    clear_and(circ, &dne, e, d);
+    circ.x(*e);
     circ.zero_and_free(dne);
     circ.cx(sx, so);
     circ.cx(cc, so);
@@ -247,12 +237,16 @@ fn build_fold_controls(circ: &mut B, e: &QubitId, d: &QubitId) -> (QubitId, Qubi
     circ.cx(sxor, sor);
     circ.cx(cc, sor);
     let dne = circ.alloc_qubit();
-    toggle_dnot_e_from_intersection(circ, d, &cc, &dne);
+    circ.x(*e);
+    circ.ccx(*e, *d, dne);
+    circ.x(*e);
     (cc, sxor, sor, dne)
 }
 
 fn uncompute_fold_controls(circ: &mut B, e: &QubitId, d: &QubitId, cc: QubitId, sxor: QubitId, sor: QubitId, dne: QubitId) {
-    toggle_dnot_e_from_intersection(circ, d, &cc, &dne);
+    circ.x(*e);
+    clear_and(circ, &dne, e, d);
+    circ.x(*e);
     circ.zero_and_free(dne);
     circ.cx(sxor, sor);
     circ.cx(cc, sor);
