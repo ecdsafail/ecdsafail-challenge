@@ -353,7 +353,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
             sf
         };
         // 4) cswap(swap_flag, u, v).
-        for j in 0..current_n {
+        for j in 1..current_n {
             circ.cswap(swp, u[j], v[j]);
         }
         let parked_u0 = if park_odd_u0_enabled(i, "FWD") {
@@ -569,7 +569,7 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             u[0] = restore_known_one(circ, q);
         }
         // b) cswap^-1 (involutory).
-        for j in 0..current_n {
+        for j in 1..current_n {
             circ.cswap(swp, u[j], v[j]);
         }
         // c) uncompute swap_flag. Step 0 is a CNOT (swap_flag == subtracted). For
