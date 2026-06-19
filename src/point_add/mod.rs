@@ -1988,7 +1988,7 @@ pub fn build() -> Vec<Op> {
     // 1164q x 1,412,443.306 => 1,412,443 x 1164 = 1,644,083,652.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
-    set_default_env("DIALOG_TAIL_NONCE", "800000341");
+    set_default_env("DIALOG_TAIL_NONCE", "800006524");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
@@ -2001,23 +2001,33 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_PARK_EVEN_V0", "1");
     set_default_env("TLM_LOAN_EVEN_V0", "1");
     set_default_env("TLM_LOAN_GCD_Y0", "1");
-    let ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
+    let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
     let input_ops = ops.len();
-    let (ops, witness) = single_ccx_fanout::rewrite_first_target_fanout(ops, 96)
-        .unwrap_or_else(|error| panic!("single-fanout rewrite failed: {error}"));
-    assert_eq!(ops.len() + 1, input_ops, "single-fanout output-op drift");
+    let mut fanout_passes = 0usize;
+    loop {
+        match single_ccx_fanout::rewrite_first_target_fanout(ops.clone(), 96) {
+            Ok((rewritten, _witness)) => {
+                fanout_passes += 1;
+                ops = rewritten;
+            }
+            Err(error) => {
+                eprintln!(
+                    "SINGLE_CCX_FANOUT: STOP passes={} input_ops={} output_ops={} reason={}",
+                    fanout_passes,
+                    input_ops,
+                    ops.len(),
+                    error,
+                );
+                break;
+            }
+        }
+    }
+    assert!(fanout_passes >= 1, "single-fanout rewrite failed to find first pass");
     eprintln!(
-        "SINGLE_CCX_FANOUT: PASS input_ops={} output_ops={} first={} blocker={} second={} controls={},{} old_target={} new_target={} condition={}",
+        "SINGLE_CCX_FANOUT: SUMMARY input_ops={} output_ops={} passes={}",
         input_ops,
         ops.len(),
-        witness.first_index,
-        witness.blocker_index,
-        witness.second_index,
-        witness.control_a,
-        witness.control_b,
-        witness.old_target,
-        witness.new_target,
-        witness.condition,
+        fanout_passes,
     );
     ops
 }
