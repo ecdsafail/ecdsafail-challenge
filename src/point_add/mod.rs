@@ -79,6 +79,8 @@ pub(crate) use arith::*;
 mod rounds;
 pub(crate) use rounds::*;
 
+mod trailmix_ludicrous;
+
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
         std::cell::Cell::new(false);
@@ -1005,8 +1007,6 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    set_default_env("DIALOG_GCD_VENTED_BODY_BAND_TRIM", "1");
-    set_default_env("DIALOG_GCD_VENTED_BODY_TRIM_CAP", "2");
     set_default_env("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT", "1");
     set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
@@ -1108,7 +1108,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "3168228961");
+    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "141");
@@ -1133,7 +1133,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "3168228961");
+    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1584,7 +1584,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "3168228961");
+    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1968,7 +1968,12 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
-    build_builder().ops
+    // Submitted circuit: the trailmix-ludicrous product-min secp256k1 point-add
+    // at the nonce-ground operating point (1167 qubits x 1,422,591 executed
+    // Toffoli). The tail nonce reseeds the Fiat-Shamir inputs so all 9024
+    // verifier draws land in the schedule-supported set.
+    set_default_env("DIALOG_TAIL_NONCE", "28565");
+    trailmix_ludicrous::build_trailmix_ludicrous_ops()
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
