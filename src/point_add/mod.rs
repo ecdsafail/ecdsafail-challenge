@@ -80,6 +80,7 @@ mod rounds;
 pub(crate) use rounds::*;
 
 mod trailmix_ludicrous;
+mod single_ccx_fanout;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -1972,8 +1973,26 @@ pub fn build() -> Vec<Op> {
     // at the nonce-ground operating point (1166 qubits x 1,422,266 executed
     // Toffoli). The tail nonce reseeds the Fiat-Shamir inputs so all 9024
     // verifier draws land in the schedule-supported set.
-    set_default_env("DIALOG_TAIL_NONCE", "1006790");
-    trailmix_ludicrous::build_trailmix_ludicrous_ops()
+    set_default_env("DIALOG_TAIL_NONCE", "13955");
+    let ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
+    let input_ops = ops.len();
+    let (ops, witness) = single_ccx_fanout::rewrite_first_target_fanout(ops, 96)
+        .unwrap_or_else(|error| panic!("single-fanout rewrite failed: {error}"));
+    assert_eq!(ops.len() + 1, input_ops, "single-fanout output-op drift");
+    eprintln!(
+        "SINGLE_CCX_FANOUT: PASS input_ops={} output_ops={} first={} blocker={} second={} controls={},{} old_target={} new_target={} condition={}",
+        input_ops,
+        ops.len(),
+        witness.first_index,
+        witness.blocker_index,
+        witness.second_index,
+        witness.control_a,
+        witness.control_b,
+        witness.old_target,
+        witness.new_target,
+        witness.condition,
+    );
+    ops
 }
 
 pub fn square_window_selftest() -> Result<(), String> {

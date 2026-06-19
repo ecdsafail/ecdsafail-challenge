@@ -126,7 +126,7 @@ fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch,
 fn next_cmp_k() -> usize {
     SCHED.with(|s| {
         let k = step(&mut s.borrow_mut().cmp_k, usize::MAX);
-        if k == usize::MAX { k } else { k.saturating_add(4) }
+        if k == usize::MAX { k } else { k.saturating_add(7) }
     })
 }
 fn next_ffg() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().ffg, usize::MAX)) }
