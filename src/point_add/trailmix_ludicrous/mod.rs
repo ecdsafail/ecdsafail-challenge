@@ -13,6 +13,7 @@
 mod arith;
 mod codec;
 mod comparator;
+mod constprop;
 mod ec_add;
 mod fused;
 mod gcd;
@@ -243,5 +244,17 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         }
     }
 
-    std::mem::take(&mut circ.ops)
+    let ops = std::mem::take(&mut circ.ops);
+
+    // Sound classical constant-propagation peephole: drop CCX with a provably
+    // |0> quantum control (no-op but still scored) and fold CCX with a provably
+    // |1> control to CX/X. reg0 (x2_init) and reg1 (y2) hold per-shot input data
+    // -> seeded Unknown; every other qubit id is a |0> ancilla. Can be disabled
+    // with CONSTPROP_DISABLE=1.
+    if std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
+        return ops;
+    }
+    let mut input_qubits = x2_init.clone();
+    input_qubits.extend_from_slice(&y2);
+    constprop::run(ops, &input_qubits)
 }
