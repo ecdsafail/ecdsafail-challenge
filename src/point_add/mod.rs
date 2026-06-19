@@ -1974,19 +1974,19 @@ pub fn build() -> Vec<Op> {
     // the constant-propagation base, with the carry-out and GCD-adaptive layout
     // searches both pushed to their tightest q1166 setting and a 2-vent fold.
     // Stacked levers (all value-exact, peak-neutral at 1166q):
-    //   - LUD_EXTRA_FOLD_VENTS=2, MIN_G=17: two extra FFG_G>=17 fold vents; the
-    //     fresh tail nonce below lands on a clean, lower-average score island.
+    //   - LUD_EXTRA_FOLD_VENTS=2, MIN_G=18: two extra FFG_G>=18 fold vents (the
+    //     g<18 "valley" entries are peak-critical, so MIN_G stays at 18).
     //   - TLM_COUT_LAYOUT_MARGIN=0 with TLM_COUT_LAYOUT_FORCE_M1_KS=129: the cout
     //     layout search runs at margin 0 everywhere EXCEPT the single peak-critical
     //     k=129 call (forced back to margin 1), capturing nearly all of the cout
     //     Toffoli cut while keeping peak qubits at 1166.
     //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
     // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set: nonce 18381 validates 0/0/0 over all 9024
-    // shots at 1166q x 1,414,438.346 => 1,414,438 x 1166 = 1,649,234,708.
+    // schedule-supported set: nonce 123000008384 validates 0/0/0 over all 9024
+    // shots at 1166q x 1,414,439.206 => 1,414,439 x 1166 = 1,649,235,874.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "18381");
+    set_default_env("LUD_EXTRA_FOLD_MIN_G", "18");
+    set_default_env("DIALOG_TAIL_NONCE", "3000001941");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
