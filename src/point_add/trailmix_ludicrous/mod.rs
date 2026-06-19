@@ -123,12 +123,7 @@ fn next_gcd_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize:
 fn next_cout_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX)) }
 fn next_fold() -> i32 { SCHED.with(|s| step(&mut s.borrow_mut().fold, i32::MAX)) }
 fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255)) }
-fn next_cmp_k() -> usize {
-    SCHED.with(|s| {
-        let k = step(&mut s.borrow_mut().cmp_k, usize::MAX);
-        if k == usize::MAX { k } else { k.saturating_add(7) }
-    })
-}
+fn next_cmp_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX)) }
 fn next_ffg() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().ffg, usize::MAX)) }
 fn next_hyb_v() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX)) }
 fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
@@ -138,12 +133,38 @@ fn load_schedule() {
     SCHED.with(|s| {
         let mut s = s.borrow_mut();
         *s = Sched::default();
+        let extra_fold_vents = std::env::var("LUD_EXTRA_FOLD_VENTS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let extra_fold_min_g = std::env::var("LUD_EXTRA_FOLD_MIN_G")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let extra_fold_max_g = std::env::var("LUD_EXTRA_FOLD_MAX_G")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(usize::MAX);
+        let fold_g = |v: &[usize]| -> Vec<usize> {
+            v.iter()
+                .map(|&x| {
+                    if extra_fold_vents > 0
+                        && x >= extra_fold_min_g
+                        && x <= extra_fold_max_g
+                    {
+                        x.saturating_add(extra_fold_vents).min(53)
+                    } else {
+                        x
+                    }
+                })
+                .collect()
+        };
         s.gcd_k.0 = schedule::GCD_SUB_K.to_vec();
         s.gcd_branch.0 = schedule::GCD_BRANCH.to_vec();
         s.cout_k.0 = schedule::APPLY_COUT_K.to_vec();
         s.fold.0 = schedule::FOLD_SCHED.to_vec();
         s.cmp_k.0 = schedule::CMP_K.to_vec();
-        s.ffg.0 = schedule::FFG_G.to_vec();
+        s.ffg.0 = fold_g(schedule::FFG_G);
         s.hyb_v.0 = schedule::HYB_V.to_vec();
         s.sqrow_k.0 = schedule::SQ_ROW_K.to_vec();
     });
