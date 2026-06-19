@@ -68,6 +68,8 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
 pub mod venting;
 
+pub mod trailmix_port;
+
 pub mod dialog_gcd_classical_filter;
 
 mod emit;
@@ -91,6 +93,7 @@ fn d1_phase_corrected_product_core_active() -> bool {
 pub struct B {
     pub ops: Vec<Op>,
     pub count_only: bool,
+    pub(crate) fiat_hash: Option<Shake256>,
     pub counted_ops: usize,
     pub counted_kind_ops: [usize; 18],
     pub counted_phase_kind_ops: [usize; 18],
@@ -149,6 +152,7 @@ impl B {
         Self {
             ops: Vec::new(),
             count_only: false,
+            fiat_hash: None,
             counted_ops: 0,
             counted_kind_ops: [0; 18],
             counted_phase_kind_ops: [0; 18],
@@ -176,12 +180,37 @@ impl B {
     fn new_count_only() -> Self {
         let mut b = Self::new();
         b.count_only = true;
+        b.fiat_hash = Self::fiat_hash_from_env();
         b
     }
-    fn push_op(&mut self, op: Op) {
+    fn fiat_hash_from_env() -> Option<Shake256> {
+        let ops_len = std::env::var("POINT_ADD_HASH_OPS_LEN")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())?;
+        let mut hasher = Shake256::default();
+        hasher.update(b"quantum_ecc-fiat-shamir-v2");
+        hasher.update(&ops_len.to_le_bytes());
+        Some(hasher)
+    }
+    pub(crate) fn update_fiat_hash_op(hasher: &mut Shake256, op: &Op) {
+        hasher.update(&[op.kind as u8]);
+        hasher.update(&op.q_control2.0.to_le_bytes());
+        hasher.update(&op.q_control1.0.to_le_bytes());
+        hasher.update(&op.q_target.0.to_le_bytes());
+        hasher.update(&op.c_target.0.to_le_bytes());
+        hasher.update(&op.c_condition.0.to_le_bytes());
+        hasher.update(&op.r_target.0.to_le_bytes());
+    }
+    pub(crate) fn clone_fiat_hash(&self) -> Option<Shake256> {
+        self.fiat_hash.clone()
+    }
+    pub(crate) fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
         self.counted_kind_ops[op.kind as usize] += 1;
         self.counted_phase_kind_ops[op.kind as usize] += 1;
+        if let Some(hasher) = &mut self.fiat_hash {
+            Self::update_fiat_hash_op(hasher, &op);
+        }
         if !self.count_only {
             self.ops.push(op);
         }
@@ -211,7 +240,7 @@ impl B {
         self.counted_phase_rows.truncate(snap.phase_rows_len);
         self.phase = snap.phase;
     }
-    fn add_counted_kind(&mut self, kind: OperationType, count: usize) {
+    pub(crate) fn add_counted_kind(&mut self, kind: OperationType, count: usize) {
         self.counted_ops += count;
         self.counted_kind_ops[kind as usize] += count;
         self.counted_phase_kind_ops[kind as usize] += count;
@@ -335,12 +364,19 @@ impl B {
         }
         self.record_active_timeline();
     }
+    pub(crate) fn free_clean(&mut self, q: QubitId) {
+        self.free_qubits
+            .push(q.0.try_into().expect("qubit id fits in u32"));
+        assert!(self.active_qubits > 0, "clean-free active-qubit underflow");
+        self.active_qubits -= 1;
+        self.record_active_timeline();
+    }
     fn free_vec(&mut self, qs: &[QubitId]) {
         for &q in qs {
             self.free(q);
         }
     }
-    fn reacquire(&mut self, q: QubitId) {
+    pub(crate) fn reacquire(&mut self, q: QubitId) {
         let pos = self
             .free_qubits
             .iter()
@@ -1005,9 +1041,6 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    set_default_env("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT", "1");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY", "1");
     // q1168 host-E route. These defaults are first so the historical fallback
@@ -1106,7 +1139,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "141");
@@ -1131,7 +1164,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1582,7 +1615,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "200005858317");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1809,6 +1842,9 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("POINT_ADD_DIALOG_ROUTE").ok().as_deref() != Some("1") {
+        return trailmix_port::build_builder().ops;
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
