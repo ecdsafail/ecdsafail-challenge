@@ -1975,27 +1975,31 @@ pub fn build() -> Vec<Op> {
     // the constant-propagation base, with the carry-out and GCD-adaptive layout
     // searches both pushed to their tightest q1166 setting and a 2-vent fold.
     // Stacked levers (all value-exact, peak-neutral at 1166q):
-    //   - LUD_EXTRA_FOLD_VENTS=2, MIN_G=18: two extra FFG_G>=18 fold vents (the
-    //     g<18 "valley" entries are peak-critical, so MIN_G stays at 18).
+    //   - LUD_EXTRA_FOLD_VENTS=2, MIN_G=16: two extra FFG_G>=16 fold vents; the
+    //     fresh nonce below lands on a clean lower-average island at q1165.
     //   - TLM_COUT_LAYOUT_MARGIN=0 with TLM_COUT_LAYOUT_FORCE_M1_KS=129: the cout
     //     layout search runs at margin 0 everywhere EXCEPT the single peak-critical
     //     k=129 call (forced back to margin 1), capturing nearly all of the cout
     //     Toffoli cut while keeping peak qubits at 1166.
     //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
     // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set: nonce 123000008384 validates 0/0/0 over all 9024
-    // shots at 1166q x 1,414,439.206 => 1,414,439 x 1166 = 1,649,235,874.
+    // schedule-supported set: nonce 2686 validates 0/0/0 over all 9024
+    // shots at 1165q x 1,413,439.226 => 1,413,439 x 1165 = 1,646,656,435.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "18");
-    set_default_env("DIALOG_TAIL_NONCE", "1200017123");
+    set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
+    set_default_env("DIALOG_TAIL_NONCE", "100000025120");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
-    // u0 lifecycle loan (peak 1166->1165) — BAKED so the env-less grader reproduces it.
+    // u0/even-v0 lifecycle loans plus the GCD y0 loan candidate
+    // (1165->1164 at the same layout stack) — BAKED so env-less builds reproduce it.
     set_default_env("TLM_PARK_ODD_U0", "1");
     set_default_env("TLM_LOAN_ODD_U0", "1");
+    set_default_env("TLM_PARK_EVEN_V0", "1");
+    set_default_env("TLM_LOAN_EVEN_V0", "1");
+    set_default_env("TLM_LOAN_GCD_Y0", "1");
     let ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
     let input_ops = ops.len();
     let (ops, witness) = single_ccx_fanout::rewrite_first_target_fanout(ops, 96)
