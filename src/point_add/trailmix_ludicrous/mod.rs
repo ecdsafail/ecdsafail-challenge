@@ -13,7 +13,6 @@
 mod arith;
 mod codec;
 mod comparator;
-mod constprop;
 mod ec_add;
 mod fused;
 mod gcd;
@@ -36,8 +35,6 @@ const N: usize = 256;
 // circuit modules also need a phase Z, a doubly-controlled Z, the free Neg, a
 // Fredkin swap, and bit-conditioned forms; this trait supplies them on `B`.
 pub(super) trait BExt {
-    fn loan_zero_qubit(&mut self, q: QubitId);
-    fn reclaim_zero_qubit(&mut self, q: QubitId);
     fn z(&mut self, q: QubitId);
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId);
     fn neg(&mut self);
@@ -51,19 +48,6 @@ pub(super) trait BExt {
 }
 
 impl BExt for B {
-    fn loan_zero_qubit(&mut self, q: QubitId) {
-        self.free_qubits
-            .push(q.0.try_into().expect("qubit id fits in u32"));
-        if self.active_qubits > 0 {
-            self.active_qubits -= 1;
-        }
-        self.record_active_timeline();
-    }
-
-    fn reclaim_zero_qubit(&mut self, q: QubitId) {
-        self.reacquire(q);
-    }
-
     fn z(&mut self, q: QubitId) {
         let mut op = Op::empty();
         op.kind = OperationType::Z;
@@ -149,38 +133,12 @@ fn load_schedule() {
     SCHED.with(|s| {
         let mut s = s.borrow_mut();
         *s = Sched::default();
-        let extra_fold_vents = std::env::var("LUD_EXTRA_FOLD_VENTS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0);
-        let extra_fold_min_g = std::env::var("LUD_EXTRA_FOLD_MIN_G")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0);
-        let extra_fold_max_g = std::env::var("LUD_EXTRA_FOLD_MAX_G")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(usize::MAX);
-        let fold_g = |v: &[usize]| -> Vec<usize> {
-            v.iter()
-                .map(|&x| {
-                    if extra_fold_vents > 0
-                        && x >= extra_fold_min_g
-                        && x <= extra_fold_max_g
-                    {
-                        x.saturating_add(extra_fold_vents).min(53)
-                    } else {
-                        x
-                    }
-                })
-                .collect()
-        };
         s.gcd_k.0 = schedule::GCD_SUB_K.to_vec();
         s.gcd_branch.0 = schedule::GCD_BRANCH.to_vec();
         s.cout_k.0 = schedule::APPLY_COUT_K.to_vec();
         s.fold.0 = schedule::FOLD_SCHED.to_vec();
         s.cmp_k.0 = schedule::CMP_K.to_vec();
-        s.ffg.0 = fold_g(schedule::FFG_G);
+        s.ffg.0 = schedule::FFG_G.to_vec();
         s.hyb_v.0 = schedule::HYB_V.to_vec();
         s.sqrow_k.0 = schedule::SQ_ROW_K.to_vec();
     });
@@ -259,17 +217,5 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         }
     }
 
-    let ops = std::mem::take(&mut circ.ops);
-
-    // Sound classical constant-propagation peephole: drop CCX with a provably
-    // |0> quantum control (no-op but still scored) and fold CCX with a provably
-    // |1> control to CX/X. reg0 (x2_init) and reg1 (y2) hold per-shot input data
-    // -> seeded Unknown; every other qubit id is a |0> ancilla. Can be disabled
-    // with CONSTPROP_DISABLE=1.
-    if std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
-        return ops;
-    }
-    let mut input_qubits = x2_init.clone();
-    input_qubits.extend_from_slice(&y2);
-    constprop::run(ops, &input_qubits)
+    std::mem::take(&mut circ.ops)
 }

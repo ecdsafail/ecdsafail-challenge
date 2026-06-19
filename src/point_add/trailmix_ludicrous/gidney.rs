@@ -292,21 +292,8 @@ pub(crate) struct AdaptiveLayout {
 }
 pub(crate) const ADAPTIVE_RES: usize = 5;
 
-fn adaptive_chunk_size(n: usize) -> usize {
-    std::env::var("TLM_ADAPTIVE_CHUNK")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&v| v > 0)
-        .unwrap_or_else(|| (n as f64).sqrt() as usize)
-        .clamp(1, n)
-}
-
 pub(crate) fn adaptive_layout(n: usize, k: usize) -> AdaptiveLayout {
     let c = ((n as f64).sqrt() as usize).clamp(1, n);
-    adaptive_layout_for_chunk(n, k, c)
-}
-
-fn adaptive_layout_for_chunk(n: usize, k: usize, c: usize) -> AdaptiveLayout {
     let mut plain = 0usize;
     while plain < n {
         let l = n - (plain + 1);
@@ -318,153 +305,6 @@ fn adaptive_layout_for_chunk(n: usize, k: usize, c: usize) -> AdaptiveLayout {
         }
     }
     AdaptiveLayout { c, chunked_len: n - plain, plain_len: plain }
-}
-
-fn searched_cout_layout(n: usize, k: usize) -> Option<AdaptiveLayout> {
-    if std::env::var_os("TLM_COUT_LAYOUT_SEARCH").is_none() {
-        return None;
-    }
-    let mut margin = std::env::var("TLM_COUT_LAYOUT_MARGIN")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(1);
-    if margin == 0
-        && std::env::var("TLM_COUT_LAYOUT_FORCE_M1_KS")
-            .ok()
-            .map(|s| {
-                s.split(',')
-                    .filter_map(|part| part.trim().parse::<usize>().ok())
-                    .any(|force_k| force_k == k)
-            })
-            .unwrap_or(false)
-    {
-        margin = 1;
-    }
-    let mut best: Option<(usize, AdaptiveLayout)> = None;
-    for c in 1..=n {
-        for plain_len in 1..=n {
-            let chunked_len = n - plain_len;
-            let nchunks = chunked_len.div_ceil(c);
-            if nchunks + plain_len + margin > k {
-                continue;
-            }
-            if nchunks + c.min(chunked_len.max(1)) + margin > k {
-                continue;
-            }
-            let cost = 2 * n + chunked_len + nchunks + 1;
-            let layout = AdaptiveLayout { c, chunked_len, plain_len };
-            match best {
-                Some((best_cost, _)) if best_cost <= cost => {}
-                _ => best = Some((cost, layout)),
-            }
-        }
-    }
-    best.map(|(_, layout)| layout)
-}
-
-fn emit_cout_layout(
-    circ: &mut B,
-    ctrl: &QubitId,
-    a: &[&QubitId],
-    b: &[&QubitId],
-    cout: &QubitId,
-    layout: AdaptiveLayout,
-) {
-    let n = a.len();
-    let l = layout.chunked_len;
-    let mut bounds: Vec<(usize, usize)> = Vec::new();
-    let mut lo = 0;
-    while lo < l {
-        let hi = (lo + layout.c).min(l);
-        bounds.push((lo, hi));
-        lo = hi;
-    }
-    let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
-    for (j, &(lo, hi)) in bounds.iter().enumerate() {
-        let cy = circ.alloc_qubit();
-        let cin: Option<&QubitId> = if j == 0 { None } else { Some(&carries[j - 1]) };
-        controlled_clean_add_threaded(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, Some(&cy), hi - lo);
-        carries.push(cy);
-    }
-    controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], carries.last(), Some(cout), layout.plain_len);
-    for j in (0..bounds.len()).rev() {
-        let (lo, hi) = bounds[j];
-        let carry = carries.pop().expect("carry present");
-        if j == 0 {
-            let cin0 = circ.alloc_qubit();
-            controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &cin0, carry);
-            circ.zero_and_free(cin0);
-        } else {
-            controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &carries[j - 1], carry);
-        }
-    }
-}
-
-fn searched_gcd_adaptive_layout(n: usize, k: usize) -> Option<AdaptiveLayout> {
-    if std::env::var_os("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH").is_none() {
-        return None;
-    }
-    let margin = std::env::var("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(1);
-    let mut best: Option<(usize, AdaptiveLayout)> = None;
-    for c in 1..=n {
-        for plain_len in 1..=n {
-            let chunked_len = n - plain_len;
-            let nchunks = chunked_len.div_ceil(c);
-            if nchunks + plain_len + margin > k {
-                continue;
-            }
-            if nchunks + c.min(chunked_len.max(1)) + margin > k {
-                continue;
-            }
-            let cost = 2 * n + chunked_len + nchunks - 1;
-            let layout = AdaptiveLayout { c, chunked_len, plain_len };
-            match best {
-                Some((best_cost, _)) if best_cost <= cost => {}
-                _ => best = Some((cost, layout)),
-            }
-        }
-    }
-    best.map(|(_, layout)| layout)
-}
-
-fn emit_adaptive_layout_no_cout(
-    circ: &mut B,
-    ctrl: &QubitId,
-    a: &[&QubitId],
-    b: &[&QubitId],
-    layout: AdaptiveLayout,
-) {
-    let n = a.len();
-    let l = layout.chunked_len;
-    let mut bounds: Vec<(usize, usize)> = Vec::new();
-    let mut lo = 0;
-    while lo < l {
-        let hi = (lo + layout.c).min(l);
-        bounds.push((lo, hi));
-        lo = hi;
-    }
-    let cin0 = circ.alloc_qubit();
-    let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
-    for (j, &(lo, hi)) in bounds.iter().enumerate() {
-        let cout = circ.alloc_qubit();
-        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
-        controlled_clean_add_threaded(circ, ctrl, &a[lo..hi], &b[lo..hi], Some(cin), Some(&cout), hi - lo);
-        carries.push(cout);
-    }
-    if layout.plain_len > 0 {
-        let cin: &QubitId = carries.last().unwrap_or(&cin0);
-        controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], Some(cin), None, layout.plain_len);
-    }
-    for j in (0..bounds.len()).rev() {
-        let (lo, hi) = bounds[j];
-        let carry = carries.pop().expect("carry present");
-        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
-        controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, carry);
-    }
-    circ.zero_and_free(cin0);
 }
 
 fn adaptive_add_cost_tof(n: usize, k: usize, controlled: bool) -> u64 {
@@ -536,10 +376,6 @@ fn controlled_hybrid_add_adaptive_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qubit
     let n = a.len();
     assert_eq!(b.len(), n, "controlled adaptive add: a,b width mismatch");
     if n == 0 {
-        return;
-    }
-    if let Some(layout) = searched_gcd_adaptive_layout(n, k) {
-        emit_adaptive_layout_no_cout(circ, ctrl, a, b, layout);
         return;
     }
     let c = ((n as f64).sqrt() as usize).clamp(1, n);
@@ -679,12 +515,8 @@ pub fn controlled_hybrid_add_cout_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qubit
     let n = a.len();
     assert_eq!(b.len(), n, "controlled cout add: a,b width mismatch");
     assert!(n >= 1, "controlled cout add: empty operands");
-    if let Some(layout) = searched_cout_layout(n, k) {
-        emit_cout_layout(circ, ctrl, a, b, cout, layout);
-        return;
-    }
-    let c = adaptive_chunk_size(n);
-    let lay = adaptive_layout_for_chunk(n, k, c);
+    let c = ((n as f64).sqrt() as usize).clamp(1, n);
+    let lay = adaptive_layout(n, k);
     let tight = k < n.div_ceil(c) + c + ADAPTIVE_RES;
     let cov = (k.saturating_sub(2).saturating_mul(k.saturating_sub(1)) / 2).min(n);
     if n > 4 && k.saturating_add(2 * c) < n && tight && cov > 2 * k {
