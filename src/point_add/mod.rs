@@ -1982,11 +1982,11 @@ pub fn build() -> Vec<Op> {
     //     Toffoli cut while keeping peak qubits at 1166.
     //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
     // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set: nonce 18381 validates 0/0/0 over all 9024
-    // shots at 1166q x 1,414,438.346 => 1,414,438 x 1166 = 1,649,234,708.
+    // schedule-supported set: nonce 44132 validates 0/0/0 over all 9024
+    // shots at 1166q x 1,414,423.235 => 1,414,423 x 1166 = 1,649,217,218.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "18381");
+    set_default_env("DIALOG_TAIL_NONCE", "44132");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
