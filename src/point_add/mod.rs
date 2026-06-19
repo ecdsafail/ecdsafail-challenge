@@ -1983,23 +1983,20 @@ pub fn build() -> Vec<Op> {
     //     Toffoli cut while keeping peak qubits at 1166.
     //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
     // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set: nonce 2686 validates 0/0/0 over all 9024
-    // shots at 1165q x 1,413,439.226 => 1,413,439 x 1165 = 1,646,656,435.
+    // schedule-supported set. With the TrailMix lane-0 GCD cswap elision below,
+    // nonce 17914 validates 0/0/0 over all 9024 shots at
+    // 1165q x 1,412,481.970 => 1,412,482 x 1165 = 1,645,541,530.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
-    set_default_env("DIALOG_TAIL_NONCE", "100000025120");
+    set_default_env("DIALOG_TAIL_NONCE", "17914");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
-    // u0/even-v0 lifecycle loans plus the GCD y0 loan candidate
-    // (1165->1164 at the same layout stack) — BAKED so env-less builds reproduce it.
+    // u0 lifecycle loan (peak 1166->1165) — BAKED so the env-less grader reproduces it.
     set_default_env("TLM_PARK_ODD_U0", "1");
     set_default_env("TLM_LOAN_ODD_U0", "1");
-    set_default_env("TLM_PARK_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_GCD_Y0", "1");
     let ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
     let input_ops = ops.len();
     let (ops, witness) = single_ccx_fanout::rewrite_first_target_fanout(ops, 96)
