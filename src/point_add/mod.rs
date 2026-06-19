@@ -1988,7 +1988,7 @@ pub fn build() -> Vec<Op> {
     // 1164q x 1,412,443.306 => 1,412,443 x 1164 = 1,644,083,652.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
-    set_default_env("DIALOG_TAIL_NONCE", "800447829");
+    set_default_env("DIALOG_TAIL_NONCE", "600002572");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
