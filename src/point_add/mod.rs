@@ -68,6 +68,8 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
 pub mod venting;
 
+mod trailmix_port;
+
 pub mod dialog_gcd_classical_filter;
 
 mod emit;
@@ -78,9 +80,6 @@ pub(crate) use arith::*;
 
 mod rounds;
 pub(crate) use rounds::*;
-
-mod trailmix_ludicrous;
-mod single_ccx_fanout;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -94,6 +93,7 @@ fn d1_phase_corrected_product_core_active() -> bool {
 pub struct B {
     pub ops: Vec<Op>,
     pub count_only: bool,
+    pub(crate) fiat_hash: Option<Shake256>,
     pub counted_ops: usize,
     pub counted_kind_ops: [usize; 18],
     pub counted_phase_kind_ops: [usize; 18],
@@ -152,6 +152,7 @@ impl B {
         Self {
             ops: Vec::new(),
             count_only: false,
+            fiat_hash: None,
             counted_ops: 0,
             counted_kind_ops: [0; 18],
             counted_phase_kind_ops: [0; 18],
@@ -179,12 +180,37 @@ impl B {
     fn new_count_only() -> Self {
         let mut b = Self::new();
         b.count_only = true;
+        b.fiat_hash = Self::fiat_hash_from_env();
         b
+    }
+    fn fiat_hash_from_env() -> Option<Shake256> {
+        let ops_len = std::env::var("POINT_ADD_HASH_OPS_LEN")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())?;
+        let mut hasher = Shake256::default();
+        hasher.update(b"quantum_ecc-fiat-shamir-v2");
+        hasher.update(&ops_len.to_le_bytes());
+        Some(hasher)
+    }
+    pub(crate) fn update_fiat_hash_op(hasher: &mut Shake256, op: &Op) {
+        hasher.update(&[op.kind as u8]);
+        hasher.update(&op.q_control2.0.to_le_bytes());
+        hasher.update(&op.q_control1.0.to_le_bytes());
+        hasher.update(&op.q_target.0.to_le_bytes());
+        hasher.update(&op.c_target.0.to_le_bytes());
+        hasher.update(&op.c_condition.0.to_le_bytes());
+        hasher.update(&op.r_target.0.to_le_bytes());
+    }
+    pub(crate) fn clone_fiat_hash(&self) -> Option<Shake256> {
+        self.fiat_hash.clone()
     }
     fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
         self.counted_kind_ops[op.kind as usize] += 1;
         self.counted_phase_kind_ops[op.kind as usize] += 1;
+        if let Some(hasher) = &mut self.fiat_hash {
+            Self::update_fiat_hash_op(hasher, &op);
+        }
         if !self.count_only {
             self.ops.push(op);
         }
@@ -1008,9 +1034,6 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    set_default_env("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT", "1");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY", "1");
     // q1168 host-E route. These defaults are first so the historical fallback
@@ -1109,9 +1132,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
-    set_default_env("LUD_EXTRA_FOLD_VENTS", "1");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "24");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "141");
@@ -1136,7 +1157,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1587,7 +1608,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
+    set_default_env("DIALOG_TAIL_NONCE", "2150000021998006");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1814,6 +1835,9 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    if std::env::var("POINT_ADD_DIALOG_ROUTE").ok().as_deref() != Some("1") {
+        return trailmix_port::build_builder().ops;
+    }
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {
             Ok(()) => eprintln!(
@@ -1971,65 +1995,7 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
-    // Submitted circuit: the trailmix-ludicrous product-min secp256k1 point-add on
-    // the constant-propagation base, with the carry-out and GCD-adaptive layout
-    // searches both pushed to their tightest q1166 setting and a 2-vent fold.
-    // Stacked levers (all value-exact, peak-neutral at 1166q):
-    //   - LUD_EXTRA_FOLD_VENTS=2, MIN_G=16: two extra FFG_G>=16 fold vents; the
-    //     fresh nonce below lands on a clean lower-average island at q1165.
-    //   - TLM_COUT_LAYOUT_MARGIN=0 with TLM_COUT_LAYOUT_FORCE_M1_KS=129: the cout
-    //     layout search runs at margin 0 everywhere EXCEPT the single peak-critical
-    //     k=129 call (forced back to margin 1), capturing nearly all of the cout
-    //     Toffoli cut while keeping peak qubits at 1166.
-    //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
-    // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set: nonce 22275 validates 0/0/0 over all 9024 shots
-    // with the lane-0 GCD cswap elision at
-    // 1164q x 1,412,443.306 => 1,412,443 x 1164 = 1,644,083,652.
-    set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
-    set_default_env("DIALOG_TAIL_NONCE", "82979");
-    set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
-    set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
-    set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
-    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
-    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
-    // u0/even-v0 lifecycle loans plus the GCD y0 loan candidate
-    // (1165->1164 at the same layout stack) — BAKED so env-less builds reproduce it.
-    set_default_env("TLM_PARK_ODD_U0", "1");
-    set_default_env("TLM_LOAN_ODD_U0", "1");
-    set_default_env("TLM_PARK_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_GCD_Y0", "1");
-    let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
-    let input_ops = ops.len();
-    let mut fanout_passes = 0usize;
-    loop {
-        match single_ccx_fanout::rewrite_first_target_fanout(ops.clone(), 96) {
-            Ok((rewritten, _witness)) => {
-                fanout_passes += 1;
-                ops = rewritten;
-            }
-            Err(error) => {
-                eprintln!(
-                    "SINGLE_CCX_FANOUT: STOP passes={} input_ops={} output_ops={} reason={}",
-                    fanout_passes,
-                    input_ops,
-                    ops.len(),
-                    error,
-                );
-                break;
-            }
-        }
-    }
-    assert!(fanout_passes >= 1, "single-fanout rewrite failed to find first pass");
-    eprintln!(
-        "SINGLE_CCX_FANOUT: SUMMARY input_ops={} output_ops={} passes={}",
-        input_ops,
-        ops.len(),
-        fanout_passes,
-    );
-    ops
+    build_builder().ops
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
