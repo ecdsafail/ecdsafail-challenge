@@ -324,10 +324,22 @@ fn searched_cout_layout(n: usize, k: usize) -> Option<AdaptiveLayout> {
     if std::env::var_os("TLM_COUT_LAYOUT_SEARCH").is_none() {
         return None;
     }
-    let margin = std::env::var("TLM_COUT_LAYOUT_MARGIN")
+    let mut margin = std::env::var("TLM_COUT_LAYOUT_MARGIN")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(1);
+    if margin == 0
+        && std::env::var("TLM_COUT_LAYOUT_FORCE_M1_KS")
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|part| part.trim().parse::<usize>().ok())
+                    .any(|force_k| force_k == k)
+            })
+            .unwrap_or(false)
+    {
+        margin = 1;
+    }
     let mut best: Option<(usize, AdaptiveLayout)> = None;
     for c in 1..=n {
         for plain_len in 1..=n {
