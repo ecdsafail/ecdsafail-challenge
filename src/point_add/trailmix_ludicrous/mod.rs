@@ -133,12 +133,38 @@ fn load_schedule() {
     SCHED.with(|s| {
         let mut s = s.borrow_mut();
         *s = Sched::default();
+        let extra_fold_vents = std::env::var("LUD_EXTRA_FOLD_VENTS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let extra_fold_min_g = std::env::var("LUD_EXTRA_FOLD_MIN_G")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let extra_fold_max_g = std::env::var("LUD_EXTRA_FOLD_MAX_G")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(usize::MAX);
+        let fold_g = |v: &[usize]| -> Vec<usize> {
+            v.iter()
+                .map(|&x| {
+                    if extra_fold_vents > 0
+                        && x >= extra_fold_min_g
+                        && x <= extra_fold_max_g
+                    {
+                        x.saturating_add(extra_fold_vents).min(53)
+                    } else {
+                        x
+                    }
+                })
+                .collect()
+        };
         s.gcd_k.0 = schedule::GCD_SUB_K.to_vec();
         s.gcd_branch.0 = schedule::GCD_BRANCH.to_vec();
         s.cout_k.0 = schedule::APPLY_COUT_K.to_vec();
         s.fold.0 = schedule::FOLD_SCHED.to_vec();
         s.cmp_k.0 = schedule::CMP_K.to_vec();
-        s.ffg.0 = schedule::FFG_G.to_vec();
+        s.ffg.0 = fold_g(schedule::FFG_G);
         s.hyb_v.0 = schedule::HYB_V.to_vec();
         s.sqrow_k.0 = schedule::SQ_ROW_K.to_vec();
     });
