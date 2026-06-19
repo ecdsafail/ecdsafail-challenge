@@ -135,13 +135,38 @@ fn step<T: Copy>(slot: &mut (Vec<T>, usize), exhausted: T) -> T {
     v
 }
 
+fn env_delta(name: &str) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn sub_delta(v: usize, name: &str) -> usize {
+    if v == usize::MAX {
+        v
+    } else {
+        v.saturating_sub(env_delta(name))
+    }
+}
+
 fn next_gcd_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX)) }
-fn next_cout_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX)) }
-fn next_fold() -> i32 { SCHED.with(|s| step(&mut s.borrow_mut().fold, i32::MAX)) }
+fn next_cout_k() -> usize { SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().cout_k, usize::MAX), "TLM_COUT_K_DELTA")) }
+fn next_fold() -> i32 {
+    SCHED.with(|s| {
+        let v = step(&mut s.borrow_mut().fold, i32::MAX);
+        let d = env_delta("TLM_FOLD_DELTA") as i32;
+        if v == i32::MAX || v < 0 || d == 0 {
+            v
+        } else {
+            v.saturating_sub(d)
+        }
+    })
+}
 fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255)) }
 fn next_cmp_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX)) }
-fn next_ffg() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().ffg, usize::MAX)) }
-fn next_hyb_v() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX)) }
+fn next_ffg() -> usize { SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().ffg, usize::MAX), "TLM_FFG_DELTA")) }
+fn next_hyb_v() -> usize { SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().hyb_v, usize::MAX), "TLM_HYB_V_DELTA")) }
 fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
 
 /// Load the product-min jump schedule onto the thread-local cursors.
