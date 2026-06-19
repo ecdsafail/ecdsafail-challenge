@@ -32,7 +32,7 @@ pub const F_SECP256K1: u64 = (1u64 << 32) + 977;
 /// bitlen(f).
 pub const F_BITLEN: usize = 33;
 /// Profile padding.
-pub const PAD: usize = 19;
+pub const PAD: usize = 21;
 /// `+f` fold window width: carry beyond bit `LSBS-1` is dropped (~2^-PAD miss).
 pub const LSBS: usize = PAD + F_BITLEN; // 54
 /// Top-k less-than comparator width for the mod-add/sub overflow cleanup.
@@ -1107,6 +1107,25 @@ pub fn mod_add(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
 }
 
+/// `y := y + (x << shift) mod q`, where bits beyond bit 255 are handled by
+/// the caller. This is the same primitive as [`mod_add`] but with implicit zero
+/// low bits, so no padding qubits are allocated for the shifted view.
+pub fn mod_add_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: usize) {
+    let n = y.len();
+    assert_eq!(n, 256, "mod_add_shifted_low expects 256-bit y");
+    assert!(shift < n, "shift must be less than 256");
+    assert_eq!(x.len(), n - shift, "x must be the low shifted limb");
+    if shift == 0 {
+        mod_add(circ, x, y);
+        return;
+    }
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    cuccaro_carry(circ, None, x, &y[shift..], None, Some(&anc));
+    add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
+    controlled_lt_msbs_conditional(circ, None, &y[n - MSBS..], &x[x.len() - MSBS..], MSBS, anc);
+}
+
 /// UNCONTROLLED VENTED `y := y - x (mod q)`. X-sandwich + VENTED register sub
 /// (`add_cout_vented_unctrl`) + CLEAN gated `-f` fold + top-MSBS borrow clean.
 /// Distinct from [`mod_sub`] (which uses a normal Cuccaro register sub).
@@ -1133,6 +1152,31 @@ pub fn mod_sub_vented(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
         circ.x(*q);
     }
     controlled_add_carry_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, &anc);
+    circ.zero_and_free(anc);
+}
+
+/// `y := y - (x << shift) mod q`, where bits beyond bit 255 are handled by
+/// the caller. Low shifted-in zeros are implicit and cost no qubits.
+pub fn mod_sub_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: usize) {
+    let n = y.len();
+    assert_eq!(n, 256, "mod_sub_shifted_low expects 256-bit y");
+    assert!(shift < n, "shift must be less than 256");
+    assert_eq!(x.len(), n - shift, "x must be the low shifted limb");
+    if shift == 0 {
+        mod_sub(circ, x, y);
+        return;
+    }
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    for q in &y[shift..] {
+        circ.x(*q);
+    }
+    cuccaro_carry(circ, None, x, &y[shift..], None, Some(&anc));
+    for q in &y[shift..] {
+        circ.x(*q);
+    }
+    sub_f_window(circ, &anc, y, LSBS, &f_bytes);
+    controlled_add_carry_msbs_conditional(circ, None, &y[n - MSBS..], &x[x.len() - MSBS..], MSBS, &anc);
     circ.zero_and_free(anc);
 }
 
