@@ -1972,7 +1972,7 @@ pub fn build() -> Vec<Op> {
     // at the nonce-ground operating point (1167 qubits x 1,422,591 executed
     // Toffoli). The tail nonce reseeds the Fiat-Shamir inputs so all 9024
     // verifier draws land in the schedule-supported set.
-    set_default_env("DIALOG_TAIL_NONCE", "28565");
+    set_default_env("DIALOG_TAIL_NONCE", "75501");
     trailmix_ludicrous::build_trailmix_ludicrous_ops()
 }
 
