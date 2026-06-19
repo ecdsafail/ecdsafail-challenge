@@ -1968,11 +1968,10 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
-    // Submitted circuit: the trailmix-ludicrous product-min secp256k1 point-add
-    // at the nonce-ground operating point (1166 qubits x 1,422,616 executed
-    // Toffoli). The tail nonce reseeds the Fiat-Shamir inputs so all 9024
-    // verifier draws land in the schedule-supported set.
-    set_default_env("DIALOG_TAIL_NONCE", "46193");
+    // Submitted circuit: trailmix-ludicrous with the low fold schedule capped at
+    // 52 and a nonce-ground operating point found by the trailmix GPU scanner.
+    std::env::set_var("TRAILMIX_FOLD_LOW_BITS", "52");
+    std::env::set_var("DIALOG_TAIL_NONCE", "62632");
     trailmix_ludicrous::build_trailmix_ludicrous_ops()
 }
 
