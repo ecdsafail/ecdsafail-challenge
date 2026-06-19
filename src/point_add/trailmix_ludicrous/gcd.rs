@@ -79,6 +79,47 @@ fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     circ.cz_if_bit(*a, *b, bit);
 }
 
+fn park_odd_u0_enabled(i: usize, side: &str) -> bool {
+    let all = std::env::var("TLM_PARK_ODD_U0").ok().as_deref() == Some("1");
+    let side_on = std::env::var(format!("TLM_PARK_ODD_U0_{side}"))
+        .ok()
+        .as_deref()
+        == Some("1");
+    if !all && !side_on {
+        return false;
+    }
+    let limit = std::env::var("TLM_PARK_ODD_U0_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    i < limit
+}
+
+fn loan_odd_u0_enabled() -> bool {
+    std::env::var("TLM_LOAN_ODD_U0").ok().as_deref() == Some("1")
+}
+
+fn park_known_one(circ: &mut B, q: QubitId) -> QubitId {
+    circ.x(q);
+    if loan_odd_u0_enabled() {
+        circ.loan_zero_qubit(q);
+    } else {
+        circ.zero_and_free(q);
+    }
+    q
+}
+
+fn restore_known_one(circ: &mut B, parked: QubitId) -> QubitId {
+    let q = if loan_odd_u0_enabled() {
+        circ.reclaim_zero_qubit(parked);
+        parked
+    } else {
+        circ.alloc_qubit()
+    };
+    circ.x(q);
+    q
+}
+
 // =====================================================================
 // Per-step variable shift (controlled right/left shift by 1).
 // =====================================================================
@@ -267,6 +308,12 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         for j in 0..current_n {
             circ.cswap(swp, u[j], v[j]);
         }
+        let parked_u0 = if park_odd_u0_enabled(i, "FWD") {
+            let q = u[0];
+            Some(park_known_one(circ, q))
+        } else {
+            None
+        };
         // 5) v -= subtracted * u (controlled mod-free subtract on the active width;
         //    post-swap v >= u so no borrow on a fitting input). X-sandwich add.
         for q in &v[..current_n] {
@@ -283,6 +330,9 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         // never materialized for the apply -> the apply adders run in the GCD's headroom.
         if let Some((xr, yr)) = apply_inv {
             apply_step_reverse(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
+        }
+        if let Some(q) = parked_u0 {
+            u[0] = restore_known_one(circ, q);
         }
 
         // 6) record the symbol into fresh |0> slots (returning the ancilla to |0>).
@@ -417,6 +467,13 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             circ.zero_and_free(q);
         }
 
+        let parked_u0 = if park_odd_u0_enabled(i, "REV") {
+            let q = u[0];
+            Some(park_known_one(circ, q))
+        } else {
+            None
+        };
+
         // Fused forward apply (Direction::Forward multiply): apply this divstep's
         // symbol to the coordinate pair using the live symbol bits, in reverse iter
         // order matching apply_step_forward's order, so the tape is never materialized
@@ -430,6 +487,9 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         // s_2^-1, shift1^-1.
         // a) sub^-1: v += subtracted*u (X-sandwich cancels).
         controlled_add_active(circ, &subtracted, &u[..current_n], &v[..current_n]);
+        if let Some(q) = parked_u0 {
+            u[0] = restore_known_one(circ, q);
+        }
         // b) cswap^-1 (involutory).
         for j in 0..current_n {
             circ.cswap(swp, u[j], v[j]);

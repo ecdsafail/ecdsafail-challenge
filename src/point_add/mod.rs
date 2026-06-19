@@ -80,6 +80,7 @@ mod rounds;
 pub(crate) use rounds::*;
 
 mod trailmix_ludicrous;
+mod single_ccx_fanout;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -1986,13 +1987,34 @@ pub fn build() -> Vec<Op> {
     // shots at 1166q x 1,414,439.206 => 1,414,439 x 1166 = 1,649,235,874.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "18");
-    set_default_env("DIALOG_TAIL_NONCE", "3000001941");
+    set_default_env("DIALOG_TAIL_NONCE", "100000033721");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
-    trailmix_ludicrous::build_trailmix_ludicrous_ops()
+    // u0 lifecycle loan (peak 1166->1165) — BAKED so the env-less grader reproduces it.
+    set_default_env("TLM_PARK_ODD_U0", "1");
+    set_default_env("TLM_LOAN_ODD_U0", "1");
+    let ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
+    let input_ops = ops.len();
+    let (ops, witness) = single_ccx_fanout::rewrite_first_target_fanout(ops, 96)
+        .unwrap_or_else(|error| panic!("single-fanout rewrite failed: {error}"));
+    assert_eq!(ops.len() + 1, input_ops, "single-fanout output-op drift");
+    eprintln!(
+        "SINGLE_CCX_FANOUT: PASS input_ops={} output_ops={} first={} blocker={} second={} controls={},{} old_target={} new_target={} condition={}",
+        input_ops,
+        ops.len(),
+        witness.first_index,
+        witness.blocker_index,
+        witness.second_index,
+        witness.control_a,
+        witness.control_b,
+        witness.old_target,
+        witness.new_target,
+        witness.condition,
+    );
+    ops
 }
 
 pub fn square_window_selftest() -> Result<(), String> {

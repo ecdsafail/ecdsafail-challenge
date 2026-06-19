@@ -36,6 +36,8 @@ const N: usize = 256;
 // circuit modules also need a phase Z, a doubly-controlled Z, the free Neg, a
 // Fredkin swap, and bit-conditioned forms; this trait supplies them on `B`.
 pub(super) trait BExt {
+    fn loan_zero_qubit(&mut self, q: QubitId);
+    fn reclaim_zero_qubit(&mut self, q: QubitId);
     fn z(&mut self, q: QubitId);
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId);
     fn neg(&mut self);
@@ -49,6 +51,19 @@ pub(super) trait BExt {
 }
 
 impl BExt for B {
+    fn loan_zero_qubit(&mut self, q: QubitId) {
+        self.free_qubits
+            .push(q.0.try_into().expect("qubit id fits in u32"));
+        if self.active_qubits > 0 {
+            self.active_qubits -= 1;
+        }
+        self.record_active_timeline();
+    }
+
+    fn reclaim_zero_qubit(&mut self, q: QubitId) {
+        self.reacquire(q);
+    }
+
     fn z(&mut self, q: QubitId) {
         let mut op = Op::empty();
         op.kind = OperationType::Z;
