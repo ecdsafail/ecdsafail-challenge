@@ -1109,7 +1109,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "16581");
+    set_default_env("DIALOG_TAIL_NONCE", "800457469");
     set_default_env("LUD_EXTRA_FOLD_VENTS", "1");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "24");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
@@ -1136,7 +1136,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
-    set_default_env("DIALOG_TAIL_NONCE", "16581");
+    set_default_env("DIALOG_TAIL_NONCE", "800457469");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1587,7 +1587,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
-    set_default_env("DIALOG_TAIL_NONCE", "16581");
+    set_default_env("DIALOG_TAIL_NONCE", "800457469");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1988,7 +1988,7 @@ pub fn build() -> Vec<Op> {
     // 1164q x 1,412,443.306 => 1,412,443 x 1164 = 1,644,083,652.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "2");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "16");
-    set_default_env("DIALOG_TAIL_NONCE", "16581");
+    set_default_env("DIALOG_TAIL_NONCE", "1200006462");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
     set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
