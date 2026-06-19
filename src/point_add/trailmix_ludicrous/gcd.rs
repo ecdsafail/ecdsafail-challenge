@@ -40,6 +40,7 @@ use super::schedule::{GAP_J2, ITERS, JUMP, SCHED_J2};
 use super::{B, BExt};
 use crate::circuit::{QubitId};
 
+
 /// Which product the apply pass reconstructs into `y`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
@@ -77,95 +78,6 @@ fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     let bit = circ.alloc_bit();
     circ.hmr(*t, bit);
     circ.cz_if_bit(*a, *b, bit);
-}
-
-fn park_odd_u0_enabled(i: usize, side: &str) -> bool {
-    let all = std::env::var("TLM_PARK_ODD_U0").ok().as_deref() == Some("1");
-    let side_on = std::env::var(format!("TLM_PARK_ODD_U0_{side}"))
-        .ok()
-        .as_deref()
-        == Some("1");
-    if !all && !side_on {
-        return false;
-    }
-    let limit = std::env::var("TLM_PARK_ODD_U0_LIMIT")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(usize::MAX);
-    i < limit
-}
-
-fn loan_odd_u0_enabled() -> bool {
-    std::env::var("TLM_LOAN_ODD_U0").ok().as_deref() == Some("1")
-}
-
-fn park_even_v0_enabled() -> bool {
-    std::env::var("TLM_PARK_EVEN_V0").ok().as_deref() == Some("1")
-}
-
-fn loan_even_v0_enabled() -> bool {
-    std::env::var("TLM_LOAN_EVEN_V0").ok().as_deref() == Some("1")
-}
-
-fn loan_gcd_y0_enabled() -> bool {
-    std::env::var("TLM_LOAN_GCD_Y0").ok().as_deref() == Some("1")
-}
-
-fn park_known_one(circ: &mut B, q: QubitId) -> QubitId {
-    circ.x(q);
-    if loan_odd_u0_enabled() {
-        circ.loan_zero_qubit(q);
-    } else {
-        circ.zero_and_free(q);
-    }
-    q
-}
-
-fn restore_known_one(circ: &mut B, parked: QubitId) -> QubitId {
-    let q = if loan_odd_u0_enabled() {
-        circ.reclaim_zero_qubit(parked);
-        parked
-    } else {
-        circ.alloc_qubit()
-    };
-    circ.x(q);
-    q
-}
-
-fn park_known_zero(circ: &mut B, q: QubitId) -> QubitId {
-    if loan_even_v0_enabled() {
-        circ.loan_zero_qubit(q);
-    } else {
-        circ.zero_and_free(q);
-    }
-    q
-}
-
-fn restore_known_zero(circ: &mut B, parked: QubitId) -> QubitId {
-    if loan_even_v0_enabled() {
-        circ.reclaim_zero_qubit(parked);
-        parked
-    } else {
-        circ.alloc_qubit()
-    }
-}
-
-fn loan_known_one_gcd_y0(circ: &mut B, q: QubitId) {
-    circ.x(q);
-    circ.loan_zero_qubit(q);
-}
-
-fn reclaim_known_one_gcd_y0(circ: &mut B, q: QubitId) {
-    circ.reclaim_zero_qubit(q);
-    circ.x(q);
-}
-
-fn loan_known_zero_gcd_y0(circ: &mut B, q: QubitId) {
-    circ.loan_zero_qubit(q);
-}
-
-fn reclaim_known_zero_gcd_y0(circ: &mut B, q: QubitId) {
-    circ.reclaim_zero_qubit(q);
 }
 
 // =====================================================================
@@ -285,7 +197,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
     }
 
     let subtracted = circ.alloc_qubit();
-    let mut swap_flag: Option<QubitId> = None;
+    let swap_flag = circ.alloc_qubit();
     let s2 = circ.alloc_qubit(); // the single jump=2 extra-shift flag
     let t1 = circ.alloc_qubit(); // step-0 shift1-fired flag (= x even)
 
@@ -336,44 +248,33 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         circ.cx(v[0], subtracted);
 
         // 3) swap decision. Step 0: u=q, v=x<q always, so (v<u)=1 deterministically,
-        //    so swap = subtracted and no separate swap flag is needed. Else the narrow top-k comparator
+        //    so swap_flag = subtracted (one CX). Else the narrow top-k comparator
         //    decides swap_flag ^= subtracted AND (v < u).
-        let swp = if i == 0 {
-            subtracted
+        if i == 0 {
+            circ.cx(subtracted, swap_flag);
         } else {
-            let sf = *swap_flag.get_or_insert_with(|| circ.alloc_qubit());
             controlled_swap_decision_v_lt_u(
                 circ,
                 &subtracted,
                 &v[..current_n],
                 &u[..current_n],
                 cmp_eff,
-                &sf,
+                &swap_flag,
             );
-            sf
-        };
-        // 4) cswap(swap_flag, u, v).
-        for j in 1..current_n {
-            circ.cswap(swp, u[j], v[j]);
         }
-        let parked_u0 = if park_odd_u0_enabled(i, "FWD") {
-            let q = u[0];
-            Some(park_known_one(circ, q))
-        } else {
-            None
-        };
+        // 4) cswap(swap_flag, u, v). For i>=1, bit 0 is skipped: the odd-u
+        //    invariant gives u[0]=1, and subtracted=v[0], so when swap_flag=1
+        //    both are 1 (no-op swap); when swap_flag=0 no swap anyway.
+        let j_start = if i > 0 { 1 } else { 0 };
+        for j in j_start..current_n {
+            circ.cswap(swap_flag, u[j], v[j]);
+        }
         // 5) v -= subtracted * u (controlled mod-free subtract on the active width;
         //    post-swap v >= u so no borrow on a fitting input). X-sandwich add.
         for q in &v[..current_n] {
             circ.x(*q);
         }
-        controlled_add_active(
-            circ,
-            &subtracted,
-            &u[..current_n],
-            &v[..current_n],
-            GcdBit0Mode::ForwardKnownOneAfterCx,
-        );
+        controlled_add_active(circ, &subtracted, &u[..current_n], &v[..current_n]);
         for q in &v[..current_n] {
             circ.x(*q);
         }
@@ -382,38 +283,15 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         // coordinate pair using the live symbol bits, before they are swapped to the
         // tape. Forward iter order matches apply_step_reverse's order, so the tape is
         // never materialized for the apply -> the apply adders run in the GCD's headroom.
-        let parked_v0 = if apply_inv.is_some() && park_even_v0_enabled() {
-            let q = v[0];
-            Some(park_known_zero(circ, q))
-        } else {
-            None
-        };
         if let Some((xr, yr)) = apply_inv {
-            apply_step_reverse(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
-        }
-        if let Some(q) = parked_v0 {
-            v[0] = restore_known_zero(circ, q);
-        }
-        if let Some(q) = parked_u0 {
-            u[0] = restore_known_one(circ, q);
+            apply_step_reverse(circ, i, &subtracted, &swap_flag, &s2, &t1, xr, yr);
         }
 
         // 6) record the symbol into fresh |0> slots (returning the ancilla to |0>).
         let slots: Vec<QubitId> = (0..sym_bits).map(|_| circ.alloc_qubit()).collect();
         circ.swap(subtracted, slots[0]);
-        if i == 0 {
-            circ.cx(slots[0], slots[1]);
-        } else {
-            circ.swap(swp, slots[1]);
-        }
+        circ.swap(swap_flag, slots[1]);
         circ.swap(s2, slots[2]);
-        if i == 0 {
-            debug_assert_eq!(window_plan[win_idx], super::codec::DialogCodec::Step0);
-            let data = super::codec::compress_step0_with_t1(circ, t1, &slots);
-            tape.extend(data);
-            win_idx += 1;
-            continue;
-        }
         pending.extend(slots);
 
         // When the current window's symbols are complete, compress it inline.
@@ -437,10 +315,10 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         circ.zero_and_free(q);
     }
     circ.zero_and_free(subtracted);
-    if let Some(swap_flag) = swap_flag {
-        circ.zero_and_free(swap_flag);
-    }
+    circ.zero_and_free(swap_flag);
     circ.zero_and_free(s2);
+    // Prepend t1: tape = [t1, win_0 code bits, ..]  (compressed layout).
+    tape.insert(0, t1);
     assert_eq!(tape.len(), super::codec::dialog_tape_qubits(n3, iters));
     tape
 }
@@ -477,9 +355,8 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
     circ.x(u[0]);
 
     let subtracted = circ.alloc_qubit();
-    let mut swap_flag: Option<QubitId> = Some(circ.alloc_qubit());
+    let swap_flag = circ.alloc_qubit();
     let s2 = circ.alloc_qubit();
-    let mut step0_t1: Option<QubitId> = None;
 
     for i in (0..iters).rev() {
         let current_n = (SCHED_J2[i] as usize).max(1);
@@ -499,28 +376,13 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             let cb = codec.code_bits();
             let tlen = tape.len();
             let data: Vec<QubitId> = tape.split_off(tlen - cb);
-            if codec == super::codec::DialogCodec::Step0 {
-                let (t1, raw) = super::codec::decompress_step0_with_t1(circ, &data);
-                step0_t1 = Some(t1);
-                pending = raw;
-            } else {
-                pending = codec.decompress_window(circ, &data);
-            }
+            pending = codec.decompress_window(circ, &data);
         }
         // Pull the last symbol (3 bits) off `pending` into the ancilla.
         let plen = pending.len();
         let cur: Vec<QubitId> = pending.split_off(plen - 3);
         circ.swap(subtracted, cur[0]);
-        let swp = if i == 0 {
-            circ.cx(subtracted, cur[1]);
-            subtracted
-        } else {
-            let sf = *swap_flag
-                .as_ref()
-                .expect("swap flag live for non-step0 replay");
-            circ.swap(sf, cur[1]);
-            sf
-        };
+        circ.swap(swap_flag, cur[1]);
         circ.swap(s2, cur[2]);
         // Free the 3 now-|0> symbol slots here -- before the apply -- so they are not
         // carried as dead live qubits through the apply + GCD-undo, where they would
@@ -530,60 +392,38 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             circ.zero_and_free(q);
         }
 
-        let parked_u0 = if park_odd_u0_enabled(i, "REV") {
-            let q = u[0];
-            Some(park_known_one(circ, q))
-        } else {
-            None
-        };
-
         // Fused forward apply (Direction::Forward multiply): apply this divstep's
         // symbol to the coordinate pair using the live symbol bits, in reverse iter
         // order matching apply_step_forward's order, so the tape is never materialized
         // for the apply -> the apply adders run in the (reverse) GCD's headroom.
-        let parked_v0 = if apply_fwd.is_some() && park_even_v0_enabled() {
-            let q = v[0];
-            Some(park_known_zero(circ, q))
-        } else {
-            None
-        };
         if let Some((xr, yr)) = apply_fwd {
-            let t1 = step0_t1.unwrap_or(subtracted);
-            apply_step_forward(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
-        }
-        if let Some(q) = parked_v0 {
-            v[0] = restore_known_zero(circ, q);
+            let t1 = tape[0];
+            apply_step_forward(circ, i, &subtracted, &swap_flag, &s2, &t1, xr, yr);
         }
 
         // Inverse step (reverse op order): sub^-1, cswap^-1, cmp^-1, subtracted^-1,
         // s_2^-1, shift1^-1.
         // a) sub^-1: v += subtracted*u (X-sandwich cancels).
-        controlled_add_active(
-            circ,
-            &subtracted,
-            &u[..current_n],
-            &v[..current_n],
-            GcdBit0Mode::ReverseKnownZeroBeforeCx,
-        );
-        if let Some(q) = parked_u0 {
-            u[0] = restore_known_one(circ, q);
-        }
-        // b) cswap^-1 (involutory).
-        for j in 1..current_n {
-            circ.cswap(swp, u[j], v[j]);
+        controlled_add_active(circ, &subtracted, &u[..current_n], &v[..current_n]);
+        // b) cswap^-1 (involutory). Same bit-0 skip as forward for i>=1.
+        let j_start = if i > 0 { 1 } else { 0 };
+        for j in j_start..current_n {
+            circ.cswap(swap_flag, u[j], v[j]);
         }
         // c) uncompute swap_flag. Step 0 is a CNOT (swap_flag == subtracted). For
         //    i>=1 the flag holds `subtracted AND (v<u)`; clear it by measurement-vent
         //    (hmr + capped Z-recompute under push_condition) -- ~half the normal
         //    comparator's Toffoli, scorer-discounted ~0.5 more.
-        if i != 0 {
+        if i == 0 {
+            circ.cx(subtracted, swap_flag);
+        } else {
             super::comparator::swap_decision_uncompute_vented(
                 circ,
                 &subtracted,
                 &v[..current_n],
                 &u[..current_n],
                 cmp_eff,
-                &swp,
+                &swap_flag,
             );
         }
         // d) subtracted^-1: cx(v[0], subtracted) (v[0] still post-shift parity).
@@ -594,22 +434,17 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         circ.cx(v[0], s2);
         // f) shift1 inverse: i>=1 unconditional left-shift; i==0 gated on t1.
         if i == 0 {
-            let t1 = step0_t1.expect("step0 t1 decompressed");
-            controlled_left_shift(circ, &t1, &v[..current_n]);
-            circ.x(t1);
-            circ.cx(v[0], t1);
+            controlled_left_shift(circ, &tape[0], &v[..current_n]);
+            circ.x(tape[0]);
+            circ.cx(v[0], tape[0]);
         } else {
             left_shift(circ, &v[..current_n]);
         }
 
         // (symbol slots already freed before the apply, above). At i==0 drain t1.
         if i == 0 {
-            let t1 = step0_t1.take().expect("step0 t1 present");
+            let t1 = tape.pop().expect("t1 prefix");
             circ.zero_and_free(t1);
-        }
-        if i == 1 {
-            let sf = swap_flag.take().expect("swap flag still allocated");
-            circ.zero_and_free(sf);
         }
     }
     assert!(tape.is_empty(), "tape not fully drained");
@@ -625,9 +460,7 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         circ.zero_and_free(q);
     }
     circ.zero_and_free(subtracted);
-    if let Some(swap_flag) = swap_flag {
-        circ.zero_and_free(swap_flag);
-    }
+    circ.zero_and_free(swap_flag);
     circ.zero_and_free(s2);
 }
 
@@ -648,12 +481,6 @@ fn controlled_swap_decision_v_lt_u(
     super::comparator::controlled_swap_decision_lt_truncated(circ, ctrl, v, u, k, target);
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GcdBit0Mode {
-    ForwardKnownOneAfterCx,
-    ReverseKnownZeroBeforeCx,
-}
-
 /// `y += ctrl * x (mod 2^width)` over the active width (no carry-out captured).
 /// The GCD subtract uses this inside an X-sandwich; post-swap `v >= u` so the
 /// two's-complement subtract never borrows out on a fitting input.
@@ -664,13 +491,7 @@ enum GcdBit0Mode {
 /// The per-bit carry qubits (allocated + freed inside) fit in the GCD passes'
 /// headroom below the global (apply) peak. mod-2^m: the carry-out is dropped, as
 /// the GCD subtract never carries out on a fitting input.
-fn controlled_add_active(
-    circ: &mut B,
-    ctrl: &QubitId,
-    x: &[QubitId],
-    y: &[QubitId],
-    bit0_mode: GcdBit0Mode,
-) {
+fn controlled_add_active(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[QubitId]) {
     // The GCD subtract `v -= u` (here `y += x` inside the X-sandwich):
     // a = target = y (= v), b = addend = x (= u). cap = PAD.
     // Schedule-driven GCD subtract: pull the baked carry-cap `k` for this call
@@ -685,35 +506,11 @@ fn controlled_add_active(
     // per GCD conditional sub/add * 2 (fwd+rev) * ITERS ~= 1000+ tof. Not the apply.
     let k = super::next_gcd_k();
     let branch = super::next_gcd_branch();
-    let loan_y0 = loan_gcd_y0_enabled() && x.len() > 1;
-    match bit0_mode {
-        GcdBit0Mode::ForwardKnownOneAfterCx => {
-            circ.cx(*ctrl, y[0]); // bit-0 sum is known one inside the X-sandwich.
-            if loan_y0 {
-                loan_known_one_gcd_y0(circ, y[0]);
-            }
-        }
-        GcdBit0Mode::ReverseKnownZeroBeforeCx => {
-            // The inverse add starts with y[0] = 0 and no carry into bit 1. Delay the
-            // bit-0 CNOT until after the high-bit adder so y[0] can be borrowed.
-            if loan_y0 {
-                loan_known_zero_gcd_y0(circ, y[0]);
-            }
-        }
-    }
+    circ.cx(*ctrl, y[0]); // bit-0 sum (x[0] == 1 under the odd-u invariant)
     if x.len() > 1 {
         let yr: Vec<&QubitId> = y[1..].iter().collect();
         let xr: Vec<&QubitId> = x[1..].iter().collect();
         super::gidney::controlled_hybrid_add_capped_branch(circ, ctrl, &yr, &xr, k, super::PAD, branch);
-    }
-    if loan_y0 {
-        match bit0_mode {
-            GcdBit0Mode::ForwardKnownOneAfterCx => reclaim_known_one_gcd_y0(circ, y[0]),
-            GcdBit0Mode::ReverseKnownZeroBeforeCx => reclaim_known_zero_gcd_y0(circ, y[0]),
-        }
-    }
-    if bit0_mode == GcdBit0Mode::ReverseKnownZeroBeforeCx {
-        circ.cx(*ctrl, y[0]); // bit-0 sum (x[0] == 1 under the odd-u invariant)
     }
 }
 
@@ -927,3 +724,4 @@ fn clear_zeroed_drift(circ: &mut B, reg: &[QubitId]) {
         }
     }
 }
+
