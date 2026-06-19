@@ -1108,9 +1108,9 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
     set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("DIALOG_TAIL_NONCE", "40003939");
+    set_default_env("DIALOG_TAIL_NONCE", "100012904");
     set_default_env("LUD_EXTRA_FOLD_VENTS", "1");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "24");
+    set_default_env("LUD_EXTRA_FOLD_MIN_G", "23");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("SQUARE_ROW_MAX_SEG", "141");
@@ -1971,13 +1971,13 @@ pub fn build() -> Vec<Op> {
         }
     }
     // Submitted circuit: the trailmix-ludicrous product-min secp256k1 point-add
-    // at the nonce-ground operating point (1166 qubits x ~1,422,563 executed
-    // Toffoli). One extra fold vent from FFG_G >= 24 trims the schedule; the
+    // at the nonce-ground operating point (1166 qubits x ~1,422,540 executed
+    // Toffoli). One extra fold vent from FFG_G >= 23 trims the schedule; the
     // tail nonce reseeds the Fiat-Shamir inputs so all 9024 verifier draws land
     // in the schedule-supported set.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "1");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "24");
-    set_default_env("DIALOG_TAIL_NONCE", "40003939");
+    set_default_env("LUD_EXTRA_FOLD_MIN_G", "23");
+    set_default_env("DIALOG_TAIL_NONCE", "100012904");
     trailmix_ludicrous::build_trailmix_ludicrous_ops()
 }
 
