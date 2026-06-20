@@ -158,29 +158,37 @@ pub fn ec_add(
     assert_eq!(oy.len(), N, "oy is 256 classical bits");
 
     // Step 3/4: x2 -= ox ; y2 -= oy.  => (dx, dy).
+    circ.set_phase("tlm_ec.coord_x_sub_ox");
     coord_addsub(circ, x2, ox, true);
+    circ.set_phase("tlm_ec.coord_y_sub_oy");
     coord_addsub(circ, &y2[..N], oy, true);
 
     // Step 6: y2 *= x2^-1 (gcd inversion). The multiplicand starts in y2[..N]
     // (= dy); after the inverse apply y2 holds lambda = dy * dx^-1 mod q, and x2
     // is restored to dx. `mod_mul_inverse_in_place` takes/returns the 256-bit x
     // register; y2 and the internal tmp scratch are 256-bit.
+    circ.set_phase("tlm_ec.gcd_inverse");
     let xv = std::mem::take(x2);
     *x2 = mod_mul_inverse_in_place(circ, xv, y2, Direction::Inverse);
 
     // Step 7: x2 += 3*ox.  => (P.x + 2*Q.x, lambda)  [x2 currently = dx = P.x-Q.x].
+    circ.set_phase("tlm_ec.coord_x_add_3ox");
     coord_add3x(circ, x2, ox);
 
     // Step 10: x2 -= lambda^2 mod q.  (lambda = y2[..N]).
+    circ.set_phase("tlm_ec.square_sub_lambda2");
     mod_square_sub_pm_secp256k1_symmetric(circ, &y2[..N], x2);
 
     // Step 11: y2 *= x2 (gcd forward multiply). x2 restored to the post-square
     // value; y2 = lambda * x2 mod q.
+    circ.set_phase("tlm_ec.gcd_forward");
     let xv = std::mem::take(x2);
     *x2 = mod_mul_inverse_in_place(circ, xv, y2, Direction::Forward);
 
     // Step 14: y2 -= oy.   Step 15: x2 := ox - x2.  => (P+Q).x.
+    circ.set_phase("tlm_ec.coord_y_sub_oy_out");
     coord_addsub(circ, &y2[..N], oy, true);
+    circ.set_phase("tlm_ec.coord_x_restore");
     coord_rsub(circ, x2, ox);
 }
 

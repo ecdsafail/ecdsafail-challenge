@@ -347,6 +347,37 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         }
     }
 
+    if std::env::var_os("TRACE_PEAK").is_some()
+        || std::env::var_os("TRACE_PHASE_ACTIVE").is_some()
+    {
+        eprintln!(
+            "TLM_TRACE peak_qubits={} phase='{}' ops_idx={} total_ops={}",
+            circ.peak_qubits,
+            circ.peak_phase,
+            circ.peak_ops_idx,
+            circ.ops.len()
+        );
+    }
+    if std::env::var_os("TRACE_PEAK_VERBOSE").is_some() {
+        let pk = circ.peak_qubits;
+        for (active, phase, op) in &circ.peak_log {
+            if *active + 10 >= pk {
+                eprintln!("TLM_TRACE near_peak active={} phase='{}' ops_idx={}", active, phase, op);
+            }
+        }
+    }
+    if std::env::var_os("TRACE_PHASE_ACTIVE").is_some() {
+        let mut v: Vec<_> = circ.phase_active_max.iter().collect();
+        v.sort_by_key(|(_, active)| std::cmp::Reverse(**active));
+        let top_n = std::env::var("TRACE_PHASE_ACTIVE_TOP")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(20);
+        for (phase, active) in v.into_iter().take(top_n) {
+            eprintln!("TLM_TRACE active_by_phase active={} phase='{}'", active, phase);
+        }
+    }
+
     let ops = std::mem::take(&mut circ.ops);
 
     // Sound classical constant-propagation peephole: drop CCX with a provably
