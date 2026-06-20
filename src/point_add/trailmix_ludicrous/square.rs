@@ -243,8 +243,133 @@ fn apply_unshifted_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId]
     free_zeroes(circ, pads);
 }
 
-fn apply_f_times_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+fn apply_shifted_value_direct(
+    circ: &mut B,
+    value: &[QubitId],
+    output_reg: &[QubitId],
+    shift: usize,
+    op: ShiftOp,
+) {
+    assert!(value.len() + shift <= N, "shifted value must fit in 256 bits");
+    let low_pads = alloc_zeroes(circ, shift);
+    let high_pads = alloc_zeroes(circ, N - shift - value.len());
+    let mut operand = Vec::with_capacity(N);
+    operand.extend_from_slice(&low_pads);
+    operand.extend_from_slice(value);
+    operand.extend_from_slice(&high_pads);
+    apply_full_width(circ, &operand, output_reg, op);
+    free_zeroes(circ, high_pads);
+    free_zeroes(circ, low_pads);
+}
+
+fn apply_shifted_value_low(
+    circ: &mut B,
+    value: &[QubitId],
+    output_reg: &[QubitId],
+    shift: usize,
+    op: ShiftOp,
+) {
+    assert!(value.len() + shift <= N, "shifted value must fit in 256 bits");
+    if shift == 0 {
+        apply_unshifted_value(circ, value, output_reg, op);
+        return;
+    }
+
+    let high_pads = alloc_zeroes(circ, N - shift - value.len());
+    let mut operand = Vec::with_capacity(N - shift);
+    operand.extend_from_slice(value);
+    operand.extend_from_slice(&high_pads);
+    match op {
+        ShiftOp::Add => mod_add_shifted_low(circ, &operand, output_reg, shift),
+        ShiftOp::Sub => mod_sub_shifted_low(circ, &operand, output_reg, shift),
+    }
+    free_zeroes(circ, high_pads);
+}
+
+fn env_tag_enabled(var: &str, tag: &str) -> bool {
+    std::env::var(var)
+        .ok()
+        .map(|tags| tags.split(',').any(|t| t.trim() == tag))
+        .unwrap_or(false)
+}
+
+fn apply_f_times_value_tagged(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp, tag: &str) {
     assert!(value.len() <= N, "f-fold value must fit in 256 bits");
+    if value.len() + 32 <= N
+        && (std::env::var("TLM_SQUARE_F_RAMP10_DIRECT32").ok().as_deref() == Some("1")
+            || env_tag_enabled("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", tag))
+    {
+        let pads = alloc_zeroes(circ, N + 1 - value.len());
+        let mut ext = Vec::with_capacity(N + 1);
+        ext.extend_from_slice(value);
+        ext.extend_from_slice(&pads);
+
+        let mut shifted = 0usize;
+        for &(shift, sub_f_op) in &F_NAF_TERMS {
+            let term_op = match op {
+                ShiftOp::Sub => sub_f_op,
+                ShiftOp::Add => flipped(sub_f_op),
+            };
+            if shift == 32 {
+                continue;
+            }
+            while shifted < shift {
+                arith::mod_double(circ, &ext);
+                shifted += 1;
+            }
+            apply_full_width(circ, &ext[..N], output_reg, term_op);
+        }
+        while shifted > 0 {
+            arith::mod_double_reverse(circ, &ext);
+            shifted -= 1;
+        }
+        free_zeroes(circ, pads);
+
+        let term_op = match op {
+            ShiftOp::Sub => ShiftOp::Sub,
+            ShiftOp::Add => ShiftOp::Add,
+        };
+        apply_shifted_value_direct(circ, value, output_reg, 32, term_op);
+        return;
+    }
+
+    if env_tag_enabled("TLM_SQUARE_F_DIRECT_TAGS", tag) && value.len() + 32 <= N {
+        for &(shift, sub_f_op) in &F_NAF_TERMS {
+            let term_op = match op {
+                ShiftOp::Sub => sub_f_op,
+                ShiftOp::Add => flipped(sub_f_op),
+            };
+            apply_shifted_value_direct(circ, value, output_reg, shift, term_op);
+        }
+        return;
+    }
+
+    if std::env::var("TLM_SQUARE_F_SHIFTED_LOW").ok().as_deref() == Some("1")
+        && value.len() + 32 <= N
+    {
+        for &(shift, sub_f_op) in &F_NAF_TERMS {
+            let term_op = match op {
+                ShiftOp::Sub => sub_f_op,
+                ShiftOp::Add => flipped(sub_f_op),
+            };
+            apply_shifted_value_low(circ, value, output_reg, shift, term_op);
+        }
+        return;
+    }
+
+    if std::env::var("TLM_SQUARE_F_DIRECT_SHIFT").ok().as_deref() == Some("1")
+        && value.len() + 32 <= N
+    {
+        for &(shift, sub_f_op) in &F_NAF_TERMS {
+            let term_op = match op {
+                ShiftOp::Sub => sub_f_op,
+                ShiftOp::Add => flipped(sub_f_op),
+            };
+            apply_shifted_value_direct(circ, value, output_reg, shift, term_op);
+        }
+        return;
+    }
+
     let pads = alloc_zeroes(circ, N + 1 - value.len());
     let mut ext = Vec::with_capacity(N + 1);
     ext.extend_from_slice(value);
@@ -270,7 +395,11 @@ fn apply_f_times_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], 
     free_zeroes(circ, pads);
 }
 
-fn apply_shifted_128(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+fn apply_f_times_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
+    apply_f_times_value_tagged(circ, value, output_reg, op, "generic");
+}
+
+fn apply_shifted_128_tagged(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp, tag: &str) {
     assert!(value.len() <= N + 2, "128-shifted half product must be at most 258 bits");
     let low_len = value.len().min(128);
     let low_pads = alloc_zeroes(circ, 128);
@@ -284,7 +413,7 @@ fn apply_shifted_128(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op
     free_zeroes(circ, low_pads);
 
     if value.len() > 128 {
-        apply_f_times_value(circ, &value[128..], output_reg, op);
+        apply_f_times_value_tagged(circ, &value[128..], output_reg, op, tag);
     }
 }
 
@@ -347,27 +476,39 @@ pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], o
     //   lambda^2 = A + (C-A-B)*2^128 + B*2^256.
     // Consume each half-square before building the next to keep the square off
     // the global peak and avoid the three-product live set.
+    circ.set_phase("square_sum_hi_lo");
     let sum = build_sum_hi_lo(circ, lambda);
 
+    circ.set_phase("square_c_sum_build");
     let mut c_prod: Vec<QubitId> = Vec::with_capacity(2 * sum.len());
     symmetric_square_into_prod(circ, &sum, &mut c_prod);
-    apply_shifted_128(circ, &c_prod, output_reg, ShiftOp::Sub);
+    circ.set_phase("square_c_sum_apply_shifted_128_sub");
+    apply_shifted_128_tagged(circ, &c_prod, output_reg, ShiftOp::Sub, "c");
+    circ.set_phase("square_c_sum_unbuild");
     symmetric_square_into_prod_reverse(circ, &sum, c_prod);
 
+    circ.set_phase("square_a_lo_build");
     let lo = &lambda[..128];
     let mut a_prod: Vec<QubitId> = Vec::with_capacity(2 * lo.len());
     symmetric_square_into_prod(circ, lo, &mut a_prod);
+    circ.set_phase("square_a_lo_apply_unshifted_sub");
     apply_unshifted_value(circ, &a_prod, output_reg, ShiftOp::Sub);
-    apply_shifted_128(circ, &a_prod, output_reg, ShiftOp::Add);
+    circ.set_phase("square_a_lo_apply_shifted_128_add");
+    apply_shifted_128_tagged(circ, &a_prod, output_reg, ShiftOp::Add, "a");
+    circ.set_phase("square_a_lo_unbuild");
     symmetric_square_into_prod_reverse(circ, lo, a_prod);
 
+    circ.set_phase("square_b_hi_build");
     let hi = &lambda[128..N];
     let mut b_prod: Vec<QubitId> = Vec::with_capacity(2 * hi.len());
     symmetric_square_into_prod(circ, hi, &mut b_prod);
-    apply_shifted_128(circ, &b_prod, output_reg, ShiftOp::Add);
+    circ.set_phase("square_b_hi_apply_shifted_128_add");
+    apply_shifted_128_tagged(circ, &b_prod, output_reg, ShiftOp::Add, "b");
+    circ.set_phase("square_b_hi_apply_f_times_sub");
     apply_f_times_value(circ, &b_prod, output_reg, ShiftOp::Sub);
+    circ.set_phase("square_b_hi_unbuild");
     symmetric_square_into_prod_reverse(circ, hi, b_prod);
 
+    circ.set_phase("square_sum_hi_lo_unbuild");
     unbuild_sum_hi_lo(circ, lambda, sum);
 }
-
