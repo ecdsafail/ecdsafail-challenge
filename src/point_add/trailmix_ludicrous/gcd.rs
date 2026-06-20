@@ -61,57 +61,6 @@ pub fn q_secp256k1_le() -> [u8; 32] {
     b
 }
 
-fn env_index_value_i32(name: &str, index: usize) -> Option<i32> {
-    let spec = std::env::var(name).ok()?;
-    for entry in spec.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
-        let (range, value) = entry.split_once(':')?;
-        let value = value.trim().parse::<i32>().ok()?;
-        let range = range.trim();
-        let contains = if let Some((lo, hi)) = range.split_once("..") {
-            match (lo.trim().parse::<usize>(), hi.trim().parse::<usize>()) {
-                (Ok(lo), Ok(hi)) => lo <= index && index <= hi,
-                _ => false,
-            }
-        } else if let Some((lo, hi)) = range.split_once('-') {
-            match (lo.trim().parse::<usize>(), hi.trim().parse::<usize>()) {
-                (Ok(lo), Ok(hi)) => lo <= index && index <= hi,
-                _ => false,
-            }
-        } else {
-            range.parse::<usize>().ok() == Some(index)
-        };
-        if contains {
-            return Some(value);
-        }
-    }
-    None
-}
-
-fn apply_delta(base: usize, delta: i32) -> usize {
-    if delta >= 0 {
-        base.saturating_add(delta as usize)
-    } else {
-        base.saturating_sub((-delta) as usize)
-    }
-}
-
-fn gap_j2_eff(i: usize, current_n: usize) -> usize {
-    let mut gap = GAP_J2[i] as usize;
-    if let Ok(delta) = std::env::var("TLM_GAP_J2_DELTA")
-        .unwrap_or_default()
-        .parse::<i32>()
-    {
-        gap = apply_delta(gap, delta);
-    }
-    if let Some(delta) = env_index_value_i32("TLM_GAP_J2_INDEX_DELTAS", i) {
-        gap = apply_delta(gap, delta);
-    }
-    if let Some(override_value) = env_index_value_i32("TLM_GAP_J2_INDEX_OVERRIDES", i) {
-        gap = override_value.max(1) as usize;
-    }
-    gap.min(current_n).max(1)
-}
-
 /// All-triple group count the product-min selector picks for this
 /// schedule: `n3 = iters/3` (clamped inside `codec::jump_dialog_regions`).
 #[must_use]
@@ -434,7 +383,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
             circ.zero_and_free(q);
         }
         // swap-decision window: top GAP_J2[i] bits of the active width.
-        let cmp_eff = gap_j2_eff(i, current_n);
+        let cmp_eff = (GAP_J2[i] as usize).min(current_n).max(1);
 
         // 1) Shift-first: remove up to jump=2 trailing zeros of v.
         //    i==0 gates shift1 on (v even) and records it in t1; i>=1 is
@@ -695,7 +644,7 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         while v.len() < current_n {
             v.push(circ.alloc_qubit());
         }
-        let cmp_eff = gap_j2_eff(i, current_n);
+        let cmp_eff = (GAP_J2[i] as usize).min(current_n).max(1);
 
         // If the current window is exhausted, decompress the next one (from the
         // tape end) into raw symbol slots.
@@ -997,6 +946,24 @@ fn controlled_add_active(
 /// One forward apply step (the multiply body) at iter `i` with the symbol bits
 /// `(sub, swp, s2)` and the t1 prefix `t1`:
 ///   if sub: y += x mod q; if swp: swap(x,y); y *= 2 (shift1) ; if s2: y *= 2.
+/// Skip the apply cswap on the last K GCD iters (both apply directions): the
+/// converged GCD's swap decision is 0 there for all-but-rare inputs, so the
+/// cswap is a no-op (huntable: rare non-converged inputs break, recovered by the
+/// tail-nonce hunt -- same mechanism as the original forward last-1 skip).
+fn apply_cswap_skip_dir(i: usize, fwd: bool) -> bool {
+    // Direction-separable so the FRONTIER baseline (forward last-1 only) is
+    // reproducible: TLM_APPLY_CSWAP_SKIP_FWD default 1, _INV default 0.
+    if let Ok(g) = std::env::var("TLM_APPLY_CSWAP_SKIP_LASTK").and_then(|s| Ok(s)) {
+        if let Ok(k) = g.parse::<usize>() {
+            return k > 0 && i + k >= ITERS;
+        }
+    }
+    let var = if fwd { "TLM_APPLY_CSWAP_SKIP_FWD" } else { "TLM_APPLY_CSWAP_SKIP_INV" };
+    let k = std::env::var(var).ok().and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(if fwd { 1 } else { 0 });
+    k > 0 && i + k >= ITERS
+}
+
 fn apply_step_forward(
     circ: &mut B,
     i: usize,
@@ -1027,17 +994,7 @@ fn apply_step_forward(
     });
     // 2) if swap: swap(x, y).
     circ.set_phase("tlm_apply_forward_swap");
-    let skip_first = std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP")
-        .ok()
-        .as_deref()
-        == Some("1")
-        && i + 1 == ITERS;
-    let skip_last = std::env::var("TLM_APPLY_FWD_LAST_CSWAP_SKIP")
-        .ok()
-        .as_deref()
-        == Some("1")
-        && i == 0;
-    if !(skip_first || skip_last) {
+    if !apply_cswap_skip_dir(i, true) {
         for j in 0..n {
             circ.cswap(*swp, x_reg[j], y_reg[j]);
         }
@@ -1078,30 +1035,14 @@ fn apply_step_reverse(
     } else {
         super::fused::fused_double_cdouble_reverse(circ, s2, y_reg);
     }
-    // inverse of 2): swap (involutory).
+    // inverse of 2): swap (involutory). Mirror of the forward apply's
+    // FIRST_CSWAP_SKIP: at the last GCD iter (i+1==ITERS) the converged-GCD swap
+    // decision is deterministically 0, so this cswap is a no-op -- skip it.
     circ.set_phase("tlm_apply_inverse_swap");
-    let skip_first = std::env::var("TLM_APPLY_INV_FIRST_CSWAP_SKIP")
-        .ok()
-        .as_deref()
-        == Some("1")
-        && i + 1 == ITERS;
-    let skip_last = std::env::var("TLM_APPLY_INV_LAST_CSWAP_SKIP")
-        .ok()
-        .as_deref()
-        == Some("1")
-        && i == 0;
-    if !(skip_first || skip_last) {
+    if !apply_cswap_skip_dir(i, false) {
         for j in 0..n {
             circ.cswap(*swp, x_reg[j], y_reg[j]);
         }
-    }
-    if std::env::var("TLM_APPLY_INV_FIRST_SUB_SKIP")
-        .ok()
-        .as_deref()
-        == Some("1")
-        && i + 1 == ITERS
-    {
-        return;
     }
     // inverse of 1): y -= x mod q. The apply-path operands carry pseudo-Mersenne
     // representation drift, so the borrow clean uses the MBU form.
