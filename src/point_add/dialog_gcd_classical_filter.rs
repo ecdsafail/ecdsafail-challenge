@@ -1143,6 +1143,38 @@ fn first_log_difference(
         .position(|(a, b)| a != b)
 }
 
+/// HONEST-MODE diagnostic (NOT used by the submission circuit; consumed only by
+/// the `conv_probe` verification binary). Runs the truncated GCD walk for
+/// `factor` under `cfg` and returns, per step, `(active_width, bitlen(u),
+/// bitlen(v))`. Used to prove the width envelope dominates the realizable bitlen
+/// over the whole input domain (so the high bits the taper drops are provably 0).
+pub fn honest_envelope_probe(
+    factor: U256,
+    cfg: &DialogGcdFilterConfig,
+) -> Vec<(usize, usize, usize)> {
+    let mut u = SECP256K1_P;
+    let mut v = factor;
+    let mut out = Vec::with_capacity(cfg.active_iterations);
+    for step in 0..cfg.active_iterations {
+        let aw = cfg.active_width(step);
+        out.push((aw, bitlen(u), bitlen(v)));
+        if truncated_gcd_step_logged(&mut u, &mut v, step, cfg).is_err() {
+            break;
+        }
+    }
+    out
+}
+
+/// HONEST-MODE diagnostic: terminal `(u, v)` of the truncated walk, so the
+/// caller can check it reduced `v` to 0 and `u` to gcd(p, factor) == 1 (holds
+/// for every nonzero factor since p is prime).
+pub fn honest_terminal(factor: U256, cfg: &DialogGcdFilterConfig) -> (U256, U256) {
+    match build_gcd_transcript(factor, cfg) {
+        Ok(t) => (t.terminal_u, t.terminal_v),
+        Err(_) => (U256::ZERO, U256::ZERO),
+    }
+}
+
 fn build_gcd_transcript(
     factor: U256,
     cfg: &DialogGcdFilterConfig,

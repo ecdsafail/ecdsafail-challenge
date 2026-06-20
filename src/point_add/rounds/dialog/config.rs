@@ -361,6 +361,38 @@ pub(crate) fn dialog_gcd_raw_apply_truncated_clean_enabled() -> bool {
         == Some("1")
 }
 
+/// CURRY the ADD-side apply phase (HJNRS arXiv:2001.09580 §3): instead of
+/// materializing a full-width `f = ctrl*a` register for the controlled modular
+/// add (which pins the apply-phase qubit peak), use `a` directly as ADD controls
+/// and run a measurement-vented CONTROLLED Cuccaro add into the extended acc,
+/// then a curried full-width measured controlled comparator for the overflow
+/// clean. Pure rewiring -- value- and phase-identical for every input -- it just
+/// drops the 256-qubit `f` register from the global-peak overflow-clean instant.
+pub(crate) fn dialog_gcd_curry_apply_add_enabled() -> bool {
+    std::env::var("DIALOG_GCD_CURRY_APPLY_ADD")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+/// CURRY the SUB-side apply phase (HJNRS arXiv:2001.09580 §3). Mirror of the
+/// ADD-side curry: instead of materializing a full-width `f = ctrl*a` register
+/// for the controlled modular subtract (which pins the apply-phase qubit peak at
+/// 2058 via dialog_gcd_materialized_special_underflow_clean), use `a` directly as
+/// the controlled subtrahend through the coherent controlled Cuccaro
+/// `cuccaro_sub_ctrl_lowq` (O(1) ancilla, `a` restored), and run the underflow
+/// clean curried on `a`/`ctrl` (the same full-width modular-borrow correction the
+/// proven chunked path uses). Pure rewiring -- value/phase identical for every
+/// input (ctrl=1 -> subtract a, ctrl=0 -> no-op = f=0) -- it drops the 256-qubit
+/// `f` from the global-peak underflow-clean instant. Coherent under
+/// KAL_VENT_MODADD=1 (no measurement -> hash-stable Toffoli counts).
+pub(crate) fn dialog_gcd_curry_apply_sub_enabled() -> bool {
+    std::env::var("DIALOG_GCD_CURRY_APPLY_SUB")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 pub(crate) fn dialog_gcd_raw_pa_stop_after_quotient_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_PA_STOP_AFTER_QUOTIENT_ENV)
         .ok()
@@ -566,6 +598,18 @@ pub(crate) fn dialog_gcd_compare_bits_for_step(step: usize, active_width: usize)
 
 pub(crate) fn dialog_gcd_fused_branch_bits_enabled() -> bool {
     std::env::var("DIALOG_GCD_FUSED_BRANCH_BITS")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+/// Route the (non-fused) GCD-walk branch_bits comparator through the single-pass
+/// measured controlled comparator with FRESH carries (ccx_cmp_lt_into_fast_no_vent),
+/// bypassing the KAL_VENT_MODADD slow-comparator redirect for this site only.
+/// Replaces the two slow 2W cmp calls + ccx (~4W Toffoli/step) with one ~W-Toffoli
+/// measured sweep. Exact for all inputs (Gidney AND-uncompute, fresh carries).
+pub(crate) fn dialog_gcd_branch_bits_fast_cmp_enabled() -> bool {
+    std::env::var("DIALOG_GCD_BRANCH_BITS_FAST_CMP")
         .ok()
         .as_deref()
         == Some("1")

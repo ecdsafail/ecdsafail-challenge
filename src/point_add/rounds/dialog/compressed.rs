@@ -3704,6 +3704,15 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_block_lifecyc
                         compare_bits,
                     );
                 }
+            } else if dialog_gcd_branch_bits_fast_cmp_enabled() {
+                dialog_gcd_ccx_cmp_gt_truncated_into_width_fast(
+                    b,
+                    u_active,
+                    v_active,
+                    b0,
+                    b0_and_b1,
+                    compare_bits,
+                );
             } else {
                 let cmp = b.alloc_qubit();
                 dialog_gcd_cmp_gt_truncated_into_width(b, u_active, v_active, cmp, compare_bits);
@@ -4143,6 +4152,15 @@ pub(crate) fn emit_dialog_gcd_compressed_sidecar_tobitvector_steps_reverse_block
                         compare_bits,
                     );
                 }
+            } else if dialog_gcd_branch_bits_fast_cmp_enabled() {
+                dialog_gcd_ccx_cmp_gt_truncated_into_width_fast(
+                    b,
+                    u_active,
+                    v_active,
+                    b0,
+                    b0_and_b1,
+                    compare_bits,
+                );
             } else {
                 let cmp = b.alloc_qubit();
                 dialog_gcd_cmp_gt_truncated_into_width(b, u_active, v_active, cmp, compare_bits);
