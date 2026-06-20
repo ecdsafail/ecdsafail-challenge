@@ -41,6 +41,22 @@ fn fold_call_reserve(index: usize, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+fn fold_call_code_override(index: usize, default: i32) -> i32 {
+    std::env::var("TLM_FOLD_CALL_CODE_OVERRIDES")
+        .ok()
+        .and_then(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().split_once(':'))
+                .find_map(|(call, code)| {
+                    (call.parse::<usize>().ok()? == index)
+                        .then(|| code.parse::<i32>().ok())
+                        .flatten()
+                })
+        })
+        .unwrap_or(default)
+}
+
 /// secp256k1 `(e+2d)*f` combined-fold addend control per low-bit position `p`
 /// (encodes the bit pattern of `f` and `2f`, f = 2^32+977). 0 = None.
 fn fold_ctl(p: usize) -> u8 {
@@ -392,10 +408,14 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         .ok()
         .as_deref()
         == Some("1");
+    let lazy_cin0 = std::env::var("TLM_FOLD_CHUNK_LAZY_CIN0")
+        .ok()
+        .as_deref()
+        == Some("1");
     let mut controls = Some(build_fold_controls(circ, e, d));
     let (cc, sxor, sor, dne) = controls.expect("fold controls present");
     let mut ctl = fold_ctl_map(*e, *d, cc, sxor, sor, dne, l);
-    let cin0 = circ.alloc_qubit();
+    let cin0 = if lazy_cin0 { None } else { Some(circ.alloc_qubit()) };
     let nch = l.div_ceil(s_chunk);
     let last_control_chunk = 11usize.min(l - 1) / s_chunk;
     let mut boundary: Vec<QubitId> = Vec::with_capacity(nch);
@@ -403,8 +423,8 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let cout = circ.alloc_qubit();
-        let cin = if j == 0 { cin0 } else { boundary[j - 1] };
-        fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], Some(&cin), &cout);
+        let cin = if j == 0 { cin0.as_ref() } else { Some(&boundary[j - 1]) };
+        fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], cin, &cout);
         boundary.push(cout);
         if release_controls && j == last_control_chunk && j + 1 < nch {
             let (cc, sxor, sor, dne) = controls.take().expect("fold controls present");
@@ -420,10 +440,22 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let bnd = boundary.pop().expect("boundary present");
-        let cin = if j == 0 { cin0 } else { boundary[j - 1] };
-        fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], &cin, bnd);
+        if j == 0 && lazy_cin0 {
+            let cin = circ.alloc_qubit();
+            fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], &cin, bnd);
+            circ.zero_and_free(cin);
+        } else {
+            let cin = if j == 0 {
+                cin0.expect("fold cin0 present")
+            } else {
+                boundary[j - 1]
+            };
+            fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], &cin, bnd);
+        }
     }
-    circ.zero_and_free(cin0);
+    if let Some(cin0) = cin0 {
+        circ.zero_and_free(cin0);
+    }
     let (cc, sxor, sor, dne) = controls.take().expect("fold controls restored");
     uncompute_fold_controls(circ, e, d, cc, sxor, sor, dne);
 }
@@ -791,7 +823,7 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let code = fold_call_code_override(call_index, super::next_fold());
     let mut selected_nv = None;
     if code < 0 {
         let chunk = std::env::var("TLM_FOLD_CHUNK_FORCE")

@@ -1968,15 +1968,14 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
-    // GPT-Codex Q1159 product route. Per-call FFG/fold reserves fit every local
-    // arithmetic peak under the target width; direct comparator carries and HMR
-    // cleanup remove Toffolis without increasing liveness. Nonce 453700 passed
-    // the trusted 9024-shot evaluator with 0 classical, phase, and ancilla
-    // failures at rounded T=1,388,180 and Q=1159 (score 1,608,900,620).
+    // GPT-Codex Q1157 inv-first route. Per-call fold/FFG reserve overrides keep
+    // the local arithmetic peaks under 1157 qubits. Nonce 4585414 passed the
+    // trusted 9024-shot stage2 evaluator with 0 classical, phase, and ancilla
+    // failures at T=1,380,889.850 and Q=1157.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "200007643711");
+    set_default_env("DIALOG_TAIL_NONCE", "4585414");
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
@@ -1987,7 +1986,8 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_GRAD_FINAL_NO_COUT", "1");
     set_default_env("TLM_APPLY_FWD_FIRST_CSWAP_SKIP", "1");
     set_default_env("CONSTPROP_MAX_ITERS", "16");
-    set_default_env("TLM_TARGET_Q", "1159");
+    set_default_env("TLM_TARGET_Q", "1157");
+    set_default_env("TLM_APPLY_INV_FIRST_CSWAP_SKIP", "1");
     set_default_env("TLM_FOLD_RELEASE_CONTROLS", "1");
     set_default_env("TLM_TARGET_FFG_RESERVE", "9");
     set_default_env(
@@ -1997,19 +1997,33 @@ pub fn build() -> Vec<Op> {
             "509:8,510:8,511:8,512:8,513:8,514:8,515:8,516:7,517:7,518:7,519:7,520:7,521:7,522:7,523:7,524:7,525:7,526:7,527:7,528:7,529:7,530:6,531:7,532:6,533:6,534:6,535:6,536:6,537:6,538:6,539:6,540:6,541:6,542:6,543:6,544:6,545:5,546:6,547:5,548:5,549:5,550:5,551:5,552:5,553:5,554:5,555:5,556:5,557:4,558:5,559:4,560:4,561:4,562:4,563:4,564:4,565:4,566:3,567:4,568:3,569:3,570:3,571:3,572:0,573:3,574:0,575:1,576:0,577:1,578:2,579:1,580:2,581:3,582:2,583:3,584:4,585:3,586:4,587:5,588:4,589:5,590:6,591:5,592:6,593:7,594:6,595:7,596:8,597:7,598:8,600:8",
         ),
     );
+    set_default_env(
+        "TLM_TARGET_FFG_CALL_RESERVE_DELTAS",
+        concat!(
+            "184:2,186:2,187:3,188:2,189:3,190:1,191:3,192:1,193:1,194:1,195:1,197:1,199:1,201:1,202:1,203:1,204:1,206:1,",
+            "211:1,213:1,214:1,215:1,216:1,218:1,226:1,228:1,229:1,230:1,231:1,233:1,244:1,246:1,247:1,253:1,254:1,259:1,356:1"
+        ),
+    );
+    set_default_env(
+        "TLM_TARGET_FFG_CALL_RESERVE_OVERRIDES",
+        concat!(
+            "364:8,366:8,367:8,368:8,369:8,370:8,371:8,372:8,373:8,374:8,375:8,376:7,377:8,378:7,379:7,380:7,381:7,382:7,383:7,384:7,385:7,386:7,387:7,388:7,389:7,390:7,391:7,392:7,393:7,394:7,395:7,396:7,397:6,398:7,399:6,400:6,401:6,402:6,403:6,404:6,405:6,406:6,407:6,408:6,409:6,410:6,411:6,412:6,413:6,414:6,415:5,416:6,417:5,418:5,419:5,420:5,421:5,422:5,423:5,424:5,425:5,426:5,427:5,428:5,429:5,430:4,431:5,432:4,433:4,434:4,435:4,436:4,437:4,438:4,439:4,440:4,441:4,442:3,443:4,444:3,445:3,446:3,447:3,448:3,449:3,450:3,451:2,452:3,453:2,454:1,455:2,456:1,458:1"
+        ),
+    );
     set_default_env("TLM_TARGET_FOLD_RESERVE", "4");
     set_default_env(
         "TLM_TARGET_FOLD_CALL_RESERVES",
         concat!(
-            "170:3,172:3,173:2,174:3,175:2,176:1,177:2,178:1,179:0,180:1,181:0,182:0,183:0,184:0,185:3,186:0,187:3,188:3,189:3,190:3,191:3,192:3,193:3,195:3,",
-            "251:3,252:3,253:3,254:3,255:3,256:3,257:3,258:3,259:3,260:3,261:3,262:3,318:3,320:3,321:3,322:3,323:3,324:3,325:3,326:3,327:0,328:3,329:0,330:0,331:0,332:0,333:1,334:0,335:1,336:2,337:1,338:2,339:3,340:2,341:3,343:3",
+            "170:3,172:3,173:2,174:3,175:2,176:1,177:2,178:1,179:3,180:1,181:3,182:3,183:3,184:3,185:3,186:3,187:3,188:3,189:3,190:3,191:3,192:3,193:3,195:3,",
+            "250:4,251:3,252:3,253:3,254:3,255:3,256:3,257:3,258:3,259:3,260:3,261:3,262:3,263:3,318:3,320:3,321:3,322:3,323:3,324:3,325:3,326:3,327:3,328:3,329:3,330:3,331:3,332:3,333:1,334:3,335:1,336:1,337:3,338:1,339:3,340:1,341:3,343:3",
         ),
     );
+    set_default_env("TLM_FOLD_CHUNK_LAZY_CIN0", "1");
     set_default_env("TLM_GCD_RESELECT_LAYOUT", "1");
     set_default_env("TLM_DIRECT_VARCHUNK", "1");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
     set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
-    set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
+    set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
     set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
     // u0/even-v0 lifecycle loans plus the GCD y0 loan candidate
@@ -2019,9 +2033,9 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_PARK_EVEN_V0", "1");
     set_default_env("TLM_LOAN_EVEN_V0", "1");
     set_default_env("TLM_LOAN_GCD_Y0", "1");
-    set_default_env("TLM_HYB_V_DELTA", "3");
-    set_default_env("TLM_COUT_K_DELTA", "3");
-    set_default_env("TLM_FOLD_DELTA", "3");
+    set_default_env("TLM_HYB_V_DELTA", "2");
+    set_default_env("TLM_COUT_K_DELTA", "2");
+    set_default_env("TLM_FOLD_DELTA", "2");
     set_default_env("TLM_FFG_DELTA", "0");
     set_default_env("TLM_GCD_K_ADJUST_AFTER", "169");
     set_default_env("TLM_GCD_K_ADJUST_BEFORE", "196");
