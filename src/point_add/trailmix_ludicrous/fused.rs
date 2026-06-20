@@ -7,6 +7,39 @@
 use super::arith::{F_SECP256K1, LSBS};
 use super::{B, BExt};
 use crate::circuit::{BitId, QubitId};
+use std::cell::Cell;
+
+thread_local! {
+    static FOLD_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
+}
+
+pub(super) fn reset_fold_call_index() {
+    FOLD_CALL_INDEX.with(|index| index.set(0));
+}
+
+fn next_fold_call_index() -> usize {
+    FOLD_CALL_INDEX.with(|index| {
+        let current = index.get();
+        index.set(current + 1);
+        current
+    })
+}
+
+fn fold_call_reserve(index: usize, default: usize) -> usize {
+    std::env::var("TLM_TARGET_FOLD_CALL_RESERVES")
+        .ok()
+        .and_then(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().split_once(':'))
+                .find_map(|(call, reserve)| {
+                    (call.parse::<usize>().ok()? == index)
+                        .then(|| reserve.parse::<usize>().ok())
+                        .flatten()
+                })
+        })
+        .unwrap_or(default)
+}
 
 /// secp256k1 `(e+2d)*f` combined-fold addend control per low-bit position `p`
 /// (encodes the bit pattern of `f` and `2f`, f = 2^32+977). 0 = None.
@@ -355,10 +388,16 @@ fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin
 
 fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_chunk: usize) {
     let l = y.len();
-    let (cc, sxor, sor, dne) = build_fold_controls(circ, e, d);
-    let ctl = fold_ctl_map(*e, *d, cc, sxor, sor, dne, l);
+    let release_controls = std::env::var("TLM_FOLD_RELEASE_CONTROLS")
+        .ok()
+        .as_deref()
+        == Some("1");
+    let mut controls = Some(build_fold_controls(circ, e, d));
+    let (cc, sxor, sor, dne) = controls.expect("fold controls present");
+    let mut ctl = fold_ctl_map(*e, *d, cc, sxor, sor, dne, l);
     let cin0 = circ.alloc_qubit();
     let nch = l.div_ceil(s_chunk);
+    let last_control_chunk = 11usize.min(l - 1) / s_chunk;
     let mut boundary: Vec<QubitId> = Vec::with_capacity(nch);
     for j in 0..nch {
         let lo = j * s_chunk;
@@ -367,8 +406,17 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let cin = if j == 0 { cin0 } else { boundary[j - 1] };
         fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], Some(&cin), &cout);
         boundary.push(cout);
+        if release_controls && j == last_control_chunk && j + 1 < nch {
+            let (cc, sxor, sor, dne) = controls.take().expect("fold controls present");
+            uncompute_fold_controls(circ, e, d, cc, sxor, sor, dne);
+        }
     }
     for j in (0..nch).rev() {
+        if release_controls && j == last_control_chunk && controls.is_none() {
+            let rebuilt = build_fold_controls(circ, e, d);
+            ctl = fold_ctl_map(*e, *d, rebuilt.0, rebuilt.1, rebuilt.2, rebuilt.3, l);
+            controls = Some(rebuilt);
+        }
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let bnd = boundary.pop().expect("boundary present");
@@ -376,6 +424,7 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], &cin, bnd);
     }
     circ.zero_and_free(cin0);
+    let (cc, sxor, sor, dne) = controls.take().expect("fold controls restored");
     uncompute_fold_controls(circ, e, d, cc, sxor, sor, dne);
 }
 
@@ -441,9 +490,53 @@ fn on_ctl_ref(c: &OnCtl, e: &QubitId, d: &QubitId) -> Option<QubitId> {
     }
 }
 
+/// Measurement-based clear for the nonlinear on-demand controls.
+///
+/// HMR contributes the phase `m * q`, where `m` is the measurement bit.  The
+/// feedback below uses the algebraic-normal forms
+///
+///   e | d      = e + d + e*d
+///   d & !e     = d + e*d
+///   e & d      = e*d
+///
+/// over GF(2), so it contributes the same phase and cancels HMR exactly.
+fn on_ctl_clear_nonlinear_hmr(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    k: u8,
+    q: &QubitId,
+) {
+    let bit = circ.alloc_bit();
+    circ.hmr(*q, bit);
+    match k {
+        4 => {
+            circ.z_if_bit(*e, bit);
+            circ.z_if_bit(*d, bit);
+            circ.cz_if_bit(*e, *d, bit);
+        }
+        5 => {
+            circ.z_if_bit(*d, bit);
+            circ.cz_if_bit(*e, *d, bit);
+        }
+        6 => circ.cz_if_bit(*e, *d, bit),
+        _ => unreachable!("HMR clear requires a nonlinear fold control"),
+    }
+}
+
 fn on_ctl_free(circ: &mut B, e: &QubitId, d: &QubitId, p: usize, c: OnCtl) {
     if let OnCtl::Owned(q) = c {
-        on_ctl_apply(circ, e, d, fold_ctl(p), &q);
+        let k = fold_ctl(p);
+        let hmr_disabled = std::env::var("TLM_FOLD_HMR_CONTROL_CLEANUP_DISABLE")
+            .ok()
+            .as_deref()
+            == Some("1");
+        if k == 3 || hmr_disabled {
+            // XOR is cheaper reversibly; the flag preserves the exact old baseline.
+            on_ctl_apply(circ, e, d, k, &q);
+        } else {
+            on_ctl_clear_nonlinear_hmr(circ, e, d, k, &q);
+        }
         circ.zero_and_free(q);
     }
 }
@@ -695,11 +788,47 @@ fn build_fold_at(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], dirty: &
 /// Dispatch the fused fold on the schedule code: -s = chunked; else nv = clean vents
 /// (full-clean / clean-tail / dirty gradual via [`build_fold_at`]).
 fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &[QubitId]) {
+    let call_index = next_fold_call_index();
+    let timeline_start = circ.active_timeline.len();
+    let entry_active = circ.active_qubits;
     let code = super::next_fold();
+    let mut selected_nv = None;
     if code < 0 {
-        add_mf_fold_chunked(circ, e, d, ylow, (-code) as usize);
+        let chunk = std::env::var("TLM_FOLD_CHUNK_FORCE")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or((-code) as usize);
+        add_mf_fold_chunked(circ, e, d, ylow, chunk);
     } else {
-        build_fold_at(circ, e, d, ylow, dirty, code as usize);
+        let default_reserve = std::env::var("TLM_TARGET_FOLD_RESERVE")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(4);
+        let reserve = fold_call_reserve(call_index, default_reserve);
+        let nv = super::target_qubit_headroom(circ)
+            .map_or(code as usize, |headroom| {
+                (code as usize).min(headroom.saturating_sub(reserve))
+            });
+        selected_nv = Some(nv);
+        build_fold_at(circ, e, d, ylow, dirty, nv);
+    }
+    if std::env::var_os("TRACE_TLM_FOLD").is_some() {
+        let local_peak = circ.active_timeline[timeline_start..]
+            .iter()
+            .map(|(_, active)| *active)
+            .max()
+            .unwrap_or(circ.active_qubits);
+        eprintln!(
+            "TLM_FOLD call={} phase={} code={} nv={} entry_active={} local_peak={} ops={}",
+            call_index,
+            circ.phase,
+            code,
+            selected_nv.map_or(-1, |value| value as i32),
+            entry_active,
+            local_peak,
+            circ.current_ops_len(),
+        );
     }
 }
 
@@ -707,6 +836,7 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
 /// == 256`; the doubling uses two transient overflow bits (a 258-bit working view),
 /// not a persistent reg slot.
 pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
+    maybe_run_gradual_fold_nonlinear_control_hmr_selftest();
     let n = 256usize;
     assert_eq!(y.len(), n, "fused double expects 256-bit y (transient overflow)");
     let _ = F_SECP256K1;
@@ -738,6 +868,7 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
 /// Exact gate-inverse: `y := y / (2*(1+s2)) mod q`. Reverse of [`fused_double_cdouble`]:
 /// compute the overflow bits, subtract m*f, shift right.
 pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
+    maybe_run_gradual_fold_nonlinear_control_hmr_selftest();
     let n = 256usize;
     assert_eq!(y.len(), n, "fused halve expects 256-bit y (transient overflow)");
     let hi = circ.alloc_qubit();
@@ -766,4 +897,109 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     }
     circ.zero_and_free(hi);
     circ.zero_and_free(hi2);
+}
+
+/// Exhaust every `(e,d,HMR outcome)` basis case for each nonlinear derived
+/// control.  This is available in normal builds because this worktree's wider
+/// `cfg(test)` suite currently has unrelated compile failures.
+fn gradual_fold_nonlinear_control_hmr_selftest() {
+    use crate::circuit::OperationType;
+    use crate::sim::Simulator;
+    use sha3::{
+        digest::{ExtendableOutput, Update},
+        Shake128,
+    };
+
+    // Positions 8, 10, and 11 select OR, d&!e, and AND respectively.
+    for &(position, kind) in &[(8usize, 4u8), (10, 5), (11, 6)] {
+        assert_eq!(fold_ctl(position), kind);
+
+        let mut circ = B::new();
+        let e = circ.alloc_qubit();
+        let d = circ.alloc_qubit();
+        let q = circ.alloc_qubit();
+        on_ctl_apply(&mut circ, &e, &d, kind, &q);
+        on_ctl_free(&mut circ, &e, &d, position, OnCtl::Owned(q));
+
+        assert_eq!(circ.active_qubits, 2, "owned control was not released");
+        assert_eq!(circ.peak_qubits, 3, "cleanup increased peak width");
+        assert_eq!(circ.next_bit, 1, "expected one HMR result bit");
+        assert_eq!(
+            circ.ops
+                .iter()
+                .filter(|op| matches!(op.kind, OperationType::CCX | OperationType::CCZ))
+                .count(),
+            1,
+            "cleanup must add no Toffoli-class gate",
+        );
+        assert_eq!(
+            circ.ops
+                .iter()
+                .filter(|op| op.kind == OperationType::Hmr)
+                .count(),
+            1,
+        );
+
+        // Pack every (e,d) basis state sixteen times.  The fixed SHAKE seed
+        // deterministically supplies both HMR outcomes for every state; the
+        // coverage assertion below keeps that part of the proof explicit.
+        let mut e_mask = 0u64;
+        let mut d_mask = 0u64;
+        for shot in 0..64usize {
+            let state = shot & 3;
+            e_mask |= ((state & 1) as u64) << shot;
+            d_mask |= (((state >> 1) & 1) as u64) << shot;
+        }
+
+        let mut seed = Shake128::default();
+        seed.update(b"gradual-fold-derived-control-hmr");
+        seed.update(&[kind]);
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(
+            circ.next_qubit as usize,
+            circ.next_bit as usize,
+            &mut xof,
+        );
+        *sim.qubit_mut(e) = e_mask;
+        *sim.qubit_mut(d) = d_mask;
+        sim.apply_iter(circ.ops.iter());
+
+        assert_eq!(sim.qubit(e), e_mask, "e changed for control kind {kind}");
+        assert_eq!(sim.qubit(d), d_mask, "d changed for control kind {kind}");
+        assert_eq!(sim.qubit(q), 0, "owned control remained dirty for kind {kind}");
+        assert_eq!(sim.phase, 0, "phase feedback failed for control kind {kind}");
+
+        let measured = sim.bits[0];
+        for state in 0..4usize {
+            let mut outcomes = 0u8;
+            for shot in (state..64usize).step_by(4) {
+                outcomes |= 1 << ((measured >> shot) & 1);
+            }
+            assert_eq!(
+                outcomes, 0b11,
+                "HMR outcomes not exhaustive for kind {kind}, state {state}",
+            );
+        }
+    }
+}
+
+fn maybe_run_gradual_fold_nonlinear_control_hmr_selftest() {
+    if std::env::var_os("TLM_FOLD_HMR_CONTROL_SELFTEST").is_none() {
+        return;
+    }
+    static SELFTEST: std::sync::Once = std::sync::Once::new();
+    SELFTEST.call_once(|| {
+        gradual_fold_nonlinear_control_hmr_selftest();
+        eprintln!("TLM_FOLD_HMR_CONTROL_SELFTEST_OK");
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gradual_fold_nonlinear_control_hmr_cleanup_is_exact() {
+        gradual_fold_nonlinear_control_hmr_selftest();
+    }
 }
