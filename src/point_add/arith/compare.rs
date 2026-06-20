@@ -1,5 +1,64 @@
 use super::*;
 
+/// Full-width measured (Gidney) `flag ^= (u < v)` comparator. Identical body to
+/// `cmp_lt_into_fast` but WITHOUT the `kal_vent_modadd_enabled()` redirect to the
+/// slow 2N comparator. Allocates its own n-wide carry array and a c_in, runs the
+/// forward Cuccaro MAJ sweep, XORs the exact full-width (u<v) carry-out into
+/// `flag`, then uncomputes the carries with an X-basis measurement + classically
+/// (measurement-outcome) -conditioned CZ fixup. The HMR phase kickback on each
+/// fresh carry lane is cancelled by `cz_if(u[i-1],v[i],m)` because at measure time
+/// carries[i] equals the Cuccaro MAJ carry by construction of the immediately
+/// preceding forward sweep -- a structural identity holding for EVERY operand
+/// value at full width n, with no truncation. The executed gate set is
+/// unconditional CCX, so the executed Toffoli count is deterministic (hash
+/// independent). Costs ~n CCX vs the slow path's ~2n, at the price of an n-wide
+/// carry array.
+pub(crate) fn cmp_lt_into_measured_full(b: &mut B, u: &[QubitId], v: &[QubitId], flag: QubitId) {
+    let n = u.len();
+    assert_eq!(n, v.len());
+    let c_in = b.alloc_qubit();
+    let carries = b.alloc_qubits(n);
+    for i in 0..n {
+        b.x(u[i]);
+    }
+
+    // Forward MAJ sweep with carry ancillae
+    b.cx(u[0], v[0]);
+    b.cx(u[0], c_in);
+    b.ccx(c_in, v[0], carries[0]);
+    b.cx(carries[0], u[0]);
+    for i in 1..n {
+        b.cx(u[i], v[i]);
+        b.cx(u[i], u[i - 1]);
+        b.ccx(u[i - 1], v[i], carries[i]);
+        b.cx(carries[i], u[i]);
+    }
+
+    b.cx(u[n - 1], flag);
+
+    // Backward inv_MAJ with measurement
+    for i in (1..n).rev() {
+        b.cx(carries[i], u[i]);
+        let m = b.alloc_bit();
+        b.hmr(carries[i], m);
+        b.cz_if(u[i - 1], v[i], m);
+        b.cx(u[i], u[i - 1]);
+        b.cx(u[i], v[i]);
+    }
+    b.cx(carries[0], u[0]);
+    let m0 = b.alloc_bit();
+    b.hmr(carries[0], m0);
+    b.cz_if(c_in, v[0], m0);
+    b.cx(u[0], c_in);
+    b.cx(u[0], v[0]);
+
+    for i in 0..n {
+        b.x(u[i]);
+    }
+    b.free_vec(&carries);
+    b.free(c_in);
+}
+
 pub(crate) fn cmp_lt_into_fast(b: &mut B, u: &[QubitId], v: &[QubitId], flag: QubitId) {
     // The vented D1 core uses the slow (no-carries) comparator which
     // saves n peak qubits at cost of ~n CCX per call.
@@ -162,6 +221,22 @@ pub(crate) fn ccx_cmp_lt_into_fast(b: &mut B, u: &[QubitId], v: &[QubitId], ctrl
         return;
     }
 
+    ccx_cmp_lt_into_fast_no_vent(b, u, v, ctrl, target);
+}
+
+/// Single-pass measured controlled comparator with FRESH carries, ALWAYS using
+/// the Gidney/HMR measured AND-uncompute (bypasses the KAL_VENT_MODADD redirect).
+/// Computes exactly `target ^= ctrl & (v < u)` at the given compare width for all
+/// inputs. Each `hmr(carries[i])` phase is cancelled by `cz_if(u[i-1],v[i],m)`
+/// because `carries[i]` holds the MAJ carry by construction; the carries are
+/// freshly allocated |0> lanes so the cancellation is exact (no borrow leak).
+pub(crate) fn ccx_cmp_lt_into_fast_no_vent(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    ctrl: QubitId,
+    target: QubitId,
+) {
     let n = u.len();
     assert_eq!(n, v.len());
     let c_in = b.alloc_qubit();
