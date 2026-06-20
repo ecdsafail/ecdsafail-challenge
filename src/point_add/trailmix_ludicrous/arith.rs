@@ -1194,6 +1194,24 @@ pub fn mod_add(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
 }
 
+/// EXACT (full-width, NON-truncated) `y := y + x (mod q)`. Identical to
+/// [`mod_add`] but the overflow-clean comparator runs over ALL `n` bits instead
+/// of the ludicrous top-`MSBS` window, so the result and the ancilla clear are
+/// correct on EVERY input (no ~2^-PAD mis-clear). Used by the classical-constant
+/// `+3*ox` coordinate step, whose single off-peak add we want exactly clean on
+/// the fixed evaluation inputs without relying on the truncated approximation.
+pub fn mod_add_exact(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
+    let n = x.len();
+    assert_eq!(y.len(), n, "mod_add_exact: x,y must both be n=256 bits");
+    assert_eq!(n, 256, "secp256k1 mod_add_exact expects n=256");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    add_cout_vented_unctrl(circ, x, y, &anc);
+    add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
+    // FULL-WIDTH comparator (k = n): exact overflow clean.
+    controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], n, anc);
+}
+
 /// Low-peak modular add for off-peak recombination. This mirrors [`mod_add`],
 /// but captures the register-add overflow with the single-carry Cuccaro adder
 /// instead of allocating a full-clean vented add headroom.
