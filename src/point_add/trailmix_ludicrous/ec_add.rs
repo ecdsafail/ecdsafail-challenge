@@ -34,10 +34,7 @@
 //! `mod_mul_inverse_in_place`, so it is never resident at the GCD peak nor
 //! across the square step.
 
-use super::arith::{
-    mod_add, mod_double, mod_double_reverse, mod_neg, mod_sub_classical_low3,
-    mod_sub_shifted_low, mod_sub_vented,
-};
+use super::arith::{mod_add, mod_double, mod_double_reverse, mod_neg, mod_sub_vented};
 use super::gcd::{mod_mul_inverse_in_place, Direction};
 use super::square::mod_square_sub_pm_secp256k1_symmetric;
 use super::{B, BExt};
@@ -56,27 +53,6 @@ const N: usize = 256;
 fn coord_addsub(circ: &mut B, dst: &[QubitId], coord: &[BitId], subtract: bool) {
     debug_assert_eq!(dst.len(), N);
     debug_assert_eq!(coord.len(), N);
-    let split_low3 = subtract
-        && std::env::var("TLM_COORD_SPLIT_LOW3")
-            .ok()
-            .as_deref()
-            .unwrap_or("0")
-            != "0";
-    if split_low3 {
-        let temp = circ.alloc_qubits(N - 3);
-        for i in 3..N {
-            circ.x_if_bit(temp[i - 3], coord[i]);
-        }
-        mod_sub_shifted_low(circ, &temp, dst, 3);
-        for i in 3..N {
-            circ.x_if_bit(temp[i - 3], coord[i]);
-        }
-        for q in temp {
-            circ.zero_and_free(q);
-        }
-        mod_sub_classical_low3(circ, dst, &coord[..3]);
-        return;
-    }
     let temp = circ.alloc_qubits(N);
     for i in 0..N {
         circ.x_if_bit(temp[i], coord[i]); // load: temp := coord (per-shot classical)
@@ -182,37 +158,29 @@ pub fn ec_add(
     assert_eq!(oy.len(), N, "oy is 256 classical bits");
 
     // Step 3/4: x2 -= ox ; y2 -= oy.  => (dx, dy).
-    circ.set_phase("tlm_coord_x_sub");
     coord_addsub(circ, x2, ox, true);
-    circ.set_phase("tlm_coord_y_sub");
     coord_addsub(circ, &y2[..N], oy, true);
 
     // Step 6: y2 *= x2^-1 (gcd inversion). The multiplicand starts in y2[..N]
     // (= dy); after the inverse apply y2 holds lambda = dy * dx^-1 mod q, and x2
     // is restored to dx. `mod_mul_inverse_in_place` takes/returns the 256-bit x
     // register; y2 and the internal tmp scratch are 256-bit.
-    circ.set_phase("tlm_inverse");
     let xv = std::mem::take(x2);
     *x2 = mod_mul_inverse_in_place(circ, xv, y2, Direction::Inverse);
 
     // Step 7: x2 += 3*ox.  => (P.x + 2*Q.x, lambda)  [x2 currently = dx = P.x-Q.x].
-    circ.set_phase("tlm_coord_add3x");
     coord_add3x(circ, x2, ox);
 
     // Step 10: x2 -= lambda^2 mod q.  (lambda = y2[..N]).
-    circ.set_phase("tlm_square");
     mod_square_sub_pm_secp256k1_symmetric(circ, &y2[..N], x2);
 
     // Step 11: y2 *= x2 (gcd forward multiply). x2 restored to the post-square
     // value; y2 = lambda * x2 mod q.
-    circ.set_phase("tlm_forward_multiply");
     let xv = std::mem::take(x2);
     *x2 = mod_mul_inverse_in_place(circ, xv, y2, Direction::Forward);
 
     // Step 14: y2 -= oy.   Step 15: x2 := ox - x2.  => (P+Q).x.
-    circ.set_phase("tlm_coord_y_sub_final");
     coord_addsub(circ, &y2[..N], oy, true);
-    circ.set_phase("tlm_coord_rsub_final");
     coord_rsub(circ, x2, ox);
 }
 

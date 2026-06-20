@@ -68,68 +68,6 @@ pub fn n3_for_iters(iters: usize) -> usize {
     iters / 3
 }
 
-fn env_i32(name: &str, default: i32) -> i32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<i32>().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(default)
-}
-
-fn adjust_gcd_k(prefix: &str, i: usize, k: usize) -> usize {
-    if k == usize::MAX {
-        return k;
-    }
-    let adjust = env_i32(&format!("{prefix}_ADJUST"), 0);
-    let after = env_usize(&format!("{prefix}_ADJUST_AFTER"), 0);
-    let before = env_usize(&format!("{prefix}_ADJUST_BEFORE"), usize::MAX);
-    if i >= after && i < before && adjust != 0 {
-        (k as i32).saturating_add(adjust).max(0) as usize
-    } else {
-        k
-    }
-}
-
-fn maybe_adjust_late_gcd_k(i: usize, k: usize) -> usize {
-    let k = adjust_gcd_k("TLM_GCD_K", i, k);
-    adjust_gcd_k("TLM_GCD_K_EXTRA", i, k)
-}
-
-fn trace_step_regions(circ: &mut B, direction: &str, i: usize, region_start: usize) {
-    if std::env::var("TRACE_TLM_GCD_STEPS").is_err() {
-        return;
-    }
-    let threshold = std::env::var("TRACE_TLM_GCD_MIN_Q")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(1150);
-    let step_max = circ.phase_active_regions[region_start..]
-        .iter()
-        .map(|(_, _, active)| *active)
-        .max()
-        .unwrap_or(circ.active_qubits);
-    if step_max >= threshold {
-        eprintln!(
-            "TLM_GCD_STEP direction={direction} i={i} active_max={step_max} global_peak={} ops={}",
-            circ.peak_qubits,
-            circ.current_ops_len(),
-        );
-        for (_, phase, active) in &circ.phase_active_regions[region_start..] {
-            if *active >= threshold {
-                eprintln!(
-                    "TLM_GCD_STAGE direction={direction} i={i} active_max={active} phase={phase}",
-                );
-            }
-        }
-    }
-}
-
 // =====================================================================
 // MBU AND-uncompute (HMR + conditional-Z), measurement-vented. `t` holds
 // `a AND b` and is returned to |0>.
@@ -365,14 +303,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
     let mut tape: Vec<QubitId> = Vec::with_capacity(super::codec::dialog_tape_qubits(n3, iters));
     let mut win_idx = 0usize; // current window
     let mut pending: Vec<QubitId> = Vec::new(); // raw symbol slots of the current window
-    let mut tail4_prefix_encoded = false;
     for i in 0..iters {
-        let trace_region_start = circ.phase_active_regions.len();
-        circ.set_phase(if apply_inv.is_some() {
-            "tlm_inverse_gcd_forward_shift"
-        } else {
-            "tlm_multiply_gcd_forward_shift"
-        });
         let current_n = (SCHED_J2[i] as usize).max(1);
         while u.len() > current_n {
             let q = u.pop().expect("u nonempty");
@@ -407,11 +338,6 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         // 3) swap decision. Step 0: u=q, v=x<q always, so (v<u)=1 deterministically,
         //    so swap = subtracted and no separate swap flag is needed. Else the narrow top-k comparator
         //    decides swap_flag ^= subtracted AND (v < u).
-        circ.set_phase(if apply_inv.is_some() {
-            "tlm_inverse_gcd_forward_compare"
-        } else {
-            "tlm_multiply_gcd_forward_compare"
-        });
         let swp = if i == 0 {
             subtracted
         } else {
@@ -438,22 +364,15 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         };
         // 5) v -= subtracted * u (controlled mod-free subtract on the active width;
         //    post-swap v >= u so no borrow on a fitting input). X-sandwich add.
-        circ.set_phase(if apply_inv.is_some() {
-            "tlm_inverse_gcd_forward_body"
-        } else {
-            "tlm_multiply_gcd_forward_body"
-        });
         for q in &v[..current_n] {
             circ.x(*q);
         }
         controlled_add_active(
             circ,
-            i,
             &subtracted,
             &u[..current_n],
             &v[..current_n],
             GcdBit0Mode::ForwardKnownOneAfterCx,
-            apply_inv.map_or(&[], |(xr, _)| &xr[..3]),
         );
         for q in &v[..current_n] {
             circ.x(*q);
@@ -463,19 +382,6 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         // coordinate pair using the live symbol bits, before they are swapped to the
         // tape. Forward iter order matches apply_step_reverse's order, so the tape is
         // never materialized for the apply -> the apply adders run in the GCD's headroom.
-        circ.set_phase(if apply_inv.is_some() {
-            "tlm_inverse_gcd_forward_apply"
-        } else {
-            "tlm_multiply_gcd_forward_apply"
-        });
-        if i >= 250 && std::env::var_os("TRACE_TLM_TAIL").is_some() {
-            eprintln!(
-                "TLM_TAIL direction=forward i={i} active={} tape={} pending={} encoded={tail4_prefix_encoded}",
-                circ.active_qubits,
-                tape.len(),
-                pending.len(),
-            );
-        }
         let parked_v0 = if apply_inv.is_some() && park_even_v0_enabled() {
             let q = v[0];
             Some(park_known_zero(circ, q))
@@ -483,17 +389,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
             None
         };
         if let Some((xr, yr)) = apply_inv {
-            apply_step_reverse(
-                circ,
-                i,
-                &subtracted,
-                &swp,
-                &s2,
-                &t1,
-                xr,
-                yr,
-                &u[1..4],
-            );
+            apply_step_reverse(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
         }
         if let Some(q) = parked_v0 {
             v[0] = restore_known_zero(circ, q);
@@ -503,11 +399,6 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         }
 
         // 6) record the symbol into fresh |0> slots (returning the ancilla to |0>).
-        circ.set_phase(if apply_inv.is_some() {
-            "tlm_inverse_gcd_forward_codec"
-        } else {
-            "tlm_multiply_gcd_forward_codec"
-        });
         let slots: Vec<QubitId> = (0..sym_bits).map(|_| circ.alloc_qubit()).collect();
         circ.swap(subtracted, slots[0]);
         if i == 0 {
@@ -521,56 +412,18 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
             let data = super::codec::compress_step0_with_t1(circ, t1, &slots);
             tape.extend(data);
             win_idx += 1;
-            circ.set_phase("tlm_gcd_step_end");
-            trace_step_regions(
-                circ,
-                if apply_inv.is_some() {
-                    "inverse-forward"
-                } else {
-                    "multiply-forward"
-                },
-                i,
-                trace_region_start,
-            );
             continue;
         }
         pending.extend(slots);
 
         // When the current window's symbols are complete, compress it inline.
         let codec = window_plan[win_idx];
-        if codec == super::codec::DialogCodec::Tail4Top32 {
-            if !tail4_prefix_encoded && pending.len() == 3 * sym_bits {
-                pending = super::codec::DialogCodec::Triple.compress_window(circ, &pending);
-                tail4_prefix_encoded = true;
-            } else if tail4_prefix_encoded
-                && pending.len() == super::codec::DialogCodec::Triple.code_bits() + 2 * sym_bits
-            {
-                let last = pending.split_off(super::codec::DialogCodec::Triple.code_bits());
-                let mut raw = super::codec::DialogCodec::Triple.decompress_window(circ, &pending);
-                raw.extend(last);
-                let data = codec.compress_window(circ, &raw);
-                tape.extend(data);
-                pending.clear();
-                tail4_prefix_encoded = false;
-                win_idx += 1;
-            }
-        } else if pending.len() == codec.syms() * sym_bits {
+        if pending.len() == codec.syms() * sym_bits {
             let data = codec.compress_window(circ, &pending);
             tape.extend(data);
             pending.clear();
             win_idx += 1;
         }
-        circ.set_phase("tlm_gcd_step_end");
-        trace_step_regions(
-            circ,
-            if apply_inv.is_some() {
-                "inverse-forward"
-            } else {
-                "multiply-forward"
-            },
-            i,
-            trace_region_start,
-        );
     }
     assert_eq!(win_idx, window_plan.len(), "all windows compressed");
     assert!(pending.is_empty(), "no leftover symbols");
@@ -618,8 +471,6 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
     // `pending` holds the raw symbol slots of the currently-decompressed window,
     // consumed symbol-by-symbol from the end (reverse symbol order).
     let mut pending: Vec<QubitId> = Vec::new();
-    let mut pending_tail4 = false;
-    let mut tail4_prefix_encoded = false;
 
     // u regrows from 1 bit (forward ended u=0 post-X; re-init u_final=1 via X).
     let mut u: Vec<QubitId> = vec![circ.alloc_qubit()];
@@ -631,12 +482,6 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
     let mut step0_t1: Option<QubitId> = None;
 
     for i in (0..iters).rev() {
-        let trace_region_start = circ.phase_active_regions.len();
-        circ.set_phase(if apply_fwd.is_some() {
-            "tlm_multiply_gcd_reverse_decode"
-        } else {
-            "tlm_inverse_gcd_reverse_decode"
-        });
         let current_n = (SCHED_J2[i] as usize).max(1);
         while u.len() < current_n {
             u.push(circ.alloc_qubit());
@@ -661,32 +506,10 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             } else {
                 pending = codec.decompress_window(circ, &data);
             }
-            pending_tail4 = codec == super::codec::DialogCodec::Tail4Top32;
-        } else if tail4_prefix_encoded {
-            let suffix = pending.split_off(super::codec::DialogCodec::Triple.code_bits());
-            pending = super::codec::DialogCodec::Triple.decompress_window(circ, &pending);
-            pending.extend(suffix);
-            tail4_prefix_encoded = false;
         }
         // Pull the last symbol (3 bits) off `pending` into the ancilla.
         let plen = pending.len();
         let cur: Vec<QubitId> = pending.split_off(plen - 3);
-        if pending_tail4 && pending.len() == 12 {
-            let suffix = pending.split_off(9);
-            pending = super::codec::DialogCodec::Triple.compress_window(circ, &pending);
-            pending.extend(suffix);
-            tail4_prefix_encoded = true;
-        } else if pending_tail4 && pending.is_empty() {
-            pending_tail4 = false;
-        }
-        if i >= 250 && std::env::var_os("TRACE_TLM_TAIL").is_some() {
-            eprintln!(
-                "TLM_TAIL direction=reverse i={i} active={} tape={} pending={} encoded={tail4_prefix_encoded}",
-                circ.active_qubits,
-                tape.len(),
-                pending.len(),
-            );
-        }
         circ.swap(subtracted, cur[0]);
         let swp = if i == 0 {
             circ.cx(subtracted, cur[1]);
@@ -707,11 +530,6 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             circ.zero_and_free(q);
         }
 
-        circ.set_phase(if apply_fwd.is_some() {
-            "tlm_multiply_gcd_reverse_apply"
-        } else {
-            "tlm_inverse_gcd_reverse_apply"
-        });
         let parked_u0 = if park_odd_u0_enabled(i, "REV") {
             let q = u[0];
             Some(park_known_one(circ, q))
@@ -731,17 +549,7 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         };
         if let Some((xr, yr)) = apply_fwd {
             let t1 = step0_t1.unwrap_or(subtracted);
-            apply_step_forward(
-                circ,
-                i,
-                &subtracted,
-                &swp,
-                &s2,
-                &t1,
-                xr,
-                yr,
-                &u[1..4],
-            );
+            apply_step_forward(circ, i, &subtracted, &swp, &s2, &t1, xr, yr);
         }
         if let Some(q) = parked_v0 {
             v[0] = restore_known_zero(circ, q);
@@ -750,19 +558,12 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         // Inverse step (reverse op order): sub^-1, cswap^-1, cmp^-1, subtracted^-1,
         // s_2^-1, shift1^-1.
         // a) sub^-1: v += subtracted*u (X-sandwich cancels).
-        circ.set_phase(if apply_fwd.is_some() {
-            "tlm_multiply_gcd_reverse_body"
-        } else {
-            "tlm_inverse_gcd_reverse_body"
-        });
         controlled_add_active(
             circ,
-            i,
             &subtracted,
             &u[..current_n],
             &v[..current_n],
             GcdBit0Mode::ReverseKnownZeroBeforeCx,
-            apply_fwd.map_or(&[], |(xr, _)| &xr[..3]),
         );
         if let Some(q) = parked_u0 {
             u[0] = restore_known_one(circ, q);
@@ -810,17 +611,6 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             let sf = swap_flag.take().expect("swap flag still allocated");
             circ.zero_and_free(sf);
         }
-        circ.set_phase("tlm_gcd_step_end");
-        trace_step_regions(
-            circ,
-            if apply_fwd.is_some() {
-                "multiply-reverse"
-            } else {
-                "inverse-reverse"
-            },
-            i,
-            trace_region_start,
-        );
     }
     assert!(tape.is_empty(), "tape not fully drained");
 
@@ -876,12 +666,10 @@ enum GcdBit0Mode {
 /// the GCD subtract never carries out on a fitting input.
 fn controlled_add_active(
     circ: &mut B,
-    i: usize,
     ctrl: &QubitId,
     x: &[QubitId],
     y: &[QubitId],
     bit0_mode: GcdBit0Mode,
-    dirty_vents: &[QubitId],
 ) {
     // The GCD subtract `v -= u` (here `y += x` inside the X-sandwich):
     // a = target = y (= v), b = addend = x (= u). cap = PAD.
@@ -895,7 +683,7 @@ fn controlled_add_active(
     // known `cx(ctrl, y[0])` with no carry into bit 1 -- emit it directly and run the
     // capped adder on bits 1.. with carry-in 0. Saves the bit-0 carry CCX (~1-2 tof)
     // per GCD conditional sub/add * 2 (fwd+rev) * ITERS ~= 1000+ tof. Not the apply.
-    let k = maybe_adjust_late_gcd_k(i, super::next_gcd_k());
+    let k = super::next_gcd_k();
     let branch = super::next_gcd_branch();
     let loan_y0 = loan_gcd_y0_enabled() && x.len() > 1;
     match bit0_mode {
@@ -916,17 +704,7 @@ fn controlled_add_active(
     if x.len() > 1 {
         let yr: Vec<&QubitId> = y[1..].iter().collect();
         let xr: Vec<&QubitId> = x[1..].iter().collect();
-        super::gidney::with_dirty_vent_pool(dirty_vents, || {
-            super::gidney::controlled_hybrid_add_capped_branch(
-                circ,
-                ctrl,
-                &yr,
-                &xr,
-                k,
-                super::PAD,
-                branch,
-            );
-        });
+        super::gidney::controlled_hybrid_add_capped_branch(circ, ctrl, &yr, &xr, k, super::PAD, branch);
     }
     if loan_y0 {
         match bit0_mode {
@@ -955,34 +733,21 @@ fn apply_step_forward(
     t1: &QubitId,
     x_reg: &[QubitId],
     y_reg: &[QubitId],
-    dirty_vents: &[QubitId],
 ) {
     let n = 256usize;
 
     // 1) if subtracted: y += x mod q. Apply cofactor add -> cout adder at the
     // schedule's k.
-    circ.set_phase("tlm_apply_forward_mod_add");
     let k = super::next_cout_k();
     let ffg = super::next_ffg();
-    super::gidney::with_dirty_vent_pool(dirty_vents, || {
-        arith::controlled_mod_add_k(
-            circ,
-            sub,
-            &x_reg[..n],
-            &y_reg[..n],
-            Some(k),
-            Some(ffg),
-        );
-    });
+    arith::controlled_mod_add_k(circ, sub, &x_reg[..n], &y_reg[..n], Some(k), Some(ffg));
     // 2) if swap: swap(x, y).
-    circ.set_phase("tlm_apply_forward_swap");
     for j in 0..n {
         circ.cswap(*swp, x_reg[j], y_reg[j]);
     }
     // 3) y := 2*(1+s2)*y mod q. i==0: two separate controlled doublings (shift1 is
     //    t1-gated). i>0: the fused double+cdouble -- one combined (e+2d)*f fold
     //    (the unfused form costs extra inversion Toffoli).
-    circ.set_phase("tlm_apply_forward_fold");
     if i == 0 {
         controlled_mod_double(circ, t1, y_reg);
         controlled_mod_double(circ, s2, y_reg);
@@ -1002,13 +767,11 @@ fn apply_step_reverse(
     t1: &QubitId,
     x_reg: &[QubitId],
     y_reg: &[QubitId],
-    dirty_vents: &[QubitId],
 ) {
     let n = 256usize;
 
     // inverse of 3): i==0 two separate reverse-doublings (s2 halve then t1 halve);
     // i>0 the fused inverse double+cdouble.
-    circ.set_phase("tlm_apply_inverse_fold");
     if i == 0 {
         controlled_mod_double_reverse(circ, s2, y_reg);
         controlled_mod_double_reverse(circ, t1, y_reg);
@@ -1016,18 +779,14 @@ fn apply_step_reverse(
         super::fused::fused_double_cdouble_reverse(circ, s2, y_reg);
     }
     // inverse of 2): swap (involutory).
-    circ.set_phase("tlm_apply_inverse_swap");
     for j in 0..n {
         circ.cswap(*swp, x_reg[j], y_reg[j]);
     }
     // inverse of 1): y -= x mod q. The apply-path operands carry pseudo-Mersenne
     // representation drift, so the borrow clean uses the MBU form.
     // Apply cofactor sub -> schedule cout k.
-    circ.set_phase("tlm_apply_inverse_mod_sub");
     let k = super::next_cout_k();
-    super::gidney::with_dirty_vent_pool(dirty_vents, || {
-        controlled_mod_sub_vented(circ, sub, &x_reg[..n], &y_reg[..n], Some(k));
-    });
+    controlled_mod_sub_vented(circ, sub, &x_reg[..n], &y_reg[..n], Some(k));
 }
 
 /// Apply-path `y := y - ctrl * x (mod q)` whose borrow ancilla is cleaned by
@@ -1041,7 +800,6 @@ fn controlled_mod_sub_vented(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Q
     let f_bytes = F_SECP256K1.to_le_bytes();
     let anc = circ.alloc_qubit();
     // X-sandwich: ~y += ctrl*x => y -= ctrl*x; cout = ctrl AND borrow.
-    circ.set_phase("tlm_apply_inverse_mod_sub_register");
     for q in y {
         circ.x(*q);
     }
@@ -1050,7 +808,6 @@ fn controlled_mod_sub_vented(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Q
         circ.x(*q);
     }
     // gated -f fold on the borrow.
-    circ.set_phase("tlm_apply_inverse_mod_sub_fold");
     for q in &y[..arith::LSBS] {
         circ.x(*q);
     }
@@ -1067,7 +824,6 @@ fn controlled_mod_sub_vented(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Q
     // Z via the Gidney `a + ~b + ~cin` carry chain (~1 Toffoli/bit); cz_if_bit(ctrl,
     // carry) cancels the phase. This never asserts |0>, so operand drift is tolerated.
     // Flip x_top so the comparator's internal `~b` yields `+x_top` (carryout(y+x+1)).
-    circ.set_phase("tlm_apply_inverse_mod_sub_clean");
     let k = arith::MSBS.min(n);
     let lo = n - k;
     let ctrl = *ctrl;

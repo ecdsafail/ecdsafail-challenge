@@ -452,37 +452,20 @@ fn analyze_affine(
                             keep_ctrl: op.q_control1,
                         };
                         fold_eq += 1;
-
-                        // The rewritten gate is CX(a,t). Propagate that exact
-                        // affine transfer now so equal-control chains close in
-                        // this sweep instead of one whole-stream pass per link.
-                        if af.cond_maybe_false(op) {
-                            af.set[t] = af.fresh();
-                            af.cst[t] = false;
-                        } else {
-                            let ns = xor_set(&af.set[t], &af.set[a]);
-                            af.cst[t] ^= af.cst[a];
-                            if ns.len() > CAP_SET {
-                                af.set[t] = af.fresh();
-                                af.cst[t] = false;
-                            } else {
-                                af.set[t] = ns;
-                            }
-                        }
                     } else {
                         decisions[i] = Decision::DropComplementCtrls {
                             a: op.q_control1,
                             b: op.q_control2,
                         };
                         drop_comp += 1;
-                        // Complementary controls cannot both be one. The
-                        // rewritten gate is a no-op, so retain the target form.
                     }
-                } else {
-                    // An unresolved CCX is nonlinear in its controls.
-                    af.set[t] = af.fresh();
-                    af.cst[t] = false;
                 }
+                // Target becomes a fresh (nonlinear) variable. If we proved the
+                // controls equal, the gate behaves as CX(a,t) -> t ^= a; but a
+                // fresh var is a sound over-approximation of the resulting value
+                // and keeps the analysis simple/exact for relations.
+                af.set[t] = af.fresh();
+                af.cst[t] = false;
             }
             OperationType::Swap => {
                 let x = op.q_control1.0 as usize;
@@ -1258,60 +1241,6 @@ fn step_and_check<R: sha3::digest::XofReader>(
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod affine_transfer_tests {
-    use super::*;
-
-    fn gate(kind: OperationType, c1: u64, c2: u64, target: u64) -> Op {
-        let mut op = Op::empty();
-        op.kind = kind;
-        op.q_control1 = QubitId(c1);
-        op.q_control2 = QubitId(c2);
-        op.q_target = QubitId(target);
-        op
-    }
-
-    #[test]
-    fn closes_equal_and_complementary_chains_conservatively() {
-        let equal_chain = vec![
-            gate(OperationType::CX, 0, u64::MAX, 1),
-            gate(OperationType::CCX, 0, 1, 2),
-            gate(OperationType::CCX, 2, 0, 3),
-        ];
-        let (decisions, fold_eq, drop_comp) =
-            analyze_affine(&equal_chain, 4, 0, &[QubitId(0)]);
-        assert_eq!((fold_eq, drop_comp), (2, 0));
-        assert!(matches!(decisions[1], Decision::FoldEqualCtrls { .. }));
-        assert!(matches!(decisions[2], Decision::FoldEqualCtrls { .. }));
-
-        let complement_chain = vec![
-            gate(OperationType::CX, 0, u64::MAX, 1),
-            gate(OperationType::X, u64::MAX, u64::MAX, 1),
-            gate(OperationType::CX, 0, u64::MAX, 2),
-            gate(OperationType::CCX, 0, 1, 2),
-            gate(OperationType::CCX, 2, 0, 3),
-        ];
-        let (decisions, fold_eq, drop_comp) =
-            analyze_affine(&complement_chain, 4, 0, &[QubitId(0)]);
-        assert_eq!((fold_eq, drop_comp), (1, 1));
-        assert!(matches!(decisions[3], Decision::DropComplementCtrls { .. }));
-        assert!(matches!(decisions[4], Decision::FoldEqualCtrls { .. }));
-
-        let mut conditional = gate(OperationType::CCX, 0, 1, 2);
-        conditional.c_condition = BitId(0);
-        let conditional_chain = vec![
-            gate(OperationType::CX, 0, u64::MAX, 1),
-            conditional,
-            gate(OperationType::CCX, 2, 0, 3),
-        ];
-        let (decisions, fold_eq, drop_comp) =
-            analyze_affine(&conditional_chain, 4, 1, &[QubitId(0)]);
-        assert_eq!((fold_eq, drop_comp), (1, 0));
-        assert!(matches!(decisions[1], Decision::FoldEqualCtrls { .. }));
-        assert!(matches!(decisions[2], Decision::Keep));
     }
 }
 

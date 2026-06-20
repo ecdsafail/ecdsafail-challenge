@@ -19,32 +19,28 @@
 //! is full Gidney.
 
 use super::{B, BExt};
-use crate::circuit::QubitId;
+use crate::circuit::{QubitId};
 
-/// Direct-final-carry form of the chunked `a >= b` comparator. `k` is the held
-/// carry count (clamped to `n`). `body(circ, carry)` sees
-/// `carry = (a >= b)` and must restore it before returning; `a`/`b` and all
-/// carries are then cleaned.
-fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
+/// Chunked `a >= b` comparator with a middle callback, the backend the GCD swap
+/// comparator uses. `k` is the held-carry count (clamped to `n`).
+/// `body(circ, flag)` sees `flag = (a >= b)`; `a`/`b` restored, `flag` cleaned.
+pub fn compare_geq_chunked_middle<F: FnOnce(&mut B, &QubitId)>(
     circ: &mut B,
     a: &[QubitId],
     b: &[QubitId],
+    flag: &QubitId,
     body: F,
     k: usize,
 ) {
     let n = a.len();
-    assert_eq!(
-        b.len(),
-        n,
-        "compare_geq_chunked_middle_direct: a,b equal width"
-    );
-    assert!(
-        n > 0,
-        "compare_geq_chunked_middle_direct: nonempty operands"
-    );
-    let k = super::target_qubit_headroom(circ)
-        .map_or(k, |headroom| k.min(headroom.saturating_sub(1)))
-        .min(n);
+    assert_eq!(b.len(), n, "compare_geq_chunked_middle: a,b equal width");
+    if n == 0 {
+        circ.x(*flag);
+        body(circ, flag);
+        circ.x(*flag);
+        return;
+    }
+    let k = k.min(n);
     let split = n - k; // bottom [0, split) in-place; top [split, n) held.
     let mut cy: Vec<Option<QubitId>> = (0..=n).map(|_| None).collect();
     let c = circ.alloc_qubit();
@@ -70,7 +66,11 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
         }
         cy[i + 1] = Some(next);
     }
-    body(circ, cy[n].as_ref().unwrap());
+    let cn = cy[n].as_ref().unwrap();
+    circ.cx(*cn, *flag); // flag = c_n = (a >= b)
+    body(circ, flag);
+    let cn = cy[n].as_ref().unwrap();
+    circ.cx(*cn, *flag); // clean flag
     // Reverse top: measure-erase the held carries.
     for i in (split..n).rev() {
         let next = cy[i + 1].take().unwrap();
@@ -95,40 +95,6 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
     circ.zero_and_free(c);
 }
 
-/// Compatibility form for callers that need a persistent predicate qubit.
-/// New middle-only users should use the direct-final-carry form above.
-pub fn compare_geq_chunked_middle<F: FnOnce(&mut B, &QubitId)>(
-    circ: &mut B,
-    a: &[QubitId],
-    b: &[QubitId],
-    flag: &QubitId,
-    body: F,
-    k: usize,
-) {
-    assert_eq!(
-        b.len(),
-        a.len(),
-        "compare_geq_chunked_middle: a,b equal width"
-    );
-    if a.is_empty() {
-        circ.x(*flag);
-        body(circ, flag);
-        circ.x(*flag);
-        return;
-    }
-    compare_geq_chunked_middle_direct(
-        circ,
-        a,
-        b,
-        |c, carry| {
-            c.cx(*carry, *flag);
-            body(c, flag);
-            c.cx(*carry, *flag);
-        },
-        k,
-    );
-}
-
 /// Controlled form: `target ^= ctrl AND (u_top < v_top)` on the top `k` MSBs.
 /// Used where the swap decision is itself gated.
 pub fn controlled_swap_decision_lt_truncated(
@@ -139,27 +105,26 @@ pub fn controlled_swap_decision_lt_truncated(
     k: usize,
     target: &QubitId,
 ) {
-    assert!(
-        k > 0 && k <= u.len() && k <= v.len(),
-        "k must fit in both operands"
-    );
+    assert!(k <= u.len() && k <= v.len(), "k must fit in both operands");
     let u_top: Vec<QubitId> = u[u.len() - k..].to_vec();
     let v_top: Vec<QubitId> = v[v.len() - k..].to_vec();
-    // The callback consumes the final carry directly, eliminating the old
-    // predicate-copy lane. Spend exactly that lane on one additional held carry;
-    // compare_geq_chunked_middle_direct's target-Q clamp still bounds the same peak.
-    let ck = super::next_cmp_k().saturating_add(1);
-    compare_geq_chunked_middle_direct(
+    // Held-carry count for the chunked comparator, supplied per call by the
+    // schedule (`ck` Gidney carries held, `ck+1` live).
+    let ck = super::next_cmp_k();
+    let lt_flag = circ.alloc_qubit();
+    compare_geq_chunked_middle(
         circ,
         &u_top,
         &v_top,
-        |c, carry| {
-            c.x(*carry);
-            c.ccx(*ctrl, *carry, *target);
-            c.x(*carry);
+        &lt_flag,
+        |c, flag| {
+            c.x(*flag);
+            c.ccx(*ctrl, *flag, *target);
+            c.x(*flag);
         },
         ck,
     );
+    circ.zero_and_free(lt_flag);
 }
 
 /// Measurement-vented `a + b + cin` carry chain with a middle callback. Computes
@@ -231,12 +196,13 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
 /// Vented uncompute of a GCD swap-decision flag that holds `ctrl AND (v_top <
 /// u_top)` (the forward decision). HMR the flag to |0> (0 Toffoli), then
 /// under the HMR `push_condition` recompute the predicate as a deferred Z, using
-/// the direct-final-carry comparator on `(v_top, u_top)`. `v`,`u` restored. The forward
+/// `compare_geq_chunked_middle(v_top, u_top)`. `v`,`u` restored. The forward
 /// computes the flag normally (a value); only this reverse clear vents.
 ///
 /// `[v >= u] = carryout(v + ~u + 1)` over the top-`k` window; the predicate is
-/// `ctrl AND (v < u) = ctrl AND NOT[v>=u]`. Deposit the phase directly through
-/// the final carry via `X(carry); CZ(ctrl, carry); X(carry)`.
+/// `ctrl AND (v < u) = ctrl AND NOT[v>=u]`. With `lt_flag = [v_top >= u_top]`,
+/// deposit `Z^(ctrl AND NOT lt_flag)` via `X(lt_flag); CZ(ctrl, lt_flag);
+/// X(lt_flag)`.
 pub fn swap_decision_uncompute_vented(
     circ: &mut B,
     ctrl: &QubitId,
@@ -245,194 +211,31 @@ pub fn swap_decision_uncompute_vented(
     k: usize,
     flag: &QubitId,
 ) {
-    assert!(
-        k > 0 && k <= v.len() && k <= u.len(),
-        "k must fit in both operands"
-    );
+    assert!(k <= v.len() && k <= u.len(), "k must fit in both operands");
     let v_top: Vec<QubitId> = v[v.len() - k..].to_vec();
     let u_top: Vec<QubitId> = u[u.len() - k..].to_vec();
-    // Match the forward decision: removing the predicate-copy lane funds one
-    // additional held carry without changing peak liveness.
-    let ck = super::next_cmp_k().saturating_add(1);
+    // Held-carry count for the chunked comparator, supplied per call by the
+    // schedule (matches the forward decision).
+    let ck = super::next_cmp_k();
     let bit = circ.alloc_bit();
     circ.hmr(*flag, bit);
     circ.push_condition(bit);
-    compare_geq_chunked_middle_direct(
+    let lt_flag = circ.alloc_qubit(); // = [v >= u]
+    compare_geq_chunked_middle(
         circ,
         &v_top,
         &u_top,
-        |c, carry| {
-            // Deposit Z^(ctrl AND NOT carry) = Z^(ctrl AND [v < u]), gated by the HMR
+        &lt_flag,
+        |c, fl| {
+            // deposit Z^(ctrl AND NOT fl) = Z^(ctrl AND [v < u]), gated by the HMR
             // condition (push_condition). Same phase as the cin (ta,tb,c_prev) form.
-            c.x(*carry);
-            c.cz(*ctrl, *carry);
-            c.x(*carry);
+            c.x(*fl);
+            c.cz(*ctrl, *fl);
+            c.x(*fl);
         },
         ck,
     );
+    circ.zero_and_free(lt_flag);
     circ.pop_condition();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::circuit::OperationType;
-    use crate::sim::Simulator;
-    use sha3::{
-        digest::{ExtendableOutput, Update},
-        Shake256,
-    };
-
-    fn alloc_case(circ: &mut B, n: usize) -> (Vec<QubitId>, Vec<QubitId>, QubitId, QubitId) {
-        let a = (0..n).map(|_| circ.alloc_qubit()).collect();
-        let b = (0..n).map(|_| circ.alloc_qubit()).collect();
-        let ctrl = circ.alloc_qubit();
-        let target = circ.alloc_qubit();
-        (a, b, ctrl, target)
-    }
-
-    fn xor_value(circ: &mut B, qs: &[QubitId], value: usize) {
-        for (i, &q) in qs.iter().enumerate() {
-            if (value >> i) & 1 != 0 {
-                circ.x(q);
-            }
-        }
-    }
-
-    fn simulate(circ: &B) -> (Vec<u64>, u64) {
-        let mut shake = Shake256::default();
-        shake.update(b"comparator-direct-final-carry-test");
-        let mut xof = shake.finalize_xof();
-        let mut sim =
-            Simulator::new(circ.next_qubit as usize, circ.next_bit as usize, &mut xof);
-        sim.apply_iter(circ.ops.iter());
-        (sim.qubits, sim.phase)
-    }
-
-    fn read_uniform(qs: &[QubitId], qubits: &[u64]) -> usize {
-        qs.iter().enumerate().fold(0usize, |value, (i, q)| {
-            let lane = qubits[q.0 as usize];
-            assert!(
-                lane == 0 || lane == u64::MAX,
-                "nonuniform data lane q{}",
-                q.0
-            );
-            value | (usize::from(lane == u64::MAX) << i)
-        })
-    }
-
-    fn toffoli_count(circ: &B) -> usize {
-        circ.ops
-            .iter()
-            .filter(|op| matches!(op.kind, OperationType::CCX | OperationType::CCZ))
-            .count()
-    }
-
-    #[test]
-    fn direct_final_carry_is_exhaustive_for_small_widths() {
-        for n in 1..=4 {
-            let limit = 1usize << n;
-            for held in 0..=n {
-                for a_value in 0..limit {
-                    for b_value in 0..limit {
-                        for ctrl_value in 0..=1usize {
-                            for target_value in 0..=1usize {
-                                let mut circ = B::new();
-                                let (a, b, ctrl, target) = alloc_case(&mut circ, n);
-                                xor_value(&mut circ, &a, a_value);
-                                xor_value(&mut circ, &b, b_value);
-                                if ctrl_value != 0 {
-                                    circ.x(ctrl);
-                                }
-                                if target_value != 0 {
-                                    circ.x(target);
-                                }
-                                compare_geq_chunked_middle_direct(
-                                    &mut circ,
-                                    &a,
-                                    &b,
-                                    |c, carry| {
-                                        c.x(*carry);
-                                        c.ccx(ctrl, *carry, target);
-                                        c.cz(ctrl, *carry);
-                                        c.x(*carry);
-                                    },
-                                    held,
-                                );
-
-                                assert_eq!(circ.active_qubits as usize, 2 * n + 2);
-                                let (qubits, phase) = simulate(&circ);
-                                let predicate = ctrl_value != 0 && a_value < b_value;
-                                assert_eq!(read_uniform(&a, &qubits), a_value);
-                                assert_eq!(read_uniform(&b, &qubits), b_value);
-                                assert_eq!(
-                                    qubits[ctrl.0 as usize],
-                                    if ctrl_value != 0 { u64::MAX } else { 0 }
-                                );
-                                assert_eq!(
-                                    qubits[target.0 as usize],
-                                    if (target_value != 0) ^ predicate {
-                                        u64::MAX
-                                    } else {
-                                        0
-                                    },
-                                );
-                                assert_eq!(phase, if predicate { u64::MAX } else { 0 });
-                                assert!(qubits[2 * n + 2..].iter().all(|&q| q == 0));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn freed_predicate_lane_funds_one_held_carry() {
-        for n in 1..=8 {
-            for held in 0..n {
-                let mut legacy = B::new();
-                let (a, b, ctrl, target) = alloc_case(&mut legacy, n);
-                let flag = legacy.alloc_qubit();
-                compare_geq_chunked_middle(
-                    &mut legacy,
-                    &a,
-                    &b,
-                    &flag,
-                    |c, flag| {
-                        c.x(*flag);
-                        c.ccx(ctrl, *flag, target);
-                        c.x(*flag);
-                    },
-                    held,
-                );
-                legacy.zero_and_free(flag);
-
-                let mut direct = B::new();
-                let (a, b, ctrl, target) = alloc_case(&mut direct, n);
-                compare_geq_chunked_middle_direct(
-                    &mut direct,
-                    &a,
-                    &b,
-                    |c, carry| {
-                        c.x(*carry);
-                        c.ccx(ctrl, *carry, target);
-                        c.x(*carry);
-                    },
-                    held + 1,
-                );
-
-                assert_eq!(
-                    direct.peak_qubits, legacy.peak_qubits,
-                    "n={n} held={held}"
-                );
-                assert_eq!(
-                    toffoli_count(&direct) + 1,
-                    toffoli_count(&legacy),
-                    "n={n} held={held}",
-                );
-            }
-        }
-    }
 }
 

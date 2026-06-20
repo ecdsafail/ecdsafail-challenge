@@ -26,45 +26,13 @@
 
 use super::{B, BExt};
 use crate::circuit::{BitId, QubitId};
-use std::cell::Cell;
-
-thread_local! {
-    static FFG_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
-}
-
-pub(super) fn reset_ffg_call_index() {
-    FFG_CALL_INDEX.with(|index| index.set(0));
-}
-
-fn next_ffg_call_index() -> usize {
-    FFG_CALL_INDEX.with(|index| {
-        let current = index.get();
-        index.set(current + 1);
-        current
-    })
-}
-
-fn env_index_value(name: &str, index: usize) -> Option<usize> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| {
-            value
-                .split(',')
-                .filter_map(|item| item.trim().split_once(':'))
-                .find_map(|(call, value)| {
-                    (call.parse::<usize>().ok()? == index)
-                        .then(|| value.parse::<usize>().ok())
-                        .flatten()
-                })
-        })
-}
 
 /// secp256k1 reduction constant f = 2^256 - q.
 pub const F_SECP256K1: u64 = (1u64 << 32) + 977;
 /// bitlen(f).
 pub const F_BITLEN: usize = 33;
 /// Profile padding.
-pub const PAD: usize = 19;
+pub const PAD: usize = 21;
 /// `+f` fold window width: carry beyond bit `LSBS-1` is dropped (~2^-PAD miss).
 pub const LSBS: usize = PAD + F_BITLEN; // 54
 /// Top-k less-than comparator width for the mod-add/sub overflow cleanup.
@@ -694,9 +662,6 @@ fn compare_geq_const_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, bool)>(cir
 fn controlled_erase_carry_gated_const(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, carry: QubitId) {
     let bit = circ.alloc_bit();
     circ.hmr(carry, bit);
-    // HMR resets the boundary carry before the phase-recovery comparator. Its
-    // physical lane can therefore host the comparator's first clean ancilla.
-    circ.loan_zero_qubit(carry);
     circ.push_condition(bit);
     compare_geq_const_cin_middle(circ, a, c, coff, cin, |cc, a_top, cy_top, ctop| {
         // Z^(ctrl . NOT cy_s); const_top=1 (AND): cy_s=a&cy; =0 (OR): cy_s=a|cy.
@@ -708,6 +673,7 @@ fn controlled_erase_carry_gated_const(circ: &mut B, ctrl: &QubitId, a: &[QubitId
         }
     });
     circ.pop_condition();
+    circ.zero_and_free(carry);
 }
 
 /// GRADUATED staircase const add on a suffix: chunk `i` width `k-3-i`.
@@ -821,8 +787,6 @@ fn add_f_window_hybrid(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usiz
 /// register bits for the overflow, so the fold never inflates the peak past the
 /// ceiling.
 fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], g_sched: Option<usize>) {
-    let call_index = next_ffg_call_index();
-    let timeline_start = circ.active_timeline.len();
     let n = lsbs;
     assert!(n <= reg.len(), "register too short for +f window");
     if n == 0 { return; }
@@ -833,38 +797,7 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
     // `g` = clean-vent count. Schedule-driven for the apply cofactor folds (g_sched =
     // the baked `g`, deterministic -> phase-clean); live-headroom read (CEILING - live)
     // for the doublings (always clean -- high headroom).
-    let target_g = super::target_qubit_headroom(circ).map(|headroom| {
-        let mut reserve = std::env::var("TLM_TARGET_FFG_RESERVE")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(4);
-        if let Some(call_reserve) =
-            env_index_value("TLM_TARGET_FFG_CALL_RESERVES", call_index)
-        {
-            reserve = call_reserve;
-        } else if std::env::var("TLM_TARGET_FFG_RESERVE8_CALLS")
-            .ok()
-            .map(|value| {
-                value
-                    .split(',')
-                    .filter_map(|item| item.trim().parse::<usize>().ok())
-                    .any(|candidate| candidate == call_index)
-            })
-            .unwrap_or(false)
-        {
-            reserve = 8;
-        }
-        headroom.saturating_sub(reserve)
-    });
-    let scheduled_g = g_sched
-        .map_or_else(|| CEILING.saturating_sub(circ.active_qubits as usize), |g| g)
-        .min(target_g.unwrap_or(usize::MAX))
-        .min(n - 1);
-    let g = std::env::var("TLM_FFG_FORCE_G")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .map_or(scheduled_g, |forced| forced.min(n - 1));
-    let trace_entry_active = circ.active_qubits;
+    let g = g_sched.map_or_else(|| CEILING.saturating_sub(circ.active_qubits as usize), |g| g).min(n - 1);
     if g >= n - 1 {
         add_f_window_clean(circ, ctrl, reg, lsbs, c); // all-clean path
     } else if g == 0 {
@@ -875,23 +808,6 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
         circ.zero_and_free(cin);
     } else {
         add_f_window_hybrid(circ, ctrl, reg, lsbs, c, g);
-    }
-    if std::env::var_os("TRACE_TLM_FFG").is_some() {
-        let local_peak = circ.active_timeline[timeline_start..]
-            .iter()
-            .map(|(_, active)| *active)
-            .max()
-            .unwrap_or(trace_entry_active);
-        eprintln!(
-            "TLM_FFG call={} phase={} g={} entry_active={} local_peak={} phase_max={} ops={}",
-            call_index,
-            circ.phase,
-            g,
-            trace_entry_active,
-            local_peak,
-            circ.current_phase_active_max,
-            circ.current_ops_len(),
-        );
     }
 }
 
@@ -1105,7 +1021,6 @@ pub fn controlled_mod_add_k(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Qu
     let f_bytes = F_SECP256K1.to_le_bytes();
     let anc = circ.alloc_qubit();
     // 1) y += ctrl*x; carry-out (overflow) captured into the transient anc.
-    circ.set_phase("tlm_apply_forward_mod_add_register");
     match sched_k {
         Some(k) => {
             let yr: Vec<&QubitId> = y.iter().collect();
@@ -1115,7 +1030,6 @@ pub fn controlled_mod_add_k(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Qu
         None => controlled_add_vented_chunked_cout(circ, ctrl, x, y, APPLY_CHUNK, Some(&anc)),
     }
     // 2) gated +f reduction (anc holds ctrl AND overflow); carry beyond LSBS dropped.
-    circ.set_phase("tlm_apply_forward_mod_add_fold");
     add_f_window(circ, &anc, y, LSBS, &f_bytes, ffg_g);
     // 3) less-than comparator erases anc back to |0>: anc holds `ctrl AND (y_final < x)`. The
     //    ludicrous profile truncates this comparator to the top `MSBS = PAD = 21`
@@ -1127,7 +1041,6 @@ pub fn controlled_mod_add_k(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Qu
     debug_assert_eq!(MSBS, PAD); // the +f comparator is truncated to the top PAD bits
     // The less-than erase consumes `anc`: it HMRs it then frees it BEFORE the recompute
     // comparator (so the overflow flag is not held live across the chunked comparator).
-    circ.set_phase("tlm_apply_forward_mod_add_clean");
     controlled_lt_msbs_conditional(circ, Some(ctrl), &y[..n], &x[..n], MSBS, anc);
 }
 
@@ -1281,164 +1194,6 @@ pub fn mod_sub_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: us
     circ.zero_and_free(anc);
 }
 
-fn toggle_pattern_mcx(circ: &mut B, pattern: &[(QubitId, bool)], target: &QubitId) {
-    for &(q, expected) in pattern {
-        if !expected {
-            circ.x(q);
-        }
-    }
-    let ctrls: Vec<&QubitId> = pattern.iter().map(|(q, _)| q).collect();
-    super::mcx::mcx_clean_k(circ, &ctrls, target);
-    for &(q, expected) in pattern.iter().rev() {
-        if !expected {
-            circ.x(q);
-        }
-    }
-}
-
-/// Toggle `target` iff the little-endian register `a` is at least `threshold`.
-fn toggle_geq_small_const(circ: &mut B, a: &[QubitId], threshold: usize, target: &QubitId) {
-    assert!(threshold < (1usize << a.len()));
-    for j in (0..a.len()).rev() {
-        if (threshold >> j) & 1 != 0 {
-            continue;
-        }
-        let mut pattern = Vec::with_capacity(a.len() - j);
-        for k in (j + 1)..a.len() {
-            pattern.push((a[k], (threshold >> k) & 1 != 0));
-        }
-        pattern.push((a[j], true));
-        toggle_pattern_mcx(circ, &pattern, target);
-    }
-    let equality: Vec<(QubitId, bool)> = a
-        .iter()
-        .enumerate()
-        .map(|(i, &q)| (q, (threshold >> i) & 1 != 0))
-        .collect();
-    toggle_pattern_mcx(circ, &equality, target);
-}
-
-/// Toggle `target` iff `y >= p-c`, for canonical `y < p` and a three-bit `c`.
-fn toggle_geq_p_minus_low3(circ: &mut B, y: &[QubitId], c: &[QubitId], target: &QubitId) {
-    debug_assert_eq!(y.len(), 256);
-    debug_assert_eq!(c.len(), 3);
-
-    let sum: Vec<QubitId> = (0..11).map(|_| circ.alloc_qubit()).collect();
-    for i in 0..10 {
-        circ.cx(y[i], sum[i]);
-    }
-    let zeros: Vec<QubitId> = (0..8).map(|_| circ.alloc_qubit()).collect();
-    let mut c11 = c.to_vec();
-    c11.extend(zeros.iter().copied());
-    cuccaro_carry(circ, None, &c11, &sum, None, None);
-
-    // Since p-c = 2^256-(2^32+977+c), the low predicate is bit 32 or
-    // (bits 10..31 all one and low10+c >= 47).
-    let low_ge = circ.alloc_qubit();
-    toggle_geq_small_const(circ, &sum, 47, &low_ge);
-    let lower = circ.alloc_qubit();
-    circ.cx(y[32], lower);
-    let mut lower_pattern = Vec::with_capacity(24);
-    lower_pattern.push((y[32], false));
-    lower_pattern.extend(y[10..32].iter().map(|&q| (q, true)));
-    lower_pattern.push((low_ge, true));
-    toggle_pattern_mcx(circ, &lower_pattern, &lower);
-
-    let mut full_pattern = Vec::with_capacity(224);
-    full_pattern.push((lower, true));
-    full_pattern.extend(y[33..].iter().map(|&q| (q, true)));
-    toggle_pattern_mcx(circ, &full_pattern, target);
-
-    toggle_pattern_mcx(circ, &lower_pattern, &lower);
-    circ.cx(y[32], lower);
-    circ.zero_and_free(lower);
-    toggle_geq_small_const(circ, &sum, 47, &low_ge);
-    circ.zero_and_free(low_ge);
-
-    for q in &sum {
-        circ.x(*q);
-    }
-    cuccaro_carry(circ, None, &c11, &sum, None, None);
-    for q in &sum {
-        circ.x(*q);
-    }
-    for i in 0..10 {
-        circ.cx(y[i], sum[i]);
-    }
-    for q in sum {
-        circ.zero_and_free(q);
-    }
-    for q in zeros {
-        circ.zero_and_free(q);
-    }
-}
-
-/// Exact `y -= c (mod p)` for the three low classical coordinate bits.
-pub fn mod_sub_classical_low3(circ: &mut B, y: &[QubitId], c: &[BitId]) {
-    assert_eq!(y.len(), 256, "mod_sub_classical_low3 expects 256-bit y");
-    assert_eq!(c.len(), 3, "mod_sub_classical_low3 expects three classical bits");
-
-    let cq: Vec<QubitId> = (0..3).map(|_| circ.alloc_qubit()).collect();
-    for i in 0..3 {
-        circ.x_if_bit(cq[i], c[i]);
-    }
-
-    let low_borrow = circ.alloc_qubit();
-    for q in &y[..3] {
-        circ.x(*q);
-    }
-    cuccaro_carry(circ, None, &cq, &y[..3], None, Some(&low_borrow));
-    for q in &y[..3] {
-        circ.x(*q);
-    }
-
-    let full_borrow = circ.alloc_qubit();
-    let mut borrow_pattern = Vec::with_capacity(254);
-    borrow_pattern.push((low_borrow, true));
-    borrow_pattern.extend(y[3..].iter().map(|&q| (q, false)));
-    toggle_pattern_mcx(circ, &borrow_pattern, &full_borrow);
-
-    for q in &y[3..] {
-        circ.x(*q);
-    }
-    super::mcx::cinc_khattar_gidney(circ, &y[3..], &low_borrow);
-    for q in &y[3..] {
-        circ.x(*q);
-    }
-
-    let low_copy: Vec<QubitId> = (0..3).map(|_| circ.alloc_qubit()).collect();
-    for i in 0..3 {
-        circ.cx(y[i], low_copy[i]);
-    }
-    cuccaro_carry(circ, None, &cq, &low_copy, None, Some(&low_borrow));
-    for q in &low_copy {
-        circ.x(*q);
-    }
-    cuccaro_carry(circ, None, &cq, &low_copy, None, None);
-    for q in &low_copy {
-        circ.x(*q);
-    }
-    for i in 0..3 {
-        circ.cx(y[i], low_copy[i]);
-    }
-    for q in low_copy {
-        circ.zero_and_free(q);
-    }
-    circ.zero_and_free(low_borrow);
-
-    let f_bytes = F_SECP256K1.to_le_bytes();
-    sub_f_window(circ, &full_borrow, y, LSBS, &f_bytes);
-    toggle_geq_p_minus_low3(circ, y, &cq, &full_borrow);
-    circ.zero_and_free(full_borrow);
-
-    for i in 0..3 {
-        circ.x_if_bit(cq[i], c[i]);
-    }
-    for q in cq {
-        circ.zero_and_free(q);
-    }
-}
-
 /// In-place modular negate `x := q - x (mod q)` for x in (0,q). Identity (since
 /// `q = 2^256 - f`): `q - x = ~(x + (f-1))`. So one exact full-width const-add of
 /// `(f-1)` (no carry escapes 2^256 since `x + (f-1) < q + f - 1 = 2^256 - 1`) then
@@ -1586,3 +1341,4 @@ pub fn mod_double_reverse(circ: &mut B, a: &[QubitId]) {
 pub fn add_f_window_pub(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], g_sched: Option<usize>) {
     add_f_window(circ, ctrl, reg, lsbs, c, g_sched);
 }
+
