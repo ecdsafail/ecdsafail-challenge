@@ -644,6 +644,64 @@ fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], 
     }
 }
 
+fn const_chunk_add_clean_drop_cout(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId) {
+    let s = a.len();
+    if s == 0 {
+        return;
+    }
+    if s == 1 {
+        if cbit(c, coff) {
+            circ.cx(*ctrl, a[0]);
+        }
+        circ.cx(*cin, a[0]);
+        return;
+    }
+    let mut int: Vec<Option<QubitId>> = (0..s - 1).map(|_| Some(circ.alloc_qubit())).collect();
+    for i in 0..s - 1 {
+        let on = cbit(c, coff + i);
+        let cin_ref: QubitId = if i == 0 { *cin } else { *int[i - 1].as_ref().unwrap() };
+        let cout_ref: QubitId = *int[i].as_ref().unwrap();
+        circ.cx(cin_ref, a[i]);
+        if on {
+            circ.cx(*ctrl, cin_ref);
+        }
+        circ.ccx(a[i], cin_ref, cout_ref);
+        if on {
+            circ.cx(*ctrl, cin_ref);
+        }
+        circ.cx(cin_ref, cout_ref);
+    }
+    for i in 0..s - 1 {
+        if cbit(c, coff + i) {
+            circ.cx(*ctrl, a[i]);
+        }
+    }
+    if cbit(c, coff + s - 1) {
+        circ.cx(*ctrl, a[s - 1]);
+    }
+    circ.cx(*int[s - 2].as_ref().unwrap(), a[s - 1]);
+    for i in (0..s - 1).rev() {
+        let on = cbit(c, coff + i);
+        let int_i = int[i].take().unwrap();
+        let cin_ref: QubitId = if i == 0 { *cin } else { *int[i - 1].as_ref().unwrap() };
+        if on {
+            circ.cx(*ctrl, a[i]);
+        }
+        circ.cx(cin_ref, int_i);
+        if on {
+            circ.cx(*ctrl, cin_ref);
+        }
+        let b = circ.alloc_bit();
+        circ.hmr(int_i, b);
+        circ.zero_and_free(int_i);
+        circ.cz_if_bit(a[i], cin_ref, b);
+        if on {
+            circ.cx(*ctrl, cin_ref);
+            circ.cx(*ctrl, a[i]);
+        }
+    }
+}
+
 /// No-temp const carry comparator with a middle callback handing `(a_top, cy_top,
 /// const_top)`.
 fn compare_geq_const_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, bool)>(circ: &mut B, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, body: F) {
@@ -727,12 +785,17 @@ fn controlled_add_const_chunked_graduated_off(circ: &mut B, ctrl: &QubitId, a: &
     assert_eq!(lo, n, "graduated staircase (k={k}) covers {lo} < n={n}");
     let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
     for (j, &(clo, chi)) in bounds.iter().enumerate() {
+        if std::env::var("TLM_GRAD_FINAL_NO_COUT").ok().as_deref() == Some("1") && j + 1 == bounds.len() {
+            let cin_ref: QubitId = if j == 0 { *cin } else { carries[j - 1] };
+            const_chunk_add_clean_drop_cout(circ, ctrl, &a[clo..chi], c, coff + clo, &cin_ref);
+            break;
+        }
         let cout = circ.alloc_qubit();
         let cin_ref: QubitId = if j == 0 { *cin } else { carries[j - 1] };
         const_chunk_add_clean(circ, ctrl, &a[clo..chi], c, coff + clo, &cin_ref, &cout);
         carries.push(cout);
     }
-    for j in (0..bounds.len()).rev() {
+    for j in (0..carries.len()).rev() {
         let (clo, chi) = bounds[j];
         let carry = carries.pop().expect("carry present");
         let cin_ref: QubitId = if j == 0 { *cin } else { carries[j - 1] };
@@ -1192,6 +1255,24 @@ pub fn mod_add(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
     // clean anc: anc ^= (y_top < x_top) over the top MSBS bits (consumes anc).
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
+}
+
+/// EXACT (full-width, NON-truncated) `y := y + x (mod q)`. Identical to
+/// [`mod_add`] but the overflow-clean comparator runs over ALL `n` bits instead
+/// of the ludicrous top-`MSBS` window, so the result and the ancilla clear are
+/// correct on EVERY input (no ~2^-PAD mis-clear). Used by the classical-constant
+/// `+3*ox` coordinate step, whose single off-peak add we want exactly clean on
+/// the fixed evaluation inputs without relying on the truncated approximation.
+pub fn mod_add_exact(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
+    let n = x.len();
+    assert_eq!(y.len(), n, "mod_add_exact: x,y must both be n=256 bits");
+    assert_eq!(n, 256, "secp256k1 mod_add_exact expects n=256");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    add_cout_vented_unctrl(circ, x, y, &anc);
+    add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
+    // FULL-WIDTH comparator (k = n): exact overflow clean.
+    controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], n, anc);
 }
 
 /// Low-peak modular add for off-peak recombination. This mirrors [`mod_add`],
