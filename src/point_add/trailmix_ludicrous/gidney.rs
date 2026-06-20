@@ -12,67 +12,6 @@
 use super::comparator::compare_geq_cin_middle;
 use super::{B, BExt};
 use crate::circuit::{QubitId};
-use std::cell::RefCell;
-
-thread_local! {
-    static DIRTY_VENT_POOL: RefCell<Vec<QubitId>> = const { RefCell::new(Vec::new()) };
-}
-
-pub fn with_dirty_vent_pool<R>(dirty: &[QubitId], body: impl FnOnce() -> R) -> R {
-    let count = std::env::var("TLM_DIRTY_VENTS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0)
-        .min(dirty.len());
-    let prior = DIRTY_VENT_POOL.with(|pool| {
-        std::mem::replace(&mut *pool.borrow_mut(), dirty[..count].to_vec())
-    });
-    let result = body();
-    DIRTY_VENT_POOL.with(|pool| {
-        *pool.borrow_mut() = prior;
-    });
-    result
-}
-
-fn dirty_vent_pool() -> Vec<QubitId> {
-    DIRTY_VENT_POOL.with(|pool| pool.borrow().clone())
-}
-
-fn trace_schedule_fit(
-    trace_env: &str,
-    family: &str,
-    mode: &str,
-    fit: super::ScheduleFit,
-    effective: usize,
-    width: usize,
-    entry_active: u32,
-    timeline_start: usize,
-    ops_start: usize,
-    circ: &B,
-) {
-    if std::env::var_os(trace_env).is_none() {
-        return;
-    }
-    let local_peak = circ.active_timeline[timeline_start..]
-        .iter()
-        .map(|(_, active)| *active)
-        .max()
-        .unwrap_or(entry_active);
-    eprintln!(
-        "TLM_{family} call={} phase={} mode={} width={} base={} selected={} effective={} entry_active={} local_peak={} ops_added={} ops={}",
-        fit.call_index,
-        circ.phase,
-        mode,
-        width,
-        fit.base,
-        fit.selected,
-        effective,
-        entry_active,
-        local_peak,
-        circ.current_ops_len().saturating_sub(ops_start),
-        circ.current_ops_len(),
-    );
-}
 
 // ============================================================================
 // controlled_hybrid_add_refs  (plain Gidney AND-carry adder)
@@ -103,15 +42,10 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
         return;
     }
     // Effective vent count, read from the baked schedule; no decision logic here.
-    // When no schedule is loaded (standalone primitive unit tests), the schedule
-    // value is usize::MAX, which the `i < vents` loop reads as "vent every carry"
+    // When no schedule is loaded (standalone primitive unit tests) `next_hyb_v`
+    // returns usize::MAX, which the `i < vents` loop reads as "vent every carry"
     // -- still value-correct.
-    let fit = super::next_hyb_v_fit();
-    let timeline_start = circ.active_timeline.len();
-    let entry_active = circ.active_qubits;
-    let ops_start = circ.current_ops_len();
-    let vents = super::target_qubit_headroom(circ)
-        .map_or(fit.selected, |headroom| fit.selected.min(headroom));
+    let vents = super::next_hyb_v();
 
     // b is the addend (carry-threaded); a is the target.
     for i in 1..n {
@@ -123,29 +57,13 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
 
     // Forward carry chain. First `vents` carries land in measurement-vent ancillae;
     // the rest are Toffoli'd straight into b.
-    #[derive(Clone, Copy)]
-    enum VentLane {
-        Clean(QubitId),
-        Dirty(QubitId),
-    }
-    let dirty_pool = dirty_vent_pool();
-    let mut vent_ancs: Vec<Option<VentLane>> = (0..n - 1).map(|_| None).collect();
+    let mut vent_ancs: Vec<Option<QubitId>> = (0..n - 1).map(|_| None).collect();
     for i in 0..n - 1 {
         if i < vents {
-            if let Some(&dirty) = dirty_pool.get(i) {
-                debug_assert_ne!(dirty, *a[i]);
-                debug_assert_ne!(dirty, *b[i]);
-                debug_assert_ne!(dirty, *b[i + 1]);
-                circ.cx(dirty, *b[i + 1]);
-                circ.ccx(*a[i], *b[i], dirty);
-                circ.cx(dirty, *b[i + 1]);
-                vent_ancs[i] = Some(VentLane::Dirty(dirty));
-            } else {
-                let anc = circ.alloc_qubit();
-                circ.ccx(*a[i], *b[i], anc); // anc = a[i] & b[i]
-                circ.cx(anc, *b[i + 1]);
-                vent_ancs[i] = Some(VentLane::Clean(anc));
-            }
+            let anc = circ.alloc_qubit();
+            circ.ccx(*a[i], *b[i], anc); // anc = a[i] & b[i]
+            circ.cx(anc, *b[i + 1]);
+            vent_ancs[i] = Some(anc);
         } else {
             circ.ccx(*a[i], *b[i], *b[i + 1]);
         }
@@ -155,21 +73,13 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     // lanes measure-erase; the rest re-Toffoli.
     for i in (0..n - 1).rev() {
         circ.ccx(*ctrl, *b[i + 1], *a[i + 1]); // controlled sum bit i+1
-        if let Some(lane) = vent_ancs[i].take() {
-            match lane {
-                VentLane::Clean(anc) => {
-                    circ.cx(anc, *b[i + 1]); // undo the forward cx
-                    let bit = circ.alloc_bit();
-                    circ.hmr(anc, bit);
-                    circ.zero_and_free(anc);
-                    circ.cz_if_bit(*a[i], *b[i], bit);
-                }
-                VentLane::Dirty(dirty) => {
-                    circ.cx(dirty, *b[i + 1]);
-                    circ.ccx(*a[i], *b[i], dirty);
-                    circ.cx(dirty, *b[i + 1]);
-                }
-            }
+        if let Some(anc) = vent_ancs[i].take() {
+            circ.cx(anc, *b[i + 1]); // undo the forward cx
+            // AND-carry erase.
+            let bit = circ.alloc_bit();
+            circ.hmr(anc, bit);
+            circ.zero_and_free(anc);
+            circ.cz_if_bit(*a[i], *b[i], bit);
         } else {
             circ.ccx(*a[i], *b[i], *b[i + 1]);
         }
@@ -184,18 +94,6 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     for i in 1..n {
         circ.cx(*b[i], *a[i]);
     }
-    trace_schedule_fit(
-        "TRACE_TLM_HYB",
-        "HYB",
-        if skip_low_ctrl_sum { "skiplow" } else { "plain" },
-        fit,
-        vents,
-        n,
-        entry_active,
-        timeline_start,
-        ops_start,
-        circ,
-    );
 }
 
 // ============================================================================
@@ -284,60 +182,20 @@ fn deref(s: &[&QubitId]) -> Vec<QubitId> {
     s.iter().map(|q| **q).collect()
 }
 
-fn controlled_erase_carry_gated_impl(
-    circ: &mut B,
-    ctrl: &QubitId,
-    a: &[&QubitId],
-    b: &[&QubitId],
-    cin: Option<&QubitId>,
-    carry: QubitId,
-) {
+fn controlled_erase_carry_gated(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], cin: &QubitId, carry: QubitId) {
     let bit = circ.alloc_bit();
     circ.hmr(carry, bit);
     circ.push_condition(bit);
     let (av, bv) = (deref(a), deref(b));
     let ctrl = *ctrl;
-    let cin = match cin {
-        Some(cin) => {
-            // HMR has already reset `carry` to |0>. Return that physical lane to
-            // the allocator while the phase-recovery comparator uses the real
-            // incoming carry.
-            circ.loan_zero_qubit(carry);
-            *cin
-        }
-        None => carry,
-    };
-    compare_geq_cin_middle(circ, &av, &bv, &cin, |c, ta, tb, c_prev| {
+    compare_geq_cin_middle(circ, &av, &bv, cin, |c, ta, tb, c_prev| {
         // ctrl . NOT c_n = ctrl.1 ^ ctrl.(ta&tb) ^ ctrl.c_prev:
         c.z(ctrl);
         c.ccz(ctrl, *ta, *tb);
         c.cz(ctrl, *c_prev);
     });
     circ.pop_condition();
-    if cin == carry {
-        circ.zero_and_free(carry);
-    }
-}
-
-fn controlled_erase_carry_gated(
-    circ: &mut B,
-    ctrl: &QubitId,
-    a: &[&QubitId],
-    b: &[&QubitId],
-    cin: &QubitId,
-    carry: QubitId,
-) {
-    controlled_erase_carry_gated_impl(circ, ctrl, a, b, Some(cin), carry);
-}
-
-fn controlled_erase_carry_gated_zero_cin(
-    circ: &mut B,
-    ctrl: &QubitId,
-    a: &[&QubitId],
-    b: &[&QubitId],
-    carry: QubitId,
-) {
-    controlled_erase_carry_gated_impl(circ, ctrl, a, b, None, carry);
+    circ.zero_and_free(carry);
 }
 
 fn controlled_erase_carry_gated_capped(
@@ -358,33 +216,17 @@ fn controlled_erase_carry_gated_capped(
     let bit = circ.alloc_bit();
     circ.hmr(carry, bit);
     circ.push_condition(bit);
+    let zcin = circ.alloc_qubit();
     let (av, bv) = (deref(&a[lo..]), deref(&b[lo..]));
     let ctrl = *ctrl;
-    compare_geq_cin_middle(circ, &av, &bv, &carry, |c, ta, tb, c_prev| {
+    compare_geq_cin_middle(circ, &av, &bv, &zcin, |c, ta, tb, c_prev| {
         c.z(ctrl);
         c.ccz(ctrl, *ta, *tb);
         c.cz(ctrl, *c_prev);
     });
+    circ.zero_and_free(zcin);
     circ.pop_condition();
     circ.zero_and_free(carry);
-}
-
-
-fn controlled_erase_carry_gated_capped_zero_cin(
-    circ: &mut B,
-    ctrl: &QubitId,
-    a: &[&QubitId],
-    b: &[&QubitId],
-    carry: QubitId,
-    cap: usize,
-) {
-    if a.len() <= cap {
-        controlled_erase_carry_gated_zero_cin(circ, ctrl, a, b, carry);
-    } else {
-        // The capped comparator starts above the incoming carry and therefore
-        // has the same implementation for a known-zero or retained carry-in.
-        controlled_erase_carry_gated_capped(circ, ctrl, a, b, &carry, carry, cap);
-    }
 }
 
 // ============================================================================
@@ -482,25 +324,13 @@ fn searched_cout_layout(n: usize, k: usize) -> Option<AdaptiveLayout> {
     if std::env::var_os("TLM_COUT_LAYOUT_SEARCH").is_none() {
         return None;
     }
-    let mut margin = std::env::var("TLM_COUT_LAYOUT_MARGIN")
+    let margin = std::env::var("TLM_COUT_LAYOUT_MARGIN")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(1);
-    if margin == 0
-        && std::env::var("TLM_COUT_LAYOUT_FORCE_M1_KS")
-            .ok()
-            .map(|s| {
-                s.split(',')
-                    .filter_map(|part| part.trim().parse::<usize>().ok())
-                    .any(|force_k| force_k == k)
-            })
-            .unwrap_or(false)
-    {
-        margin = 1;
-    }
     let mut best: Option<(usize, AdaptiveLayout)> = None;
     for c in 1..=n {
-        for plain_len in 0..=n {
+        for plain_len in 1..=n {
             let chunked_len = n - plain_len;
             let nchunks = chunked_len.div_ceil(c);
             if nchunks + plain_len + margin > k {
@@ -549,7 +379,9 @@ fn emit_cout_layout(
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
         if j == 0 {
-            controlled_erase_carry_gated_zero_cin(circ, ctrl, &a[lo..hi], &b[lo..hi], carry);
+            let cin0 = circ.alloc_qubit();
+            controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &cin0, carry);
+            circ.zero_and_free(cin0);
         } else {
             controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &carries[j - 1], carry);
         }
@@ -566,7 +398,7 @@ fn searched_gcd_adaptive_layout(n: usize, k: usize) -> Option<AdaptiveLayout> {
         .unwrap_or(1);
     let mut best: Option<(usize, AdaptiveLayout)> = None;
     for c in 1..=n {
-        for plain_len in 0..=n {
+        for plain_len in 1..=n {
             let chunked_len = n - plain_len;
             let nchunks = chunked_len.div_ceil(c);
             if nchunks + plain_len + margin > k {
@@ -614,16 +446,13 @@ fn emit_adaptive_layout_no_cout(
         let cin: &QubitId = carries.last().unwrap_or(&cin0);
         controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], Some(cin), None, layout.plain_len);
     }
-    circ.zero_and_free(cin0);
     for j in (0..bounds.len()).rev() {
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
-        if j == 0 {
-            controlled_erase_carry_gated_zero_cin(circ, ctrl, &a[lo..hi], &b[lo..hi], carry);
-        } else {
-            controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &carries[j - 1], carry);
-        }
+        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
+        controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, carry);
     }
+    circ.zero_and_free(cin0);
 }
 
 fn adaptive_add_cost_tof(n: usize, k: usize, controlled: bool) -> u64 {
@@ -679,16 +508,13 @@ fn controlled_chunked_then_cuccaro(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     } else if let Some(co) = cout {
         circ.cx(*carries.last().unwrap_or(&cin0), *co);
     }
-    circ.zero_and_free(cin0);
     for j in (0..bounds.len()).rev() {
         let (clo, chi) = bounds[j];
         let carry = carries.pop().expect("carry present");
-        if j == 0 {
-            controlled_erase_carry_gated_zero_cin(circ, ctrl, &a[clo..chi], &b[clo..chi], carry);
-        } else {
-            controlled_erase_carry_gated(circ, ctrl, &a[clo..chi], &b[clo..chi], &carries[j - 1], carry);
-        }
+        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
+        controlled_erase_carry_gated(circ, ctrl, &a[clo..chi], &b[clo..chi], cin, carry);
     }
+    circ.zero_and_free(cin0);
 }
 
 // ============================================================================
@@ -751,16 +577,13 @@ fn controlled_hybrid_add_adaptive_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qubit
         let cin: &QubitId = carries.last().unwrap_or(&cin0);
         controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], Some(cin), None, plain_len);
     }
-    circ.zero_and_free(cin0);
     for j in (0..bounds.len()).rev() {
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
-        if j == 0 {
-            controlled_erase_carry_gated_zero_cin(circ, ctrl, &a[lo..hi], &b[lo..hi], carry);
-        } else {
-            controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &carries[j - 1], carry);
-        }
+        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
+        controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, carry);
     }
+    circ.zero_and_free(cin0);
 }
 
 // ============================================================================
@@ -774,70 +597,26 @@ fn controlled_hybrid_add_varchunk_gated_refs(circ: &mut B, ctrl: &QubitId, a: &[
     }
     let sizes = varchunk_schedule(n, k);
     assert!(!sizes.is_empty(), "varchunk infeasible at k={k} for n={n}");
-    let direct = std::env::var("TLM_DIRECT_VARCHUNK")
-        .ok()
-        .as_deref()
-        == Some("1");
-    let cin0 = (!direct).then(|| circ.alloc_qubit());
+    let cin0 = circ.alloc_qubit();
     let mut carries: Vec<QubitId> = Vec::with_capacity(sizes.len());
     let mut bounds: Vec<(usize, usize)> = Vec::with_capacity(sizes.len());
     let mut lo = 0usize;
     for (j, &s) in sizes.iter().enumerate() {
         let hi = lo + s;
         let cout = circ.alloc_qubit();
-        if direct {
-            // Preserve the baked HYB cursor even though the direct threaded form
-            // does not need a separate vent-count decision.
-            let fit = super::next_hyb_v_fit();
-            let timeline_start = circ.active_timeline.len();
-            let entry_active = circ.active_qubits;
-            let ops_start = circ.current_ops_len();
-            let cin = (j != 0).then(|| &carries[j - 1]);
-            controlled_clean_add_threaded(
-                circ,
-                ctrl,
-                &a[lo..hi],
-                &b[lo..hi],
-                cin,
-                Some(&cout),
-                hi - lo,
-            );
-            trace_schedule_fit(
-                "TRACE_TLM_HYB",
-                "HYB",
-                "direct-varchunk",
-                fit,
-                hi - lo,
-                hi - lo,
-                entry_active,
-                timeline_start,
-                ops_start,
-                circ,
-            );
-        } else {
-            let cin: &QubitId = if j == 0 {
-                cin0.as_ref().expect("legacy cin0")
-            } else {
-                &carries[j - 1]
-            };
-            controlled_vented_chunk_add(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, &cout);
-        }
+        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
+        controlled_vented_chunk_add(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, &cout);
         carries.push(cout);
         bounds.push((lo, hi));
         lo = hi;
     }
-    if let Some(cin0) = cin0 {
-        circ.zero_and_free(cin0);
-    }
     for j in (0..sizes.len()).rev() {
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
-        if j == 0 {
-            controlled_erase_carry_gated_capped_zero_cin(circ, ctrl, &a[lo..hi], &b[lo..hi], carry, cap);
-        } else {
-            controlled_erase_carry_gated_capped(circ, ctrl, &a[lo..hi], &b[lo..hi], &carries[j - 1], carry, cap);
-        }
+        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
+        controlled_erase_carry_gated_capped(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, carry, cap);
     }
+    circ.zero_and_free(cin0);
 }
 
 // ============================================================================
@@ -865,15 +644,6 @@ fn controlled_hybrid_add_knob_capped_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qu
 /// reproduces it.
 pub fn controlled_hybrid_add_capped_branch(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], k: usize, cap: usize, branch: u8) {
     let n = a.len();
-    let k = super::target_qubit_headroom(circ).map_or(k, |headroom| k.min(headroom));
-    if std::env::var("TLM_GCD_RESELECT_LAYOUT")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        controlled_hybrid_add_knob_capped_refs(circ, ctrl, a, b, k, cap);
-        return;
-    }
     if branch == 1 && n > 0 && !varchunk_schedule(n, k).is_empty() {
         controlled_hybrid_add_varchunk_gated_refs(circ, ctrl, a, b, k, cap);
     } else if branch == 0 {
@@ -894,28 +664,6 @@ pub fn controlled_hybrid_add_capped_branch(circ: &mut B, ctrl: &QubitId, a: &[&Q
 // entry). The apply cofactor-add's q-q core. `k` from the schedule.
 // ============================================================================
 pub fn controlled_hybrid_add_cout_refs(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], cout: &QubitId, k: usize) {
-    let fit = super::take_cout_fit(k);
-    let timeline_start = circ.active_timeline.len();
-    let entry_active = circ.active_qubits;
-    let ops_start = circ.current_ops_len();
-    let effective = super::target_qubit_headroom(circ)
-        .map_or(fit.selected, |headroom| fit.selected.min(headroom));
-    controlled_hybrid_add_cout_refs_impl(circ, ctrl, a, b, cout, effective);
-    trace_schedule_fit(
-        "TRACE_TLM_COUT",
-        "COUT",
-        "dispatch",
-        fit,
-        effective,
-        a.len(),
-        entry_active,
-        timeline_start,
-        ops_start,
-        circ,
-    );
-}
-
-fn controlled_hybrid_add_cout_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], cout: &QubitId, k: usize) {
     let n = a.len();
     assert_eq!(b.len(), n, "controlled cout add: a,b width mismatch");
     assert!(n >= 1, "controlled cout add: empty operands");
@@ -961,7 +709,9 @@ fn controlled_hybrid_add_cout_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&Qubi
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
         if j == 0 {
-            controlled_erase_carry_gated_zero_cin(circ, ctrl, &a[lo..hi], &b[lo..hi], carry);
+            let cin0 = circ.alloc_qubit();
+            controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &cin0, carry);
+            circ.zero_and_free(cin0);
         } else {
             controlled_erase_carry_gated(circ, ctrl, &a[lo..hi], &b[lo..hi], &carries[j - 1], carry);
         }

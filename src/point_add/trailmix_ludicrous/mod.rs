@@ -13,10 +13,9 @@
 mod arith;
 mod codec;
 mod comparator;
-mod constprop;
 mod ec_add;
 mod fused;
-mod gcd;
+pub(crate) mod gcd;
 mod gidney;
 mod mcx;
 pub mod schedule;
@@ -26,7 +25,7 @@ pub use schedule::PAD;
 
 use super::B;
 use crate::circuit::{BitId, Op, OperationType, QubitId};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 const N: usize = 256;
@@ -36,8 +35,6 @@ const N: usize = 256;
 // circuit modules also need a phase Z, a doubly-controlled Z, the free Neg, a
 // Fredkin swap, and bit-conditioned forms; this trait supplies them on `B`.
 pub(super) trait BExt {
-    fn loan_zero_qubit(&mut self, q: QubitId);
-    fn reclaim_zero_qubit(&mut self, q: QubitId);
     fn z(&mut self, q: QubitId);
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId);
     fn neg(&mut self);
@@ -51,19 +48,6 @@ pub(super) trait BExt {
 }
 
 impl BExt for B {
-    fn loan_zero_qubit(&mut self, q: QubitId) {
-        self.free_qubits
-            .push(q.0.try_into().expect("qubit id fits in u32"));
-        if self.active_qubits > 0 {
-            self.active_qubits -= 1;
-        }
-        self.record_active_timeline();
-    }
-
-    fn reclaim_zero_qubit(&mut self, q: QubitId) {
-        self.reacquire(q);
-    }
-
     fn z(&mut self, q: QubitId) {
         let mut op = Op::empty();
         op.kind = OperationType::Z;
@@ -127,19 +111,6 @@ struct Sched {
 
 thread_local!(static SCHED: RefCell<Sched> = RefCell::new(Sched::default()));
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct ScheduleFit {
-    pub call_index: usize,
-    pub base: usize,
-    pub selected: usize,
-}
-
-thread_local! {
-    static HYB_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
-    static COUT_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
-    static PENDING_COUT_FIT: Cell<Option<ScheduleFit>> = const { Cell::new(None) };
-}
-
 /// Read the next entry of a `(values, cursor)` slot, returning `exhausted` past
 /// the end (a sentinel meaning "no schedule constraint": full headroom).
 fn step<T: Copy>(slot: &mut (Vec<T>, usize), exhausted: T) -> T {
@@ -148,141 +119,17 @@ fn step<T: Copy>(slot: &mut (Vec<T>, usize), exhausted: T) -> T {
     v
 }
 
-fn env_delta(name: &str) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0)
-}
-
-fn sub_delta(v: usize, name: &str) -> usize {
-    if v == usize::MAX {
-        v
-    } else {
-        v.saturating_sub(env_delta(name))
-    }
-}
-
-fn env_call_value(name: &str, call_index: usize) -> Option<usize> {
-    std::env::var(name).ok().and_then(|value| {
-        value
-            .split(',')
-            .filter_map(|item| item.trim().split_once(':'))
-            .find_map(|(call, value)| {
-                (call.parse::<usize>().ok()? == call_index)
-                    .then(|| value.parse::<usize>().ok())
-                    .flatten()
-            })
-    })
-}
-
-fn next_call_index(counter: &'static std::thread::LocalKey<Cell<usize>>) -> usize {
-    counter.with(|index| {
-        let current = index.get();
-        index.set(current + 1);
-        current
-    })
-}
-
-// Per-call maps use zero-based `call:value` entries separated by commas. An
-// exact override wins; otherwise the global and per-call deltas are cumulative.
-fn fit_schedule_value(
-    base: usize,
-    call_index: usize,
-    global_delta: &str,
-    call_deltas: &str,
-    call_overrides: &str,
-) -> ScheduleFit {
-    let selected = env_call_value(call_overrides, call_index).unwrap_or_else(|| {
-        let globally_adjusted = sub_delta(base, global_delta);
-        match env_call_value(call_deltas, call_index) {
-            Some(delta) if globally_adjusted != usize::MAX => {
-                globally_adjusted.saturating_sub(delta)
-            }
-            _ => globally_adjusted,
-        }
-    });
-    ScheduleFit {
-        call_index,
-        base,
-        selected,
-    }
-}
-
-fn reset_schedule_fit_call_indices() {
-    HYB_CALL_INDEX.with(|index| index.set(0));
-    COUT_CALL_INDEX.with(|index| index.set(0));
-    PENDING_COUT_FIT.with(|pending| pending.set(None));
-}
-
-fn target_qubit_headroom(circ: &B) -> Option<usize> {
-    std::env::var("TLM_TARGET_Q")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .map(|target| target.saturating_sub(circ.active_qubits as usize))
-}
-
 fn next_gcd_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX)) }
-fn next_cout_k() -> usize {
-    let base = SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX));
-    let fit = fit_schedule_value(
-        base,
-        next_call_index(&COUT_CALL_INDEX),
-        "TLM_COUT_K_DELTA",
-        "TLM_COUT_K_CALL_DELTAS",
-        "TLM_COUT_K_CALL_OVERRIDES",
-    );
-    PENDING_COUT_FIT.with(|pending| {
-        debug_assert!(pending.get().is_none(), "previous COUT schedule call was not consumed");
-        pending.set(Some(fit));
-    });
-    fit.selected
-}
-fn next_fold() -> i32 {
-    SCHED.with(|s| {
-        let v = step(&mut s.borrow_mut().fold, i32::MAX);
-        let d = env_delta("TLM_FOLD_DELTA") as i32;
-        if v == i32::MAX || v < 0 || d == 0 {
-            v
-        } else {
-            v.saturating_sub(d)
-        }
-    })
-}
+fn next_cout_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX)) }
+fn next_fold() -> i32 { SCHED.with(|s| step(&mut s.borrow_mut().fold, i32::MAX)) }
 fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255)) }
 fn next_cmp_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX)) }
-fn next_ffg() -> usize { SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().ffg, usize::MAX), "TLM_FFG_DELTA")) }
-fn next_hyb_v_fit() -> ScheduleFit {
-    let base = SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX));
-    fit_schedule_value(
-        base,
-        next_call_index(&HYB_CALL_INDEX),
-        "TLM_HYB_V_DELTA",
-        "TLM_HYB_V_CALL_DELTAS",
-        "TLM_HYB_V_CALL_OVERRIDES",
-    )
-}
-
-fn take_cout_fit(selected: usize) -> ScheduleFit {
-    PENDING_COUT_FIT.with(|pending| {
-        pending.take().unwrap_or_else(|| {
-            fit_schedule_value(
-                selected,
-                next_call_index(&COUT_CALL_INDEX),
-                "TLM_COUT_K_DELTA",
-                "TLM_COUT_K_CALL_DELTAS",
-                "TLM_COUT_K_CALL_OVERRIDES",
-            )
-        })
-    })
-}
+fn next_ffg() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().ffg, usize::MAX)) }
+fn next_hyb_v() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX)) }
 fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
 
 /// Load the product-min jump schedule onto the thread-local cursors.
 fn load_schedule() {
-    reset_schedule_fit_call_indices();
-    arith::reset_ffg_call_index();
-    fused::reset_fold_call_index();
     SCHED.with(|s| {
         let mut s = s.borrow_mut();
         *s = Sched::default();
@@ -396,33 +243,5 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         }
     }
 
-    if std::env::var("TRACE_TLM_PROFILE").is_ok() {
-        circ.close_phase_active_region();
-        eprintln!(
-            "TLM_PROFILE peak_qubits={} peak_phase={} peak_ops_idx={} emitted_ops={}",
-            circ.peak_qubits,
-            circ.peak_phase,
-            circ.peak_ops_idx,
-            circ.current_ops_len(),
-        );
-        let mut phases: Vec<_> = circ.phase_active_max.iter().collect();
-        phases.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
-        for (phase, active) in phases.into_iter().take(24) {
-            eprintln!("TLM_PHASE active_max={active} phase={phase}");
-        }
-    }
-
-    let ops = std::mem::take(&mut circ.ops);
-
-    // Sound classical constant-propagation peephole: drop CCX with a provably
-    // |0> quantum control (no-op but still scored) and fold CCX with a provably
-    // |1> control to CX/X. reg0 (x2_init) and reg1 (y2) hold per-shot input data
-    // -> seeded Unknown; every other qubit id is a |0> ancilla. Can be disabled
-    // with CONSTPROP_DISABLE=1.
-    if std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
-        return ops;
-    }
-    let mut input_qubits = x2_init.clone();
-    input_qubits.extend_from_slice(&y2);
-    constprop::run(ops, &input_qubits)
+    std::mem::take(&mut circ.ops)
 }

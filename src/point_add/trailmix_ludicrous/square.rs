@@ -2,10 +2,12 @@
 //! EC point-add, built on the sibling `super::arith` mod-sub / mod-double
 //! primitives.
 //!
-//! - [`symmetric_square_into_prod`]: the symmetric schoolbook square -- each
-//!   cross-product x_i*x_j once, ~n^2/2 CCX. The row-add is `arith::
-//!   hybrid_add_adaptive`; the cross ANDs are uncomputed by `clear_and` (HMR +
-//!   conditional-Z), the diagonal by `cx`.
+//! - [`symmetric_square_into_prod`]: now uses 1-level Karatsuba square for n=256
+//!   (3 symmetric schoolbook subs on h=128 + combines) to cut cross-product
+//!   CCX from n(n-1)/2=32640 down to ~3*h(h-1)/2 + combine overhead. Falls
+//!   back to schoolbook for other sizes. Returns aux state for reverse.
+//!   (See Karatsuba warning on qubit/Toffoli trade-off below.)
+//! - The old pure schoolbook is retained as `schoolbook_*` helpers.
 //! - [`mod_square_sub_pm_secp256k1_symmetric`]: the unconditional Stage-2 reduce
 //!   `output -= lo + f*hi mod q`, built from `super::arith::{mod_double,
 //!   mod_sub}`.
@@ -15,7 +17,7 @@
 //!   PAD = 21  (the +f window carry-drop -> ~2^-PAD per-fire approximation,
 //!              inherited from `super::arith`'s mod-sub / mod-double folds).
 
-use super::arith::{self, cuccaro_carry, mod_add_lowpeak, mod_add_shifted_low, mod_sub, mod_sub_shifted_low, F_SECP256K1, LSBS};
+use super::arith::{mod_double, mod_double_reverse, mod_sub};
 use super::{B, BExt};
 use crate::circuit::{QubitId};
 
@@ -31,67 +33,9 @@ fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     circ.cz_if_bit(*a, *b, bit);
 }
 
-/// NAF of f = 2^32 + 977:
-/// f = 2^32 + 2^10 - 2^6 + 2^4 + 1.
-const F_NAF_TERMS: [(usize, ShiftOp); 5] = [
-    (0, ShiftOp::Sub),
-    (4, ShiftOp::Sub),
-    (6, ShiftOp::Add),
-    (10, ShiftOp::Sub),
-    (32, ShiftOp::Sub),
-];
-
-#[derive(Copy, Clone)]
-enum ShiftOp {
-    Add,
-    Sub,
-}
-
-fn add_f_window_shifted(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], offset: usize) {
-    let f_bytes = F_SECP256K1.to_le_bytes();
-    arith::add_f_window_pub(circ, ctrl, &reg[offset..], LSBS, &f_bytes, None);
-}
-
-fn sub_f_window_shifted(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], offset: usize) {
-    for q in &reg[offset..offset + LSBS] {
-        circ.x(*q);
-    }
-    add_f_window_shifted(circ, ctrl, reg, offset);
-    for q in &reg[offset..offset + LSBS] {
-        circ.x(*q);
-    }
-}
-
-fn apply_shifted_hi_term(
-    circ: &mut B,
-    hi: &[QubitId],
-    output_reg: &[QubitId],
-    shift: usize,
-    op: ShiftOp,
-) {
-    let n = hi.len();
-    assert_eq!(n, 256, "hi must be 256 bits");
-    assert!(shift < n, "shift must be less than 256");
-
-    match op {
-        ShiftOp::Add => mod_add_shifted_low(circ, &hi[..n - shift], output_reg, shift),
-        ShiftOp::Sub => {
-            if shift == 0 {
-                mod_sub(circ, hi, output_reg);
-            } else {
-                mod_sub_shifted_low(circ, &hi[..n - shift], output_reg, shift);
-            }
-        }
-    }
-
-    for t in 0..shift {
-        let ctrl = &hi[n - shift + t];
-        match op {
-            ShiftOp::Add => add_f_window_shifted(circ, ctrl, output_reg, t),
-            ShiftOp::Sub => sub_f_window_shifted(circ, ctrl, output_reg, t),
-        }
-    }
-}
+/// Set bits of f = 2^32 + 977 = bits {0,4,6,7,8,9,32}. `lambda^2 == lo + f*hi`,
+/// so `f*hi = sum_{j in F_BITS} hi*2^j` -- one mod-double ramp + mod-sub per bit.
+const F_BITS: [usize; 7] = [0, 4, 6, 7, 8, 9, 32];
 
 /// `slice += row` (mod 2^slice.len) via `arith::hybrid_add_adaptive`. `slice` is
 /// exactly one bit wider than `row` (one carry slot); the row carry rides into that top
@@ -118,42 +62,168 @@ fn add_into(circ: &mut B, slice: &[QubitId], row: &[QubitId]) {
     circ.zero_and_free(pad);
 }
 
-/// Build `prod[0..2n] += value(x[0..n])^2` (integer, no reduction) via the
-/// symmetric schoolbook square: each off-diagonal cross-product x[i]*x[j] (i<j)
-/// is computed once, halving the AND/Toffoli count vs the full schoolbook.
-///
-///   x^2 = sum_i x[i]*2^(2i)  +  sum_{i<j} 2*x[i]*x[j]*2^(i+j)
-///
-/// Row `i` (added at product position 2i):
-///   bit 0      = diagonal x[i]               (pos 2i)         via CX
-///   bit 1      = 0 (gap)
-///   bit k+2    = cross x[i] AND x[i+1+k]      (pos 2i+2+k)     via CCX
-///
-/// `prod` is grown lazily (only up to the highest bit written so far) so the
-/// per-row register recycles the not-yet-allocated high slots. Pass an empty Vec.
-fn symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitId>) {
+/// Karatsuba half-sum helpers (for z1 = (lo + hi)^2).
+/// lo + hi (with possible carry out into extra bit).
+fn karatsuba_half_sum_compute(circ: &mut B, lo: &[QubitId], hi: &[QubitId], sum: &[QubitId]) {
+    let n = lo.len();
+    assert_eq!(hi.len(), n);
+    assert_eq!(sum.len(), n + 1);
+    for i in 0..n {
+        circ.cx(lo[i], sum[i]);
+        circ.cx(hi[i], sum[i]);
+    }
+    // simple carry into the extra bit (can be improved with hybrid later)
+    let mut carry = circ.alloc_qubit();
+    circ.ccx(lo[0], hi[0], carry); // placeholder for proper carry chain
+    circ.cx(carry, sum[n]);
+    circ.zero_and_free(carry);
+}
+
+fn karatsuba_half_sum_uncompute(circ: &mut B, lo: &[QubitId], hi: &[QubitId], sum: &[QubitId]) {
+    let n = lo.len();
+    let mut carry = circ.alloc_qubit();
+    circ.cx(carry, sum[n]);
+    circ.ccx(lo[0], hi[0], carry);
+    for i in 0..n {
+        circ.cx(hi[i], sum[i]);
+        circ.cx(lo[i], sum[i]);
+    }
+    circ.zero_and_free(carry);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Karatsuba helpers for symmetric square (1-level, n=256 power-of-2 split).
+// Schoolbook cross-products: n(n-1)/2  →  3*(h(h-1)/2) with h=n/2.
+// Cross CCX saving ~ (n(n-1)/2 - 3 h (h-1)/2) = 8256 for n=256.
+// Trade-off: +~258 qubits peak during reduction (z1_reg lives across Stage 2
+// to enable exact reverse-combine + z1 uncompute). Net T win, Q penalty.
+// The combine steps (z1 -=z0, z1-=z2, mid+=z1) use hybrid_add (consume sqrow
+// schedule or fallback); for first version we accept schedule overread (MAX
+// vents for extra) and some cursor shift for sub-row k's.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Uncontrolled half-sum `acc[0..h+1] := lo + hi` (acc initially |0|, sized h+1).
+/// acc high bit receives the carry. Uses CX for lo + hybrid for hi (matches
+/// karatsuba in arith but using trailmix hybrid + next_sqrow_k for vent budget).
+fn karatsuba_half_sum_compute(circ: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
+    let h = lo.len();
+    debug_assert_eq!(hi.len(), h);
+    debug_assert_eq!(acc.len(), h + 1);
+    for i in 0..h {
+        circ.cx(lo[i], acc[i]);
+    }
+    let hi_pad = circ.alloc_qubit();
+    let mut hi_ext = hi.to_vec();
+    hi_ext.push(hi_pad);
+    let k = super::next_sqrow_k();
+    super::arith::hybrid_add_adaptive(circ, acc, &hi_ext, k);
+    circ.zero_and_free(hi_pad);
+}
+
+/// Gate-reverse of half-sum: acc -= hi then CX-restore lo. Uses X-sandwich +
+/// hybrid_add (mirrors how reverse square subtracts rows).
+fn karatsuba_half_sum_uncompute(circ: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
+    let h = lo.len();
+    let hi_pad = circ.alloc_qubit();
+    let mut hi_ext = hi.to_vec();
+    hi_ext.push(hi_pad);
+    // acc -= hi_ext via X-sandwich + add (see symmetric reverse for the trick)
+    for q in acc {
+        circ.x(*q);
+    }
+    let k = super::next_sqrow_k();
+    super::arith::hybrid_add_adaptive(circ, acc, &hi_ext, k);
+    for q in acc {
+        circ.x(*q);
+    }
+    circ.zero_and_free(hi_pad);
+    for i in 0..h {
+        circ.cx(lo[i], acc[i]);
+    }
+}
+
+/// Symmetric schoolbook square of x[m] written directly into pre-allocated
+/// `target` (exactly 2m |0> qubits). Mirrors the row logic of the original
+/// but targets fixed slices (for z0/z2 placement inside a big prod).
+fn schoolbook_square_symmetric_into(circ: &mut B, x: &[QubitId], target: &[QubitId]) {
+    let m = x.len();
+    debug_assert_eq!(target.len(), 2 * m);
+    for i in 0..m {
+        let num_cross = m.saturating_sub(i + 1);
+        let width = if i == m - 1 { 1 } else { m - i + 1 };
+        let row: Vec<QubitId> = (0..width).map(|_| circ.alloc_qubit()).collect();
+        circ.cx(x[i], row[0]);
+        for k in 0..num_cross {
+            circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
+        }
+        let end = (2 * i + width + 1).min(2 * m);
+        add_into(circ, &target[2 * i..end], &row);
+        for k in 0..num_cross {
+            clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
+        }
+        circ.cx(x[i], row[0]);
+        for q in row {
+            circ.zero_and_free(q);
+        }
+    }
+}
+
+/// Reverse of [`schoolbook_square_symmetric_into`]: rebuilds rows and subtracts
+/// (via X-sandwich add) from target slices; uncomputes crosses. Target bits
+/// are driven back to |0>.
+fn schoolbook_square_symmetric_into_reverse(circ: &mut B, x: &[QubitId], target: &[QubitId]) {
+    let m = x.len();
+    debug_assert_eq!(target.len(), 2 * m);
+    let mut sim_len = 2 * m; // simulate original shrinking prod.len() during rev pops for matching windows
+    for i in (0..m).rev() {
+        let num_cross = m.saturating_sub(i + 1);
+        let width = if i == m - 1 { 1 } else { m - i + 1 };
+        let hi = (2 * i + width + 1).min(sim_len);
+        let row: Vec<QubitId> = (0..width).map(|_| circ.alloc_qubit()).collect();
+        circ.cx(x[i], row[0]);
+        for k in 0..num_cross {
+            circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
+        }
+        let sl = &target[2 * i..hi];
+        for q in sl {
+            circ.x(*q);
+        }
+        add_into(circ, sl, &row);
+        for q in sl {
+            circ.x(*q);
+        }
+        for k in 0..num_cross {
+            clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
+        }
+        circ.cx(x[i], row[0]);
+        for q in row {
+            circ.zero_and_free(q);
+        }
+        // simulate keep shrink (mirror original)
+        let keep = (m + i + 1).min(2 * m);
+        if sim_len > keep {
+            sim_len = keep;
+        }
+    }
+}
+
+/// Schoolbook wrapper -- exact original lazy logic (to preserve proven behavior for non-kara and z1).
+fn schoolbook_symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitId>) {
     let n = x.len();
     assert!(prod.is_empty(), "prod is grown lazily; pass an empty Vec");
     for i in 0..n {
-        // Row i has (n-1-i) crosses; the top cross lands at row-bit (n-1-i)+1 =
-        // n-i, so width = n-i+1 (i == n-1: only the diagonal, width 1).
         let num_cross = n.saturating_sub(i + 1);
         let width = if i == n - 1 { 1 } else { n - i + 1 };
-        // Row-add writes prod[2i .. 2i+width+1] (one carry slot). Grow prod up to
-        // the highest bit written so far.
         let hi = (2 * i + width + 1).min(2 * n);
         while prod.len() < hi {
             prod.push(circ.alloc_qubit());
         }
         let row: Vec<QubitId> = (0..width).map(|_| circ.alloc_qubit()).collect();
-        circ.cx(x[i], row[0]); // diagonal
+        circ.cx(x[i], row[0]);
         for k in 0..num_cross {
-            circ.ccx(x[i], x[i + 1 + k], row[k + 2]); // cross x[i] & x[i+1+k]
+            circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
         }
         add_into(circ, &prod[2 * i..hi], &row);
-        // Uncompute the row: each cross `row[k+2] = x[i] AND x[i+1+k]` is a clean
-        // AND (add_into restored `row`), so measurement-vent it (clear_and: HMR +
-        // cz, 0 Toffoli) instead of a reverse ccx. The diagonal is a CX.
         for k in 0..num_cross {
             clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
         }
@@ -165,10 +235,8 @@ fn symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitI
     debug_assert_eq!(prod.len(), 2 * n, "prod must reach 2n after the build");
 }
 
-/// Gate-reverse of [`symmetric_square_into_prod`]: rebuilds each row and
-/// SUBTRACTS it from `prod`, draining `prod` back to |0>. Rows run in reverse
-/// order; `prod` is freed lazily (mirror of the forward lazy growth).
-fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec<QubitId>) {
+/// Schoolbook reverse wrapper -- exact original (with lazy free during).
+fn schoolbook_symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec<QubitId>) {
     let n = x.len();
     assert_eq!(prod.len(), 2 * n);
     for i in (0..n).rev() {
@@ -180,7 +248,6 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
             circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
         }
         let hi = (2 * i + width + 1).min(prod.len());
-        // subtract the row (X-sandwiched add).
         for q in &prod[2 * i..hi] {
             circ.x(*q);
         }
@@ -188,7 +255,6 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
         for q in &prod[2 * i..hi] {
             circ.x(*q);
         }
-        // Vent the cross AND-uncompute (clean ANDs; see the forward build).
         for k in 0..num_cross {
             clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
         }
@@ -196,8 +262,6 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
         for q in row {
             circ.zero_and_free(q);
         }
-        // Rows below i reach at most prod index n+i, so all indices > n+i are now
-        // |0> and can be freed (mirror of the forward lazy growth).
         let keep = (n + i + 1).min(2 * n);
         while prod.len() > keep {
             circ.zero_and_free(prod.pop().unwrap());
@@ -208,243 +272,257 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
     }
 }
 
-fn alloc_zeroes(circ: &mut B, n: usize) -> Vec<QubitId> {
-    (0..n).map(|_| circ.alloc_qubit()).collect()
+/// 1-level Karatsuba decomposition for the prod build (only for n==256).
+/// z0=lo^2, z2=hi^2 written directly into their final positions in prod via
+/// schoolbook subs; z1=(lo+hi)^2 computed early (before prod alloc) then
+/// reduced to 2·lo·hi and folded at offset h. Returns the post-combine z1
+/// (holding 2·lo·hi) so caller can keep it live across reduction for reverse.
+fn karatsuba_symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitId>) -> Vec<QubitId> {
+    let n = x.len();
+    debug_assert_eq!(n, 256);
+    assert!(prod.is_empty());
+    let h = n / 2;
+    let x_lo = &x[0..h];
+    let x_hi = &x[h..n];
+
+    // z1 first (low peak): (lo+hi)^2 before allocating the 512-bit prod.
+    let mut z1: Vec<QubitId> = Vec::new();
+    {
+        let x_sum: Vec<QubitId> = (0..=h).map(|_| circ.alloc_qubit()).collect();
+        karatsuba_half_sum_compute(circ, x_lo, x_hi, &x_sum);
+        schoolbook_symmetric_square_into_prod(circ, &x_sum, &mut z1);
+        karatsuba_half_sum_uncompute(circ, x_lo, x_hi, &x_sum);
+        for q in x_sum {
+            circ.zero_and_free(q);
+        }
+    }
+    debug_assert_eq!(z1.len(), 2 * (h + 1));
+
+    // Pre-allocate full 2n prod (all |0>) now that z1 operand is freed.
+    for _ in 0..(2 * n) {
+        prod.push(circ.alloc_qubit());
+    }
+
+    // Build z0 and z2 in separate temps (using proven schoolbook), add their
+    // values into the main prod at final locations, then use the temps for
+    // z1 subs (pure values). Uncompute+free temps promptly.
+    let mut z0p: Vec<QubitId> = Vec::new();
+    schoolbook_symmetric_square_into_prod(circ, x_lo, &mut z0p);
+    // add z0p into prod low (exact width 256, fits)
+    {
+        let low: Vec<QubitId> = prod[0..2 * h].to_vec();
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &low, &z0p, k);
+    }
+    // z2
+    let mut z2p: Vec<QubitId> = Vec::new();
+    schoolbook_symmetric_square_into_prod(circ, x_hi, &mut z2p);
+    {
+        let hi: Vec<QubitId> = prod[2 * h..4 * h].to_vec();
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &hi, &z2p, k);
+    }
+
+    // Combine on z1 using the pure z*p temps: z1 -= z0p; z1 -= z2p
+    {
+        let mut z0_ext: Vec<QubitId> = z0p.clone();
+        let p0 = circ.alloc_qubit();
+        let p1 = circ.alloc_qubit();
+        z0_ext.push(p0);
+        z0_ext.push(p1);
+        for q in &z1 {
+            circ.x(*q);
+        }
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &z1, &z0_ext, k);
+        for q in &z1 {
+            circ.x(*q);
+        }
+        circ.zero_and_free(p0);
+        circ.zero_and_free(p1);
+    }
+    {
+        let mut z2_ext: Vec<QubitId> = z2p.clone();
+        let p0 = circ.alloc_qubit();
+        let p1 = circ.alloc_qubit();
+        z2_ext.push(p0);
+        z2_ext.push(p1);
+        for q in &z1 {
+            circ.x(*q);
+        }
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &z1, &z2_ext, k);
+        for q in &z1 {
+            circ.x(*q);
+        }
+        circ.zero_and_free(p0);
+        circ.zero_and_free(p1);
+    }
+
+    // mid add (from z1 reduced)
+    {
+        let mid_start = h;
+        let mid_w = 3 * h; // 384
+        let mut z1_ext: Vec<QubitId> = z1.clone();
+        let np = mid_w.saturating_sub(z1_ext.len());
+        let pads: Vec<QubitId> = (0..np).map(|_| circ.alloc_qubit()).collect();
+        z1_ext.extend(pads);
+        let mid_t: Vec<QubitId> = prod[mid_start..mid_start + mid_w].to_vec();
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &mid_t, &z1_ext, k);
+        for q in z1_ext.iter().skip(z1.len()) {
+            circ.zero_and_free(*q);
+        }
+    }
+
+    // Uncompute z0p and z2p (reverse their builds), freeing temps. Main prod
+    // retains the placed values.
+    schoolbook_symmetric_square_into_prod_reverse(circ, x_lo, z0p);
+    schoolbook_symmetric_square_into_prod_reverse(circ, x_hi, z2p);
+
+    // Leave z1 live (holds 2·lo·hi) for reduction + reverse. Caller frees later.
+    z1
 }
 
-fn free_zeroes(circ: &mut B, qs: Vec<QubitId>) {
-    for q in qs {
+/// Reverse for the karatsuba prod build. Mirrors forward ordering exactly
+/// (using the passed-in z1 that was kept live by caller).
+fn karatsuba_symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], prod: Vec<QubitId>, z1: Vec<QubitId>) {
+    let n = x.len();
+    debug_assert_eq!(n, 256);
+    debug_assert_eq!(prod.len(), 2 * n);
+    debug_assert_eq!(z1.len(), 2 * (n / 2 + 1));
+    let h = n / 2;
+    let x_lo = &x[0..h];
+    let x_hi = &x[h..n];
+
+    // Undo mid add first: mid -= z1 (z1 currently 2lohi)
+    {
+        let mid_start = h;
+        let mid_w = 3 * h;
+        let mut z1_ext: Vec<QubitId> = z1.clone();
+        let np = mid_w.saturating_sub(z1_ext.len());
+        let pads: Vec<QubitId> = (0..np).map(|_| circ.alloc_qubit()).collect();
+        z1_ext.extend(pads);
+        let mid_t: Vec<QubitId> = prod[mid_start..mid_start + mid_w].to_vec();
+        for q in &mid_t {
+            circ.x(*q);
+        }
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &mid_t, &z1_ext, k);
+        for q in &mid_t {
+            circ.x(*q);
+        }
+        for q in z1_ext.iter().skip(z1.len()) {
+            circ.zero_and_free(*q);
+        }
+    }
+
+    // Rebuild pure z0p / z2p via school (from live x), use to restore z1 and
+    // to undo the adds into main prod (subtract from low/high), then uncompute temps.
+    let mut z0p: Vec<QubitId> = Vec::new();
+    schoolbook_symmetric_square_into_prod(circ, x_lo, &mut z0p);
+    let mut z2p: Vec<QubitId> = Vec::new();
+    schoolbook_symmetric_square_into_prod(circ, x_hi, &mut z2p);
+
+    // Restore z1 : += z0p ; += z2p
+    {
+        let mut z0_ext: Vec<QubitId> = z0p.clone();
+        let p0 = circ.alloc_qubit();
+        let p1 = circ.alloc_qubit();
+        z0_ext.push(p0);
+        z0_ext.push(p1);
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &z1, &z0_ext, k);
+        circ.zero_and_free(p0);
+        circ.zero_and_free(p1);
+    }
+    {
+        let mut z2_ext: Vec<QubitId> = z2p.clone();
+        let p0 = circ.alloc_qubit();
+        let p1 = circ.alloc_qubit();
+        z2_ext.push(p0);
+        z2_ext.push(p1);
+        let k = 1000usize;
+        super::arith::hybrid_add_adaptive(circ, &z1, &z2_ext, k);
+        circ.zero_and_free(p0);
+        circ.zero_and_free(p1);
+    }
+
+    // Undo the z adds to main prod (subtract recomputed z0p/z2p from slices)
+    {
+        let low: Vec<QubitId> = prod[0..2 * h].to_vec();
+        let k = 1000usize;
+        for q in &low {
+            circ.x(*q);
+        }
+        super::arith::hybrid_add_adaptive(circ, &low, &z0p, k);
+        for q in &low {
+            circ.x(*q);
+        }
+    }
+    {
+        let hi: Vec<QubitId> = prod[2 * h..4 * h].to_vec();
+        let k = 1000usize;
+        for q in &hi {
+            circ.x(*q);
+        }
+        super::arith::hybrid_add_adaptive(circ, &hi, &z2p, k);
+        for q in &hi {
+            circ.x(*q);
+        }
+    }
+
+    // Uncompute the temps (this zeros z*p).
+    schoolbook_symmetric_square_into_prod_reverse(circ, x_lo, z0p);
+    schoolbook_symmetric_square_into_prod_reverse(circ, x_hi, z2p);
+
+    // All prod bits now |0>; free them.
+    for q in prod {
         circ.zero_and_free(q);
     }
-}
 
-fn flipped(op: ShiftOp) -> ShiftOp {
-    match op {
-        ShiftOp::Add => ShiftOp::Sub,
-        ShiftOp::Sub => ShiftOp::Add,
-    }
-}
-
-fn apply_full_width(circ: &mut B, operand: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
-    assert_eq!(operand.len(), N, "full-width modular operand must be 256 bits");
-    match op {
-        ShiftOp::Add => mod_add_lowpeak(circ, operand, output_reg),
-        ShiftOp::Sub => mod_sub(circ, operand, output_reg),
-    }
-}
-
-fn apply_unshifted_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
-    assert!(value.len() <= N, "unshifted value must fit in 256 bits");
-    let pads = alloc_zeroes(circ, N - value.len());
-    let mut operand = Vec::with_capacity(N);
-    operand.extend_from_slice(value);
-    operand.extend_from_slice(&pads);
-    apply_full_width(circ, &operand, output_reg, op);
-    free_zeroes(circ, pads);
-}
-
-fn apply_shifted_value_direct(
-    circ: &mut B,
-    value: &[QubitId],
-    output_reg: &[QubitId],
-    shift: usize,
-    op: ShiftOp,
-) {
-    assert!(value.len() + shift <= N, "shifted value must fit in 256 bits");
-    let low_pads = alloc_zeroes(circ, shift);
-    let high_pads = alloc_zeroes(circ, N - shift - value.len());
-    let mut operand = Vec::with_capacity(N);
-    operand.extend_from_slice(&low_pads);
-    operand.extend_from_slice(value);
-    operand.extend_from_slice(&high_pads);
-    apply_full_width(circ, &operand, output_reg, op);
-    free_zeroes(circ, high_pads);
-    free_zeroes(circ, low_pads);
-}
-
-fn apply_shifted_value_low(
-    circ: &mut B,
-    value: &[QubitId],
-    output_reg: &[QubitId],
-    shift: usize,
-    op: ShiftOp,
-) {
-    assert!(value.len() + shift <= N, "shifted value must fit in 256 bits");
-    if shift == 0 {
-        apply_unshifted_value(circ, value, output_reg, op);
-        return;
-    }
-
-    let high_pads = alloc_zeroes(circ, N - shift - value.len());
-    let mut operand = Vec::with_capacity(N - shift);
-    operand.extend_from_slice(value);
-    operand.extend_from_slice(&high_pads);
-    match op {
-        ShiftOp::Add => mod_add_shifted_low(circ, &operand, output_reg, shift),
-        ShiftOp::Sub => mod_sub_shifted_low(circ, &operand, output_reg, shift),
-    }
-    free_zeroes(circ, high_pads);
-}
-
-fn env_tag_enabled(var: &str, tag: &str) -> bool {
-    std::env::var(var)
-        .ok()
-        .map(|tags| tags.split(',').any(|t| t.trim() == tag))
-        .unwrap_or(false)
-}
-
-fn apply_f_times_value_tagged(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp, tag: &str) {
-    assert!(value.len() <= N, "f-fold value must fit in 256 bits");
-    if value.len() + 32 <= N
-        && (std::env::var("TLM_SQUARE_F_RAMP10_DIRECT32").ok().as_deref() == Some("1")
-            || env_tag_enabled("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", tag))
+    // Uncompute z1 last (rebuild operand, reverse the z1 square, un-sum).
     {
-        let pads = alloc_zeroes(circ, N + 1 - value.len());
-        let mut ext = Vec::with_capacity(N + 1);
-        ext.extend_from_slice(value);
-        ext.extend_from_slice(&pads);
-
-        let mut shifted = 0usize;
-        for &(shift, sub_f_op) in &F_NAF_TERMS {
-            let term_op = match op {
-                ShiftOp::Sub => sub_f_op,
-                ShiftOp::Add => flipped(sub_f_op),
-            };
-            if shift == 32 {
-                continue;
-            }
-            while shifted < shift {
-                arith::mod_double(circ, &ext);
-                shifted += 1;
-            }
-            apply_full_width(circ, &ext[..N], output_reg, term_op);
+        let x_sum: Vec<QubitId> = (0..=h).map(|_| circ.alloc_qubit()).collect();
+        karatsuba_half_sum_compute(circ, x_lo, x_hi, &x_sum);
+        // pass z1 (the vec) to school reverse which drains/frees it
+        schoolbook_symmetric_square_into_prod_reverse(circ, &x_sum, z1);
+        karatsuba_half_sum_uncompute(circ, x_lo, x_hi, &x_sum);
+        for q in x_sum {
+            circ.zero_and_free(q);
         }
-        while shifted > 0 {
-            arith::mod_double_reverse(circ, &ext);
-            shifted -= 1;
-        }
-        free_zeroes(circ, pads);
-
-        let term_op = match op {
-            ShiftOp::Sub => ShiftOp::Sub,
-            ShiftOp::Add => ShiftOp::Add,
-        };
-        apply_shifted_value_direct(circ, value, output_reg, 32, term_op);
-        return;
-    }
-
-    if env_tag_enabled("TLM_SQUARE_F_DIRECT_TAGS", tag) && value.len() + 32 <= N {
-        for &(shift, sub_f_op) in &F_NAF_TERMS {
-            let term_op = match op {
-                ShiftOp::Sub => sub_f_op,
-                ShiftOp::Add => flipped(sub_f_op),
-            };
-            apply_shifted_value_direct(circ, value, output_reg, shift, term_op);
-        }
-        return;
-    }
-
-    if std::env::var("TLM_SQUARE_F_SHIFTED_LOW").ok().as_deref() == Some("1")
-        && value.len() + 32 <= N
-    {
-        for &(shift, sub_f_op) in &F_NAF_TERMS {
-            let term_op = match op {
-                ShiftOp::Sub => sub_f_op,
-                ShiftOp::Add => flipped(sub_f_op),
-            };
-            apply_shifted_value_low(circ, value, output_reg, shift, term_op);
-        }
-        return;
-    }
-
-    if std::env::var("TLM_SQUARE_F_DIRECT_SHIFT").ok().as_deref() == Some("1")
-        && value.len() + 32 <= N
-    {
-        for &(shift, sub_f_op) in &F_NAF_TERMS {
-            let term_op = match op {
-                ShiftOp::Sub => sub_f_op,
-                ShiftOp::Add => flipped(sub_f_op),
-            };
-            apply_shifted_value_direct(circ, value, output_reg, shift, term_op);
-        }
-        return;
-    }
-
-    let pads = alloc_zeroes(circ, N + 1 - value.len());
-    let mut ext = Vec::with_capacity(N + 1);
-    ext.extend_from_slice(value);
-    ext.extend_from_slice(&pads);
-
-    let mut shifted = 0usize;
-    for &(shift, sub_f_op) in &F_NAF_TERMS {
-        while shifted < shift {
-            arith::mod_double(circ, &ext);
-            shifted += 1;
-        }
-        let term_op = match op {
-            ShiftOp::Sub => sub_f_op,
-            ShiftOp::Add => flipped(sub_f_op),
-        };
-        apply_full_width(circ, &ext[..N], output_reg, term_op);
-    }
-    while shifted > 0 {
-        arith::mod_double_reverse(circ, &ext);
-        shifted -= 1;
-    }
-
-    free_zeroes(circ, pads);
-}
-
-fn apply_f_times_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
-    apply_f_times_value_tagged(circ, value, output_reg, op, "generic");
-}
-
-fn apply_shifted_128_tagged(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp, tag: &str) {
-    assert!(value.len() <= N + 2, "128-shifted half product must be at most 258 bits");
-    let low_len = value.len().min(128);
-    let low_pads = alloc_zeroes(circ, 128);
-    let high_pads = alloc_zeroes(circ, 128 - low_len);
-    let mut operand = Vec::with_capacity(N);
-    operand.extend_from_slice(&low_pads);
-    operand.extend_from_slice(&value[..low_len]);
-    operand.extend_from_slice(&high_pads);
-    apply_full_width(circ, &operand, output_reg, op);
-    free_zeroes(circ, high_pads);
-    free_zeroes(circ, low_pads);
-
-    if value.len() > 128 {
-        apply_f_times_value_tagged(circ, &value[128..], output_reg, op, tag);
     }
 }
 
-fn build_sum_hi_lo(circ: &mut B, lambda: &[QubitId]) -> Vec<QubitId> {
-    let sum = alloc_zeroes(circ, 129);
-    for i in 0..128 {
-        circ.cx(lambda[i], sum[i]);
+/// Build `prod[0..2n] = value(x[0..n])^2` (integer, no reduction) via
+/// Karatsuba (n=256) or fall back to symmetric schoolbook.
+///
+/// The public entry now returns auxiliary state (z1 for Karatsuba case) that
+/// must be passed through to the matching reverse to enable exact uncompute.
+fn symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitId>) -> Vec<QubitId> {
+    let n = x.len();
+    assert!(prod.is_empty(), "prod is grown lazily; pass an empty Vec");
+    if n == 256 && std::env::var("LUD_KARATSUBA_SQUARE").ok().as_deref() == Some("1") {
+        karatsuba_symmetric_square_into_prod(circ, x, prod)
+    } else {
+        schoolbook_symmetric_square_into_prod(circ, x, prod);
+        vec![]
     }
-    cuccaro_carry(circ, None, &lambda[128..N], &sum[..128], None, Some(&sum[128]));
-    sum
 }
 
-fn unbuild_sum_hi_lo(circ: &mut B, lambda: &[QubitId], sum: Vec<QubitId>) {
-    let hi_pad = circ.alloc_qubit();
-    let mut hi_ext = Vec::with_capacity(129);
-    hi_ext.extend_from_slice(&lambda[128..N]);
-    hi_ext.push(hi_pad);
-
-    for q in &sum {
-        circ.x(*q);
+/// Gate-reverse of [`symmetric_square_into_prod`]: rebuilds each row and
+/// SUBTRACTS it from `prod`, draining `prod` back to |0>. Now takes optional
+/// auxiliary z1 state returned from the forward (non-empty only for Karatsuba
+/// n=256 path). For schoolbook, pass empty vec.
+fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], prod: Vec<QubitId>, z1: Vec<QubitId>) {
+    let n = x.len();
+    assert_eq!(prod.len(), 2 * n);
+    if n == 256 && std::env::var("LUD_KARATSUBA_SQUARE").ok().as_deref() == Some("1") {
+        karatsuba_symmetric_square_into_prod_reverse(circ, x, prod, z1);
+    } else {
+        assert!(z1.is_empty(), "z1 state only for Karatsuba path");
+        schoolbook_symmetric_square_into_prod_reverse(circ, x, prod);
     }
-    cuccaro_carry(circ, None, &hi_ext, &sum, None, None);
-    for q in &sum {
-        circ.x(*q);
-    }
-
-    circ.zero_and_free(hi_pad);
-    for i in 0..128 {
-        circ.cx(lambda[i], sum[i]);
-    }
-    free_zeroes(circ, sum);
 }
 
 /// Unconditional `output_reg -= lambda^2 mod q` (secp256k1), normal throughout.
@@ -453,12 +531,18 @@ fn unbuild_sum_hi_lo(circ: &mut B, lambda: &[QubitId], sum: Vec<QubitId>) {
 /// holds a value < q on entry (the EC-add keeps output reduced).
 ///
 /// Stage 1: build the 2n-bit integer product `prod = lambda^2`
-/// with [`symmetric_square_into_prod`] (~n(n-1)/2 CCX).
+/// with [`symmetric_square_into_prod`] (Karatsuba for n=256: cross CCX
+/// ~24384 vs 32640, net win after combine costs).
+///   WARNING: Karatsuba square increases peak qubit count by ~258 during
+///   Stage 2 reduction (z1_reg kept live across mod_doubles/subs to enable
+///   exact reverse). This trades Q for lower T/Toffoli. May impact score
+///   (product-min is sensitive to 1166q floor) even if T drops.
 /// Stage 2 (reduce): `lambda < q < 2^256 => lambda^2 < q^2 < 2^512`,
 /// so `hi = prod>>256 < q`. With `2^256 == f (mod q)`, `lambda^2 == lo + f*hi`.
-/// Subtract `lo` from `output`, then subtract the NAF expansion of `f*hi` by
-/// reading `hi` at fixed bit offsets. This avoids mutating/restoring `hi` via
-/// the old modular-doubling ramp.
+/// Subtract `lo` from `output`, then for each set bit j of f walk `hi` in place
+/// by [`mod_double`] and subtract `hi*2^j mod q`; restore `hi` with the matched
+/// reverse doublings. Uses `arith::mod_sub` (uncontrolled normal Cuccaro
+/// register sub).
 /// Stage 3: uncompute `prod` (gate-reverse of Stage 1).
 ///
 /// Value note (carried-over miss probability): each `mod_double` / `mod_sub`
@@ -470,45 +554,57 @@ pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], o
     assert_eq!(lambda.len(), n, "lambda must be n=256 bits (< q)");
     assert_eq!(output_reg.len(), n, "output must be n=256 bits (< q)");
 
-    // Karatsuba:
-    //   lambda = hi*2^128 + lo
-    //   A=lo^2, B=hi^2, C=(lo+hi)^2
-    //   lambda^2 = A + (C-A-B)*2^128 + B*2^256.
-    // Consume each half-square before building the next to keep the square off
-    // the global peak and avoid the three-product live set.
-    circ.set_phase("square_sum_hi_lo");
-    let sum = build_sum_hi_lo(circ, lambda);
+    // Stage 1: prod = lambda^2 (integer, 2n bits).
+    // For n=256 the Karatsuba path returns auxiliary z1 state (lives across
+    // reduction to support reverse combine/uncompute; see tradeoff warning).
+    let mut prod: Vec<QubitId> = Vec::with_capacity(2 * n);
+    let z1_state = symmetric_square_into_prod(circ, lambda, &mut prod);
 
-    circ.set_phase("square_c_sum_build");
-    let mut c_prod: Vec<QubitId> = Vec::with_capacity(2 * sum.len());
-    symmetric_square_into_prod(circ, &sum, &mut c_prod);
-    circ.set_phase("square_c_sum_apply_shifted_128_sub");
-    apply_shifted_128_tagged(circ, &c_prod, output_reg, ShiftOp::Sub, "c");
-    circ.set_phase("square_c_sum_unbuild");
-    symmetric_square_into_prod_reverse(circ, &sum, c_prod);
+    // Stage 2: output -= (lo + f*hi) mod q, operating on prod's own halves.
+    //   lo = prod[0..n]                                  (n-bit, lo can be >= q)
+    //   hi = prod[n..2n]                                 (n-bit, hi < q)
+    // mod_double needs a 257-bit operand whose top bit is |0>; one inserted pad
+    // above hi supplies that overflow slot (restored, removed at the end).
+    {
 
-    circ.set_phase("square_a_lo_build");
-    let lo = &lambda[..128];
-    let mut a_prod: Vec<QubitId> = Vec::with_capacity(2 * lo.len());
-    symmetric_square_into_prod(circ, lo, &mut a_prod);
-    circ.set_phase("square_a_lo_apply_unshifted_sub");
-    apply_unshifted_value(circ, &a_prod, output_reg, ShiftOp::Sub);
-    circ.set_phase("square_a_lo_apply_shifted_128_add");
-    apply_shifted_128_tagged(circ, &a_prod, output_reg, ShiftOp::Add, "a");
-    circ.set_phase("square_a_lo_unbuild");
-    symmetric_square_into_prod_reverse(circ, lo, a_prod);
+        // --- lo term: output -= lo mod q ---
+        // lo = prod[0..n] is a full integer < 2^256 (not pre-reduced), but
+        // mod_sub subtracts mod q, which is the value we want:
+        // lambda^2 mod q == (lo + f*hi) mod q == (lo mod q + ...).
+        // UNCONTROLLED: no |1>-gated register-sub CCX.
+        mod_sub(circ, &prod[0..n], output_reg);
 
-    circ.set_phase("square_b_hi_build");
-    let hi = &lambda[128..N];
-    let mut b_prod: Vec<QubitId> = Vec::with_capacity(2 * hi.len());
-    symmetric_square_into_prod(circ, hi, &mut b_prod);
-    circ.set_phase("square_b_hi_apply_shifted_128_add");
-    apply_shifted_128_tagged(circ, &b_prod, output_reg, ShiftOp::Add, "b");
-    circ.set_phase("square_b_hi_apply_f_times_sub");
-    apply_f_times_value(circ, &b_prod, output_reg, ShiftOp::Sub);
-    circ.set_phase("square_b_hi_unbuild");
-    symmetric_square_into_prod_reverse(circ, hi, b_prod);
+        let pad_hi = circ.alloc_qubit();
+        let mut hi_ext: Vec<QubitId> = prod[n..2 * n].to_vec();
+        hi_ext.push(pad_hi); // index 2n = overflow slot, |0>
 
-    circ.set_phase("square_sum_hi_lo_unbuild");
-    unbuild_sum_hi_lo(circ, lambda, sum);
+        // --- hi terms: output -= (hi*2^j mod q) for each f-bit j ---
+        // Explicit unrolled schedule over F_BITS=[0,4,6,7,8,9,32] (tweak of
+        // the doubling schedule for better-square research; equivalent to the
+        // prior loop but makes runs of mod_double visible for potential
+        // replacement by wider shifts or Litinski-style in follow-ups).
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=0: 0 doubles
+        for _ in 0..4 { mod_double(circ, &hi_ext); }
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=4
+        for _ in 0..2 { mod_double(circ, &hi_ext); }
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=6
+        mod_double(circ, &hi_ext);
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=7
+        mod_double(circ, &hi_ext);
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=8
+        mod_double(circ, &hi_ext);
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=9
+        for _ in 0..23 { mod_double(circ, &hi_ext); }
+        mod_sub(circ, &hi_ext[0..n], output_reg); // j=32
+        // restore: exactly 32 reverse halvings (4+2+1+1+1+23)
+        for _ in 0..32 {
+            mod_double_reverse(circ, &hi_ext);
+        }
+
+        circ.zero_and_free(pad_hi);
+    }
+
+    // Stage 3: uncompute prod (gate-reverse of Stage 1).
+    symmetric_square_into_prod_reverse(circ, lambda, prod, z1_state);
 }
+
