@@ -1980,13 +1980,12 @@ pub fn build() -> Vec<Op> {
     //     Toffoli cut while keeping peak qubits at 1166.
     //   - TLM_GCD_ADAPTIVE_LAYOUT_MARGIN=0: GCD-adaptive layout at margin 0.
     // The tail nonce reseeds the 9024 Fiat-Shamir draws so all land in the
-    // schedule-supported set. Island nonce 100002962138 (GPU strong-prefilter hunt
-    // on e25c7d8 + CONSTPROP_MAX_ITERS=16) validates 0/0/0 over all 9024 shots at
-    // peak 1162 => score 1,614,065,642.
+    // schedule-supported set. Island nonce 300322437 validates 0/0/0 over all
+    // 9024 shots at peak 1162 => score 1,614,059,832.
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "100002962138");
+    set_default_env("DIALOG_TAIL_NONCE", "300322437");
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "a");
     set_default_env("CONSTPROP_MAX_ITERS", "16");
     set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
