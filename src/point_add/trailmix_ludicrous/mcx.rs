@@ -284,3 +284,59 @@ pub fn mcx_clean_k(circ: &mut B, ctrls: &[&QubitId], target: &QubitId) {
         }
     }
 }
+
+/// Increment `a` modulo `2^a.len()` with the Khattar-Gidney prefix ladder.
+pub fn inc_khattar_gidney(circ: &mut B, a: &[QubitId]) {
+    let refs: Vec<&QubitId> = a.iter().collect();
+    inc_khattar_gidney_refs_inner(circ, &refs, false);
+}
+
+/// Controlled increment `a += ctrl (mod 2^a.len())`.
+pub fn cinc_khattar_gidney(circ: &mut B, a: &[QubitId], ctrl: &QubitId) {
+    if a.is_empty() {
+        return;
+    }
+    let mut combined: Vec<&QubitId> = Vec::with_capacity(a.len() + 1);
+    combined.push(ctrl);
+    combined.extend(a.iter());
+    inc_khattar_gidney_refs_inner(circ, &combined, true);
+}
+
+fn inc_khattar_gidney_refs_inner(circ: &mut B, a: &[&QubitId], skip_lsb_x: bool) {
+    let n = a.len();
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        if !skip_lsb_x {
+            circ.x(*a[0]);
+        }
+        return;
+    }
+
+    let anc_owned: Vec<QubitId> = (0..kg_prefix_ancilla_count(n - 1))
+        .map(|_| circ.alloc_qubit())
+        .collect();
+    let anc_refs: Vec<&QubitId> = anc_owned.iter().collect();
+    let layers = kg_get_layers_for_prefix_and(&a[..n - 1], &anc_refs);
+
+    for layer in &layers {
+        for &op in &layer.ops {
+            op.emit(circ);
+        }
+    }
+    for (i, layer) in layers.iter().enumerate().rev() {
+        if i < n && !(i == 0 && skip_lsb_x) {
+            kg_apply_prefix_controlled_x(circ, &layer.ctrls, a[i]);
+        }
+        for &op in layer.ops.iter().rev() {
+            op.emit(circ);
+        }
+    }
+
+    drop(layers);
+    drop(anc_refs);
+    for q in anc_owned {
+        circ.zero_and_free(q);
+    }
+}
