@@ -1976,7 +1976,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "200003194569");
+    set_default_env("DIALOG_TAIL_NONCE", "200007643711");
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
@@ -2019,9 +2019,9 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_PARK_EVEN_V0", "1");
     set_default_env("TLM_LOAN_EVEN_V0", "1");
     set_default_env("TLM_LOAN_GCD_Y0", "1");
-    set_default_env("TLM_HYB_V_DELTA", "2");
-    set_default_env("TLM_COUT_K_DELTA", "2");
-    set_default_env("TLM_FOLD_DELTA", "2");
+    set_default_env("TLM_HYB_V_DELTA", "3");
+    set_default_env("TLM_COUT_K_DELTA", "3");
+    set_default_env("TLM_FOLD_DELTA", "3");
     set_default_env("TLM_FFG_DELTA", "0");
     set_default_env("TLM_GCD_K_ADJUST_AFTER", "169");
     set_default_env("TLM_GCD_K_ADJUST_BEFORE", "196");
