@@ -18,7 +18,7 @@ pub const ITERS: usize = 258;
 /// `+f` pseudo-Mersenne / chunked-carry padding. A +f reduction carry that runs
 /// past the low `PAD + bitlen(f)` bits is dropped; per fire that happens with
 /// probability ~2^-PAD over a uniform mod-q operand.
-pub const PAD: usize = 21;
+pub const PAD: usize = 20;
 
 
 

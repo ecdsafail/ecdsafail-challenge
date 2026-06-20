@@ -32,7 +32,7 @@ pub const F_SECP256K1: u64 = (1u64 << 32) + 977;
 /// bitlen(f).
 pub const F_BITLEN: usize = 33;
 /// Profile padding.
-pub const PAD: usize = 21;
+pub const PAD: usize = 19;
 /// `+f` fold window width: carry beyond bit `LSBS-1` is dropped (~2^-PAD miss).
 pub const LSBS: usize = PAD + F_BITLEN; // 54
 /// Top-k less-than comparator width for the mod-add/sub overflow cleanup.
@@ -1341,4 +1341,3 @@ pub fn mod_double_reverse(circ: &mut B, a: &[QubitId]) {
 pub fn add_f_window_pub(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], g_sched: Option<usize>) {
     add_f_window(circ, ctrl, reg, lsbs, c, g_sched);
 }
-
