@@ -79,7 +79,7 @@ pub(crate) use arith::*;
 mod rounds;
 pub(crate) use rounds::*;
 
-mod trailmix_ludicrous;
+pub mod trailmix_ludicrous;
 mod single_ccx_fanout;
 
 thread_local! {
@@ -180,6 +180,13 @@ impl B {
         let mut b = Self::new();
         b.count_only = true;
         b
+    }
+    /// TEST-ONLY constructor + ops extractor (used by the classical-arith unit bin).
+    pub fn new_for_test() -> Self {
+        Self::new()
+    }
+    pub fn take_ops(&mut self) -> Vec<Op> {
+        std::mem::take(&mut self.ops)
     }
     fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
@@ -530,6 +537,50 @@ impl B {
     // Uncomputes `tgt = c1 AND c2` using HMR + phase feedback.
     // Cost: 0 Toffoli (1 HMR + 1 classically-conditioned CZ).
     // Precondition: tgt holds (c1 AND c2) computed by a prior CCX.
+
+    // Classical-bit (BitId) writes: ZERO Toffoli, ZERO Clifford in the scorer.
+    /// `dst := 0`.
+    fn bit_store0(&mut self, dst: BitId) {
+        let mut op = Op::empty();
+        op.kind = OperationType::BitStore0;
+        op.c_target = dst;
+        self.push_op(op);
+    }
+    /// `dst |= (condition stack AND)`; empty stack => `dst := 1`.
+    fn bit_store1(&mut self, dst: BitId) {
+        let mut op = Op::empty();
+        op.kind = OperationType::BitStore1;
+        op.c_target = dst;
+        self.push_op(op);
+    }
+    /// `dst ^= (condition stack AND)`; empty stack => `dst := !dst`.
+    fn bit_invert(&mut self, dst: BitId) {
+        let mut op = Op::empty();
+        op.kind = OperationType::BitInvert;
+        op.c_target = dst;
+        self.push_op(op);
+    }
+    /// `dst := a`.
+    fn bit_copy(&mut self, dst: BitId, a: BitId) {
+        self.bit_store0(dst);
+        self.push_condition(a);
+        self.bit_store1(dst);
+        self.pop_condition();
+    }
+    /// `dst ^= a`.
+    fn bit_xor_into(&mut self, dst: BitId, a: BitId) {
+        self.push_condition(a);
+        self.bit_invert(dst);
+        self.pop_condition();
+    }
+    /// `dst ^= (a AND b)`.
+    fn bit_and_xor_into(&mut self, dst: BitId, a: BitId, b: BitId) {
+        self.push_condition(a);
+        self.push_condition(b);
+        self.bit_invert(dst);
+        self.pop_condition();
+        self.pop_condition();
+    }
 }
 
 pub const N: usize = 256;
@@ -1976,28 +2027,15 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "100009961111");
+    set_default_env("DIALOG_TAIL_NONCE", "720008097505");
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
     set_default_env("TLM_SQUARE_F_SHIFTED_LOW", "1");
-    // Post-5f3a0e3 avg-Toffoli reductions (Codex): graduated final +f without
-    // materializing/erasing the dropped carry-out + skip the no-op first
-    // forward-apply cswap. Peak-neutral (1159), -580.9 avgT.
+    // post-1159 avgT stack (Codex): graduated final +f chunk w/o materializing the
+    // dropped carry-out (arith.rs) + skip the first forward-apply cswap (gcd.rs).
     set_default_env("TLM_GRAD_FINAL_NO_COUT", "1");
     set_default_env("TLM_APPLY_FWD_FIRST_CSWAP_SKIP", "1");
-    // WIN CANDIDATE (mine the inverse twin of the forward cswap-skip): skip the
-    // apply cswap on the last K GCD iters, BOTH apply directions. Each skipped
-    // cswap = ~256 executed Toffoli; the skip is value-exact except on inputs
-    // whose GCD has not converged by iter ITERS-K (rare) -> recovered by a
-    // DIALOG_TAIL_NONCE re-hunt (same mechanism as the forward skip above).
-    // Measured @ peak 1159 (avgT from results.tsv):
-    //   baseline (LASTK=0/fwd1+inv0): 1,378,635.6  (0/0/0)
-    //   K=2: 1,377,850 (-0.056%)  errs(random nonce)~ 18 cls / 8 phase / 0 anc
-    //   K=3: 1,377,350 (-0.093%)  errs~ 18-28 cls / 7-19 phase / 0 anc
-    // ANCILLA garbage is always 0 (clean skip); hunt target = 0 classical AND
-    // 0 phase. Override with TLM_APPLY_CSWAP_SKIP_LASTK={1,2,3} when hunting.
-    set_default_env("TLM_APPLY_CSWAP_SKIP_LASTK", "1");
     set_default_env("CONSTPROP_MAX_ITERS", "16");
     set_default_env("TLM_TARGET_Q", "1159");
     set_default_env("TLM_FOLD_RELEASE_CONTROLS", "1");

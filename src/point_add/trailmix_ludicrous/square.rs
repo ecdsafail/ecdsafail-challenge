@@ -370,6 +370,26 @@ fn apply_f_times_value_tagged(circ: &mut B, value: &[QubitId], output_reg: &[Qub
         return;
     }
 
+    // Shifted-low f-fold: instead of physically doubling `value` to each NAF
+    // shift (the old `mod_double` ramp: ~64 doublings of shift-shuffle overhead),
+    // read the 256-bit `value` register at each fixed bit offset and apply the
+    // explicit `+f`/`-f` overflow folds for the `shift` bits that wrap past bit
+    // 255. This is the same value-exact modular-shift technique already used by
+    // `apply_shifted_hi_term` / the shifted-low square route: each shifted term
+    // `±= (value << shift) mod q` is computed by `apply_shifted_hi_term`, which
+    // mirrors the mod_double ramp's per-term result gate-for-gate in value, while
+    // avoiding the doubling shuffle. Requires the full 256-bit register.
+    if value.len() == N {
+        for &(shift, sub_f_op) in &F_NAF_TERMS {
+            let term_op = match op {
+                ShiftOp::Sub => sub_f_op,
+                ShiftOp::Add => flipped(sub_f_op),
+            };
+            apply_shifted_hi_term(circ, value, output_reg, shift, term_op);
+        }
+        return;
+    }
+
     let pads = alloc_zeroes(circ, N + 1 - value.len());
     let mut ext = Vec::with_capacity(N + 1);
     ext.extend_from_slice(value);

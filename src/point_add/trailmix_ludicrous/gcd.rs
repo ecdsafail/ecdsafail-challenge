@@ -946,24 +946,6 @@ fn controlled_add_active(
 /// One forward apply step (the multiply body) at iter `i` with the symbol bits
 /// `(sub, swp, s2)` and the t1 prefix `t1`:
 ///   if sub: y += x mod q; if swp: swap(x,y); y *= 2 (shift1) ; if s2: y *= 2.
-/// Skip the apply cswap on the last K GCD iters (both apply directions): the
-/// converged GCD's swap decision is 0 there for all-but-rare inputs, so the
-/// cswap is a no-op (huntable: rare non-converged inputs break, recovered by the
-/// tail-nonce hunt -- same mechanism as the original forward last-1 skip).
-fn apply_cswap_skip_dir(i: usize, fwd: bool) -> bool {
-    // Direction-separable so the FRONTIER baseline (forward last-1 only) is
-    // reproducible: TLM_APPLY_CSWAP_SKIP_FWD default 1, _INV default 0.
-    if let Ok(g) = std::env::var("TLM_APPLY_CSWAP_SKIP_LASTK").and_then(|s| Ok(s)) {
-        if let Ok(k) = g.parse::<usize>() {
-            return k > 0 && i + k >= ITERS;
-        }
-    }
-    let var = if fwd { "TLM_APPLY_CSWAP_SKIP_FWD" } else { "TLM_APPLY_CSWAP_SKIP_INV" };
-    let k = std::env::var(var).ok().and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(if fwd { 1 } else { 0 });
-    k > 0 && i + k >= ITERS
-}
-
 fn apply_step_forward(
     circ: &mut B,
     i: usize,
@@ -994,7 +976,9 @@ fn apply_step_forward(
     });
     // 2) if swap: swap(x, y).
     circ.set_phase("tlm_apply_forward_swap");
-    if !apply_cswap_skip_dir(i, true) {
+    if !(std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP").ok().as_deref() == Some("1")
+        && i + 1 == ITERS)
+    {
         for j in 0..n {
             circ.cswap(*swp, x_reg[j], y_reg[j]);
         }
@@ -1035,14 +1019,10 @@ fn apply_step_reverse(
     } else {
         super::fused::fused_double_cdouble_reverse(circ, s2, y_reg);
     }
-    // inverse of 2): swap (involutory). Mirror of the forward apply's
-    // FIRST_CSWAP_SKIP: at the last GCD iter (i+1==ITERS) the converged-GCD swap
-    // decision is deterministically 0, so this cswap is a no-op -- skip it.
+    // inverse of 2): swap (involutory).
     circ.set_phase("tlm_apply_inverse_swap");
-    if !apply_cswap_skip_dir(i, false) {
-        for j in 0..n {
-            circ.cswap(*swp, x_reg[j], y_reg[j]);
-        }
+    for j in 0..n {
+        circ.cswap(*swp, x_reg[j], y_reg[j]);
     }
     // inverse of 1): y -= x mod q. The apply-path operands carry pseudo-Mersenne
     // representation drift, so the borrow clean uses the MBU form.
