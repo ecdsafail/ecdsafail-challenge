@@ -68,40 +68,24 @@ pub fn n3_for_iters(iters: usize) -> usize {
     iters / 3
 }
 
-fn env_i32(name: &str, default: i32) -> i32 {
-    std::env::var(name)
+fn maybe_adjust_late_gcd_k(i: usize, k: usize) -> usize {
+    let after = std::env::var("TLM_GCD_K_ADJUST_AFTER")
         .ok()
-        .and_then(|v| v.parse::<i32>().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    let before = std::env::var("TLM_GCD_K_ADJUST_BEFORE")
         .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
-}
-
-fn adjust_gcd_k(prefix: &str, i: usize, k: usize) -> usize {
-    if k == usize::MAX {
-        return k;
-    }
-    let adj = env_i32(&format!("{prefix}_ADJUST"), 0);
-    if adj == 0 {
-        return k;
-    }
-    let after = env_usize(&format!("{prefix}_ADJUST_AFTER"), 0);
-    let before = env_usize(&format!("{prefix}_ADJUST_BEFORE"), usize::MAX);
-    if i >= after && i < before {
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    let adj = std::env::var("TLM_GCD_K_ADJUST")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+    if i >= after && i < before && adj != 0 {
         (k as i32).saturating_add(adj).max(0) as usize
     } else {
         k
     }
-}
-
-fn maybe_adjust_gcd_k(i: usize, k: usize) -> usize {
-    let k = adjust_gcd_k("TLM_GCD_K", i, k);
-    adjust_gcd_k("TLM_GCD_K_EXTRA", i, k)
 }
 
 // =====================================================================
@@ -722,7 +706,7 @@ fn controlled_add_active(
     // known `cx(ctrl, y[0])` with no carry into bit 1 -- emit it directly and run the
     // capped adder on bits 1.. with carry-in 0. Saves the bit-0 carry CCX (~1-2 tof)
     // per GCD conditional sub/add * 2 (fwd+rev) * ITERS ~= 1000+ tof. Not the apply.
-    let k = maybe_adjust_gcd_k(i, super::next_gcd_k());
+    let k = maybe_adjust_late_gcd_k(i, super::next_gcd_k());
     let branch = super::next_gcd_branch();
     let loan_y0 = loan_gcd_y0_enabled() && x.len() > 1;
     match bit0_mode {
