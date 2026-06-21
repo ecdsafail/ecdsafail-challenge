@@ -976,9 +976,17 @@ fn apply_step_forward(
     });
     // 2) if swap: swap(x, y).
     circ.set_phase("tlm_apply_forward_swap");
-    if !(std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP").ok().as_deref() == Some("1")
-        && i + 1 == ITERS)
-    {
+    let skip_first = std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && i + 1 == ITERS;
+    let skip_last = std::env::var("TLM_APPLY_FWD_LAST_CSWAP_SKIP")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && i == 0;
+    if !(skip_first || skip_last) {
         for j in 0..n {
             circ.cswap(*swp, x_reg[j], y_reg[j]);
         }
@@ -1021,8 +1029,28 @@ fn apply_step_reverse(
     }
     // inverse of 2): swap (involutory).
     circ.set_phase("tlm_apply_inverse_swap");
-    for j in 0..n {
-        circ.cswap(*swp, x_reg[j], y_reg[j]);
+    let skip_first = std::env::var("TLM_APPLY_INV_FIRST_CSWAP_SKIP")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && i + 1 == ITERS;
+    let skip_last = std::env::var("TLM_APPLY_INV_LAST_CSWAP_SKIP")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && i == 0;
+    if !(skip_first || skip_last) {
+        for j in 0..n {
+            circ.cswap(*swp, x_reg[j], y_reg[j]);
+        }
+    }
+    if std::env::var("TLM_APPLY_INV_FIRST_SUB_SKIP")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && i + 1 == ITERS
+    {
+        return;
     }
     // inverse of 1): y -= x mod q. The apply-path operands carry pseudo-Mersenne
     // representation drift, so the borrow clean uses the MBU form.

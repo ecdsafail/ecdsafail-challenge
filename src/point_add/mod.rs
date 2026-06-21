@@ -69,6 +69,7 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 pub mod venting;
 
 pub mod dialog_gcd_classical_filter;
+pub mod island_search;
 
 mod emit;
 pub(crate) use emit::*;
@@ -2027,7 +2028,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "2801645198");
+    set_default_env("DIALOG_TAIL_NONCE", "720036076906");
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
@@ -2038,6 +2039,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_APPLY_FWD_FIRST_CSWAP_SKIP", "1");
     set_default_env("CONSTPROP_MAX_ITERS", "16");
     set_default_env("TLM_TARGET_Q", "1159");
+    set_default_env("TLM_APPLY_INV_FIRST_CSWAP_SKIP", "1");
     set_default_env("TLM_FOLD_RELEASE_CONTROLS", "1");
     set_default_env("TLM_TARGET_FFG_RESERVE", "9");
     set_default_env(
