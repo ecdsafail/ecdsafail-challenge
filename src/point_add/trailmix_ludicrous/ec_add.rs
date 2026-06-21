@@ -35,7 +35,8 @@
 //! across the square step.
 
 use super::arith::{
-    mod_add, mod_add_exact, mod_neg, mod_sub_classical_low3, mod_sub_shifted_low, mod_sub_vented,
+    mod_add, mod_double, mod_double_reverse, mod_neg, mod_sub_classical_low3,
+    mod_sub_shifted_low, mod_sub_vented,
 };
 use super::gcd::{mod_mul_inverse_in_place, Direction};
 use super::square::mod_square_sub_pm_secp256k1_symmetric;
@@ -96,207 +97,33 @@ fn coord_addsub(circ: &mut B, dst: &[QubitId], coord: &[BitId], subtract: bool) 
     }
 }
 
-/// `dst += 3*coord (mod q)`.
-///
-/// `coord` (= ox) is CLASSICAL, so `3*coord mod q` is itself a classical value
-/// known per shot. We derive it in the classical control system (BitId
-/// arithmetic -- ZERO Toffoli, ZERO Clifford in the scorer) and then do a SINGLE
-/// generic-classical mod-add of that derived register.
-///
-/// The previous form did `coord + 2*coord` with two q-q mod-adds plus a
-/// mod-double + reverse (~754 Toffoli). Folding the `*3 mod q` into the free
-/// classical domain leaves just one mod-add (~326 Toffoli) -- the doubling, the
-/// second mod-add, and the 257-bit temp all vanish.
+/// `dst += 3*coord (mod q)` via `coord + 2*coord`: one mod-add of `coord`, a
+/// mod-double of a loaded copy, a mod-add of `2*coord`, then the matched reverse
+/// mod-double to restore the copy to `coord` (one fewer mod-add than three). The
+/// double needs a 257-bit operand with a |0> overflow slot, so we copy `coord`
+/// into a 257-bit temp (top bit |0>) and clear it afterwards.
 fn coord_add3x(circ: &mut B, dst: &[QubitId], coord: &[BitId]) {
     debug_assert_eq!(dst.len(), N);
     debug_assert_eq!(coord.len(), N);
-    // Derive t = 3*coord mod q  (classical, free).
-    let three_coord = classical_times3_mod_q(circ, coord);
-    // Single generic-classical mod-add: dst += t (mod q). `t < q` by construction.
-    // Load t into a transient quantum temp, do an EXACT (full-width) mod-add, unload.
-    let temp = circ.alloc_qubits(N);
+    // LOAD coord into a 257-bit temp (low 256 = coord, bit 256 = |0> double
+    // overflow slot). 3*coord is done as coord + 2*coord -- two representative
+    // q-q mod-adds + a mod-double, NOT a classical `3*ox mod q` precompute.
+    let temp: Vec<QubitId> = (0..=N).map(|_| circ.alloc_qubit()).collect();
     for i in 0..N {
-        circ.x_if_bit(temp[i], three_coord[i]); // temp := t (per-shot classical)
+        circ.x_if_bit(temp[i], coord[i]); // temp[..N] := coord (per-shot classical)
     }
-    mod_add_exact(circ, &temp, dst); // dst += t (mod q), exact -- temp untouched
+    // UNCONTROLLED vented; dst modified, temp[..N] restored to coord by
+    // mod_double_reverse before unload.
+    mod_add(circ, &temp[..N], dst); // dst += coord
+    mod_double(circ, &temp); // temp := 2*coord mod q
+    mod_add(circ, &temp[..N], dst); // dst += 2*coord
+    mod_double_reverse(circ, &temp); // temp := coord (value-inverse of the double)
     for i in 0..N {
-        circ.x_if_bit(temp[i], three_coord[i]); // unload: temp := 0
+        circ.x_if_bit(temp[i], coord[i]); // unload: temp := 0
     }
     for q in temp {
         circ.zero_and_free(q);
     }
-    // Release the derived classical bits back to |0> (clean: store 0).
-    for &b in &three_coord {
-        circ.bit_store0(b);
-    }
-}
-
-/// Compute `t = 3*coord mod q` (q = 2^256 - C, C = 2^32 + 977) entirely in the
-/// classical (BitId) domain and return the 256 result bits, value in [0, q).
-///
-/// EVERY op here is BitStore0/BitStore1/BitInvert (some condition-gated): they
-/// touch only the per-shot classical control bits, so the scorer counts ZERO
-/// Toffoli and ZERO Clifford for the whole derivation. `coord < q` (a canonical
-/// field element) on every shot.
-///
-/// All arithmetic bodies run UNCONDITIONALLY (every scratch bit is cleared and
-/// updated on all shots). Per-shot data choices are encoded by building data
-/// registers (e.g. `C*hi`, `q`-or-`0`) via AND-gated copies, never by gating an
-/// adder. This keeps scratch bits clean on all shots.
-///
-/// Math: s = 3*coord < 3*2^256, so s = hi*2^256 + lo with hi in {0,1,2}, lo the
-/// low 256 bits. 2^256 ≡ C (mod q), so s ≡ hi*C + lo (mod q). r = lo + hi*C <
-/// 2^256 + 2*C < 2q, so a single conditional `-q` lands in [0, q).
-fn classical_times3_mod_q(circ: &mut B, coord: &[BitId]) -> Vec<BitId> {
-    debug_assert_eq!(coord.len(), N);
-    const C: u128 = (1u128 << 32) + 977; // q = 2^256 - C
-
-    // 1) s = 3*coord as a 258-bit classical value (lo = s[0..256], hi = s[256..258]).
-    let s: Vec<BitId> = circ.alloc_bits(N + 2);
-    for &b in &s {
-        circ.bit_store0(b);
-    }
-    classical_add_into(circ, &s, coord); // s  = coord
-    classical_add_into(circ, &s, coord); // s += coord
-    classical_add_into(circ, &s, coord); // s += coord  => 3*coord
-
-    // 2) hival = hi*C, where hi = s[256] + 2*s[257] in {0,1,2}. Build the addend
-    //    register hival (35 bits is enough: 2*C < 2^34) by AND-gated constant
-    //    copies, unconditionally, then ripple-add into the low part.
-    //    hi*C = C*(s256) + 2C*(s257).
-    let r: Vec<BitId> = circ.alloc_bits(N + 1); // r holds lo + hi*C, < 2^257
-    for i in 0..N {
-        circ.bit_copy(r[i], s[i]); // r[0..256] = lo
-    }
-    circ.bit_store0(r[N]); // overflow slot
-    // Build addend register av = C*s256 + 2C*s257 (a small classical value), then
-    // ripple-add av into r. av fits in 35 bits.
-    let av_bits = 35usize;
-    let av: Vec<BitId> = circ.alloc_bits(av_bits);
-    classical_set_const_times_bit(circ, &av, C, s[N], false); // av  = C   if s256
-    classical_add_const_times_bit(circ, &av, 2 * C, s[N + 1]); // av += 2C  if s257
-    classical_add_into(circ, &r, &av); // r += av  => r = lo + hi*C
-
-    // 3) Conditional subtract of q. r - q = r - 2^256 + C = (r + C) mod 2^256 with
-    //    the carry telling us r >= q. Compute tmp = r + C (258-bit). r >= q iff
-    //    tmp has any bit >= 256 set. If so result = low256(tmp); else result = low256(r).
-    let tmp: Vec<BitId> = circ.alloc_bits(N + 2);
-    for i in 0..(N + 1) {
-        circ.bit_copy(tmp[i], r[i]);
-    }
-    circ.bit_store0(tmp[N + 1]);
-    {
-        // unconditional add of the constant C into tmp
-        let cbits: Vec<BitId> = circ.alloc_bits(av_bits);
-        classical_set_const(circ, &cbits, C); // cbits = C
-        classical_add_into(circ, &tmp, &cbits);
-        for &b in &cbits {
-            circ.bit_store0(b);
-        }
-    }
-    // geflag = tmp[256] | tmp[257]   (r >= q)
-    let geflag = circ.alloc_bit();
-    circ.bit_store0(geflag);
-    circ.push_condition(tmp[N]);
-    circ.bit_store1(geflag);
-    circ.pop_condition();
-    circ.push_condition(tmp[N + 1]);
-    circ.bit_store1(geflag);
-    circ.pop_condition();
-
-    // result[i] = geflag ? tmp[i] : r[i]
-    let result: Vec<BitId> = circ.alloc_bits(N);
-    for i in 0..N {
-        circ.bit_store0(result[i]);
-        circ.push_condition(geflag);
-        circ.push_condition(tmp[i]);
-        circ.bit_store1(result[i]); // geflag & tmp[i]
-        circ.pop_condition();
-        circ.pop_condition();
-        circ.bit_invert(geflag); // !geflag
-        circ.push_condition(geflag);
-        circ.push_condition(r[i]);
-        circ.bit_store1(result[i]); // !geflag & r[i]
-        circ.pop_condition();
-        circ.pop_condition();
-        circ.bit_invert(geflag); // restore
-    }
-
-    // Release scratch back to 0 (free, clean).
-    circ.bit_store0(geflag);
-    for &b in tmp.iter().chain(av.iter()).chain(r.iter()).chain(s.iter()) {
-        circ.bit_store0(b);
-    }
-    result
-}
-
-/// Set classical register `dst := k` (compile-time constant, mod 2^dst.len()).
-fn classical_set_const(circ: &mut B, dst: &[BitId], k: u128) {
-    for (i, &b) in dst.iter().enumerate() {
-        let bit = i < 128 && ((k >> i) & 1) == 1;
-        if bit {
-            circ.bit_store0(b);
-            circ.bit_invert(b); // unconditional set to 1
-        } else {
-            circ.bit_store0(b);
-        }
-    }
-}
-
-/// `dst := k AND gate` per bit, i.e. dst = (gate ? k : 0). If `accumulate` is
-/// false this overwrites dst; the helper here always overwrites.
-fn classical_set_const_times_bit(circ: &mut B, dst: &[BitId], k: u128, gate: BitId, _accumulate: bool) {
-    for (i, &b) in dst.iter().enumerate() {
-        circ.bit_store0(b);
-        let bit = i < 128 && ((k >> i) & 1) == 1;
-        if bit {
-            circ.push_condition(gate);
-            circ.bit_store1(b); // b = gate
-            circ.pop_condition();
-        }
-    }
-}
-
-/// `dst += (k AND gate)` via building the gated constant register and ripple-add.
-fn classical_add_const_times_bit(circ: &mut B, dst: &[BitId], k: u128, gate: BitId) {
-    let w = dst.len();
-    let addend: Vec<BitId> = circ.alloc_bits(w);
-    classical_set_const_times_bit(circ, &addend, k, gate, false);
-    classical_add_into(circ, dst, &addend);
-    for &b in &addend {
-        circ.bit_store0(b);
-    }
-}
-
-/// UNCONDITIONAL classical ripple add `acc += addend (mod 2^acc.len())`, all over
-/// BitIds. `addend` may be shorter than `acc` (zero-extended). Free in the scorer.
-/// Every scratch bit is cleared and updated on ALL shots (no condition gating),
-/// so it is clean regardless of per-shot data.
-fn classical_add_into(circ: &mut B, acc: &[BitId], addend: &[BitId]) {
-    let carry = circ.alloc_bit();
-    circ.bit_store0(carry);
-    let newcarry = circ.alloc_bit();
-    for i in 0..acc.len() {
-        let a_i = addend.get(i).copied();
-        // newcarry = majority(acc[i], a_i, carry), computed before overwriting acc[i].
-        circ.bit_store0(newcarry);
-        if let Some(a) = a_i {
-            circ.bit_and_xor_into(newcarry, acc[i], a);
-            circ.bit_and_xor_into(newcarry, acc[i], carry);
-            circ.bit_and_xor_into(newcarry, a, carry);
-        } else {
-            circ.bit_and_xor_into(newcarry, acc[i], carry);
-        }
-        // sum bit -> acc[i]
-        if let Some(a) = a_i {
-            circ.bit_xor_into(acc[i], a);
-        }
-        circ.bit_xor_into(acc[i], carry);
-        // carry := newcarry
-        circ.bit_copy(carry, newcarry);
-    }
-    circ.bit_store0(newcarry);
-    circ.bit_store0(carry);
 }
 
 /// In-place reverse mod-subtract: `x := coord - x (mod q)` over 256 bits, where
@@ -389,61 +216,3 @@ pub fn ec_add(
     coord_rsub(circ, x2, ox);
 }
 
-
-/// TEST-ONLY: build a tiny circuit that loads classical ox into reg0 (256 bits),
-/// computes t = 3*ox mod q classically, and writes t into reg1 (256 classical
-/// bits) so a harness can read it back. Returns (ops, ox_reg_bits, t_reg_bits).
-pub fn build_times3_test() -> (Vec<crate::circuit::Op>, Vec<BitId>, Vec<BitId>) {
-    let mut circ = B::new_for_test();
-    let ox = circ.alloc_bits(N);
-    let t = classical_times3_mod_q(&mut circ, &ox);
-    // copy t into a stable output register tout
-    let tout = circ.alloc_bits(N);
-    for i in 0..N {
-        circ.bit_copy(tout[i], t[i]);
-    }
-    circ.declare_bit_register(&ox);
-    circ.declare_bit_register(&tout);
-    (circ.take_ops(), ox, tout)
-}
-
-/// TEST-ONLY: build a circuit that loads classical ox into reg-ox, a quantum
-/// dst (P.x) into reg-dst, runs coord_add3x (dst += 3*ox mod q), and exposes
-/// reg-dst (quantum) + reg-ox so a harness can verify dst' == (dst + 3*ox) mod q.
-pub fn build_add3x_test() -> (Vec<crate::circuit::Op>, Vec<BitId>, Vec<QubitId>) {
-    let mut circ = B::new_for_test();
-    let dst: Vec<QubitId> = circ.alloc_qubits(N);
-    let ox = circ.alloc_bits(N);
-    coord_add3x(&mut circ, &dst, &ox);
-    circ.declare_qubit_register(&dst);
-    circ.declare_bit_register(&ox);
-    (circ.take_ops(), ox, dst)
-}
-
-/// ORIGINAL add3x body (for representative comparison).
-fn coord_add3x_orig(circ: &mut B, dst: &[QubitId], coord: &[BitId]) {
-    let temp: Vec<QubitId> = (0..=N).map(|_| circ.alloc_qubit()).collect();
-    for i in 0..N {
-        circ.x_if_bit(temp[i], coord[i]);
-    }
-    mod_add(circ, &temp[..N], dst);
-    super::arith::mod_double(circ, &temp);
-    mod_add(circ, &temp[..N], dst);
-    super::arith::mod_double_reverse(circ, &temp);
-    for i in 0..N {
-        circ.x_if_bit(temp[i], coord[i]);
-    }
-    for q in temp {
-        circ.zero_and_free(q);
-    }
-}
-
-pub fn build_add3x_test_orig() -> (Vec<crate::circuit::Op>, Vec<BitId>, Vec<QubitId>) {
-    let mut circ = B::new_for_test();
-    let dst: Vec<QubitId> = circ.alloc_qubits(N);
-    let ox = circ.alloc_bits(N);
-    coord_add3x_orig(&mut circ, &dst, &ox);
-    circ.declare_qubit_register(&dst);
-    circ.declare_bit_register(&ox);
-    (circ.take_ops(), ox, dst)
-}
