@@ -25,20 +25,24 @@ fn next_fold_call_index() -> usize {
     })
 }
 
-fn fold_call_reserve(index: usize, default: usize) -> usize {
-    std::env::var("TLM_TARGET_FOLD_CALL_RESERVES")
+fn env_index_value(name: &str, index: usize) -> Option<usize> {
+    std::env::var(name)
         .ok()
         .and_then(|value| {
             value
                 .split(',')
                 .filter_map(|item| item.trim().split_once(':'))
-                .find_map(|(call, reserve)| {
+                .find_map(|(call, value)| {
                     (call.parse::<usize>().ok()? == index)
-                        .then(|| reserve.parse::<usize>().ok())
+                        .then(|| value.parse::<usize>().ok())
                         .flatten()
                 })
         })
-        .unwrap_or(default)
+}
+
+fn fold_call_reserve(index: usize, default: usize) -> usize {
+    let base = env_index_value("TLM_TARGET_FOLD_CALL_RESERVES", index).unwrap_or(default);
+    env_index_value("TLM_TARGET_FOLD_CALL_RESERVE_OVERRIDES", index).unwrap_or(base)
 }
 
 /// secp256k1 `(e+2d)*f` combined-fold addend control per low-bit position `p`
@@ -372,18 +376,86 @@ fn fold_chunk_clean(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: O
 
 /// Gated-erase a boundary carry: materialize the addend into a temp, run the
 /// uncontrolled gated erase on (y, temp), un-materialize.
-fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: &QubitId, carry: QubitId) {
+fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: Option<&QubitId>, carry: QubitId) {
+    if std::env::var("TLM_FOLD_BOUNDARY_ZERO_DIRECT")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && cin.is_some()
+        && ctl.iter().all(Option::is_none)
+    {
+        fold_boundary_erase_zero_direct(circ, y, cin.expect("cin checked"), carry);
+        return;
+    }
     let s = y.len();
     let temp: Vec<QubitId> = (0..s).map(|_| circ.alloc_qubit()).collect();
     for (i, c) in ctl.iter().enumerate() {
         if let Some(a) = c { circ.cx(*a, temp[i]); }
     }
-    super::arith::erase_carry_gated_opt(circ, None, y, &temp, cin, &carry, None);
-    circ.zero_and_free(carry);
+    match cin {
+        Some(cin) => super::arith::erase_carry_gated_opt(circ, None, y, &temp, cin, &carry, None),
+        None => {
+            super::arith::erase_carry_gated_zero_cin_opt(circ, None, y, &temp, &carry, None);
+            circ.zero_and_free(carry);
+        }
+    }
     for (i, c) in ctl.iter().enumerate() {
         if let Some(a) = c { circ.cx(*a, temp[i]); }
     }
     for q in temp { circ.zero_and_free(q); }
+}
+
+fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, carry: QubitId) {
+    let n = y.len();
+    assert!(n >= 1, "zero boundary erase needs >= 1 bit");
+    let bit = circ.alloc_bit();
+    circ.hmr(carry, bit);
+    circ.zero_and_free(carry);
+    circ.push_condition(bit);
+
+    let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(n);
+    let c0 = circ.alloc_qubit();
+    circ.x(c0);
+    circ.cx(*cin, c0);
+    cy.push(Some(c0));
+    for i in 0..n - 1 {
+        let next = circ.alloc_qubit();
+        let ci = cy[i].as_ref().unwrap();
+        circ.cx(*ci, y[i]);
+        circ.x(*ci);
+        circ.ccx(y[i], *ci, next);
+        circ.x(*ci);
+        circ.cx(*ci, next);
+        cy.push(Some(next));
+    }
+    {
+        let i = n - 1;
+        let ci = cy[i].as_ref().unwrap();
+        circ.cx(*ci, y[i]);
+        circ.neg();
+        circ.x(*ci);
+        circ.cz(y[i], *ci);
+        circ.x(*ci);
+        circ.z(*ci);
+        circ.cx(*ci, y[i]);
+    }
+    for i in (0..n - 1).rev() {
+        let next = cy[i + 1].take().unwrap();
+        let ci = cy[i].as_ref().unwrap();
+        circ.cx(*ci, next);
+        let mbit = circ.alloc_bit();
+        circ.hmr(next, mbit);
+        circ.zero_and_free(next);
+        circ.x(*ci);
+        circ.cz_if_bit(y[i], *ci, mbit);
+        circ.x(*ci);
+        circ.cx(*ci, y[i]);
+    }
+    let c0 = cy[0].take().unwrap();
+    circ.cx(*cin, c0);
+    circ.x(c0);
+    circ.zero_and_free(c0);
+    circ.pop_condition();
 }
 
 fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_chunk: usize) {
@@ -392,10 +464,14 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         .ok()
         .as_deref()
         == Some("1");
+    let zero_cin = std::env::var("TLM_FOLD_CHUNK_ZERO_CIN")
+        .ok()
+        .as_deref()
+        == Some("1");
     let mut controls = Some(build_fold_controls(circ, e, d));
     let (cc, sxor, sor, dne) = controls.expect("fold controls present");
     let mut ctl = fold_ctl_map(*e, *d, cc, sxor, sor, dne, l);
-    let cin0 = circ.alloc_qubit();
+    let cin0 = (!zero_cin).then(|| circ.alloc_qubit());
     let nch = l.div_ceil(s_chunk);
     let last_control_chunk = 11usize.min(l - 1) / s_chunk;
     let mut boundary: Vec<QubitId> = Vec::with_capacity(nch);
@@ -403,8 +479,12 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let cout = circ.alloc_qubit();
-        let cin = if j == 0 { cin0 } else { boundary[j - 1] };
-        fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], Some(&cin), &cout);
+        let cin = if j == 0 {
+            cin0.as_ref()
+        } else {
+            Some(&boundary[j - 1])
+        };
+        fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], cin, &cout);
         boundary.push(cout);
         if release_controls && j == last_control_chunk && j + 1 < nch {
             let (cc, sxor, sor, dne) = controls.take().expect("fold controls present");
@@ -420,10 +500,16 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let bnd = boundary.pop().expect("boundary present");
-        let cin = if j == 0 { cin0 } else { boundary[j - 1] };
-        fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], &cin, bnd);
+        let cin = if j == 0 {
+            cin0.as_ref()
+        } else {
+            Some(&boundary[j - 1])
+        };
+        fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], cin, bnd);
     }
-    circ.zero_and_free(cin0);
+    if let Some(cin0) = cin0 {
+        circ.zero_and_free(cin0);
+    }
     let (cc, sxor, sor, dne) = controls.take().expect("fold controls restored");
     uncompute_fold_controls(circ, e, d, cc, sxor, sor, dne);
 }
@@ -832,6 +918,56 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
     }
 }
 
+fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
+    let call_index = next_fold_call_index();
+    let timeline_start = circ.active_timeline.len();
+    let entry_active = circ.active_qubits;
+    let code = super::next_fold();
+    let default_reserve = std::env::var("TLM_TARGET_FOLD_RESERVE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(4);
+    let reserve = fold_call_reserve(call_index, default_reserve);
+    let g = if code < 0 {
+        0
+    } else {
+        super::target_qubit_headroom(circ)
+            .map_or(code as usize, |headroom| {
+                (code as usize).min(headroom.saturating_sub(reserve))
+            })
+            .min(LSBS - 1)
+    };
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    super::arith::add_f_window_pub(circ, e, y, LSBS, &f_bytes, Some(g));
+    if std::env::var_os("TRACE_TLM_FOLD").is_some() {
+        let local_peak = circ.active_timeline[timeline_start..]
+            .iter()
+            .map(|(_, active)| *active)
+            .max()
+            .unwrap_or(circ.active_qubits);
+        eprintln!(
+            "TLM_FOLD call={} phase={} code={} nv={} entry_active={} local_peak={} ops={}",
+            call_index,
+            circ.phase,
+            code,
+            g as i32,
+            entry_active,
+            local_peak,
+            circ.current_ops_len(),
+        );
+    }
+}
+
+fn trace_fold_alloc(circ: &B, name: &str, stage: &str, i: usize) {
+    if std::env::var_os("TRACE_TLM_FOLD_ALLOC").is_some() {
+        eprintln!(
+            "TLM_FOLD_ALLOC name={name} stage={stage} i={i} active={} ops={}",
+            circ.active_qubits,
+            circ.current_ops_len(),
+        );
+    }
+}
+
 /// Fused double-then-controlled-double: `y := y * 2 * (1 + s2) mod q`. `y.len() == n
 /// == 256`; the doubling uses two transient overflow bits (a 258-bit working view),
 /// not a persistent reg slot.
@@ -840,8 +976,11 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     let n = 256usize;
     assert_eq!(y.len(), n, "fused double expects 256-bit y (transient overflow)");
     let _ = F_SECP256K1;
+    trace_fold_alloc(circ, "fwd_cdouble", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "fwd_cdouble", "after_hi", usize::MAX);
     let hi2 = circ.alloc_qubit();
+    trace_fold_alloc(circ, "fwd_cdouble", "after_hi2", usize::MAX);
     // 258-bit view: y[0..n] ++ hi (256) ++ hi2 (257).
     let mut w: Vec<QubitId> = y.to_vec();
     w.push(hi);
@@ -865,14 +1004,33 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     circ.zero_and_free(hi2);
 }
 
+pub fn fused_double_only(circ: &mut B, y: &[QubitId]) {
+    let n = 256usize;
+    assert_eq!(y.len(), n, "fused double expects 256-bit y");
+    trace_fold_alloc(circ, "fwd_only", "entry", usize::MAX);
+    let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "fwd_only", "after_hi", usize::MAX);
+    let mut w: Vec<QubitId> = y.to_vec();
+    w.push(hi);
+    for i in (1..w.len()).rev() {
+        circ.swap(w[i], w[i - 1]);
+    }
+    fused_fold_e_only(circ, &w[n], y);
+    circ.cx(y[0], w[n]);
+    circ.zero_and_free(hi);
+}
+
 /// Exact gate-inverse: `y := y / (2*(1+s2)) mod q`. Reverse of [`fused_double_cdouble`]:
 /// compute the overflow bits, subtract m*f, shift right.
 pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     maybe_run_gradual_fold_nonlinear_control_hmr_selftest();
     let n = 256usize;
     assert_eq!(y.len(), n, "fused halve expects 256-bit y (transient overflow)");
+    trace_fold_alloc(circ, "rev_cdouble", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "rev_cdouble", "after_hi", usize::MAX);
     let hi2 = circ.alloc_qubit();
+    trace_fold_alloc(circ, "rev_cdouble", "after_hi2", usize::MAX);
     let mut w: Vec<QubitId> = y.to_vec();
     w.push(hi);
     w.push(hi2);
@@ -897,6 +1055,28 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     }
     circ.zero_and_free(hi);
     circ.zero_and_free(hi2);
+}
+
+pub fn fused_double_only_reverse(circ: &mut B, y: &[QubitId]) {
+    let n = 256usize;
+    assert_eq!(y.len(), n, "fused halve expects 256-bit y");
+    trace_fold_alloc(circ, "rev_only", "entry", usize::MAX);
+    let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "rev_only", "after_hi", usize::MAX);
+    let mut w: Vec<QubitId> = y.to_vec();
+    w.push(hi);
+    circ.cx(y[0], w[n]);
+    for q in &y[..LSBS] {
+        circ.x(*q);
+    }
+    fused_fold_e_only(circ, &w[n], y);
+    for q in &y[..LSBS] {
+        circ.x(*q);
+    }
+    for i in 1..w.len() {
+        circ.swap(w[i], w[i - 1]);
+    }
+    circ.zero_and_free(hi);
 }
 
 /// Exhaust every `(e,d,HMR outcome)` basis case for each nonlinear derived
