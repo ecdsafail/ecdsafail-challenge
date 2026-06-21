@@ -165,6 +165,220 @@ fn symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitI
     debug_assert_eq!(prod.len(), 2 * n, "prod must reach 2n after the build");
 }
 
+/// Integer `prod[shift..shift+span] += value` (exact, mod 2^span). `value` is
+/// zero-extended to `span` so the carry rides up through prod's already-populated /
+/// |0> bits and stays in-window. The caller sizes `span` so the true carry cannot
+/// leave it (the Karatsuba running partial sum is always <= x^2 < 2^2m, and each
+/// term's carry reach is bounded by the populated region above it). Direction is
+/// set by `sub` (X-sandwich).
+fn add_value_into_prod_span(circ: &mut B, prod: &mut [QubitId], value: &[QubitId], shift: usize, span: usize, sub: bool) {
+    assert!(value.len() <= span, "value wider than span");
+    assert!(shift + span <= prod.len(), "span overruns prod");
+    if span == 0 {
+        return;
+    }
+    let pads = alloc_zeroes(circ, span - value.len());
+    let mut b: Vec<QubitId> = value.to_vec();
+    b.extend_from_slice(&pads);
+    let slice = &mut prod[shift..shift + span];
+    let k = super::next_sqrow_k();
+    if sub {
+        for q in slice.iter() {
+            circ.x(*q);
+        }
+        super::arith::hybrid_add_adaptive(circ, slice, &b, k);
+        for q in slice.iter() {
+            circ.x(*q);
+        }
+    } else {
+        super::arith::hybrid_add_adaptive(circ, slice, &b, k);
+    }
+    free_zeroes(circ, pads);
+}
+
+/// Recursive Karatsuba square: `prod[0..2m] += value(x[0..m])^2` (integer, no
+/// reduction), bottoming out at [`symmetric_square_into_prod`] for `m <=
+/// KARA2_THRESHOLD`. One split level:
+///   x = hi*2^h + lo  (lo = h bits, hi = m-h bits)
+///   A = lo^2, B = hi^2, C = (lo+hi)^2, M = C - A - B = 2*lo*hi
+///   x^2 = A + M*2^h + B*2^2h.
+/// A, B, C are built one-at-a-time (consume-before-next) to stay off the square's
+/// q-peak; M is formed in C's register (subtract A then B, M >= 0), folded at
+/// shift h, then C/B/A unbuilt to drain their registers back to |0>.
+fn kara_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitId>) {
+    let m = x.len();
+    let threshold: usize = std::env::var("TLM_SQUARE_KARA2_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(96);
+    if m <= threshold || std::env::var("TLM_SQUARE_KARA2").ok().as_deref() != Some("1") {
+        symmetric_square_into_prod(circ, x, prod);
+        return;
+    }
+    eprintln!("KARA2_SPLIT m={m}");
+    assert!(prod.is_empty(), "prod is grown lazily; pass an empty Vec");
+    let h = m / 2;
+    let lo = &x[..h];
+    let hi = &x[h..];
+    let g = m - h; // hi width
+
+    // Grow prod to its full 2m before folding (the recombination adds need the
+    // populated high bits to absorb carries; lazy growth in the leaf builders is
+    // local and is unbuilt before we fold here).
+    while prod.len() < 2 * m {
+        prod.push(circ.alloc_qubit());
+    }
+
+    // --- A = lo^2 (2h bits); fold at shift 0 into the still-|0> low region. ---
+    let mut a_prod: Vec<QubitId> = Vec::new();
+    kara_square_into_prod(circ, lo, &mut a_prod);
+    add_value_into_prod_span(circ, prod, &a_prod, 0, 2 * h, false);
+
+    // --- B = hi^2 (2g bits); fold at shift 2h into the still-|0> high region. ---
+    let mut b_prod: Vec<QubitId> = Vec::new();
+    kara_square_into_prod(circ, hi, &mut b_prod);
+    add_value_into_prod_span(circ, prod, &b_prod, 2 * h, 2 * g, false);
+
+    // --- s = lo + hi (g+1 bits), C = s^2 (2g+2 bits), M = C - A - B. ---
+    let s = build_kara_sum(circ, lo, hi);
+    let mut c_prod: Vec<QubitId> = Vec::new();
+    kara_square_into_prod(circ, &s, &mut c_prod);
+    // M = C - A - B, formed in c_prod (>= 0). A is 2h bits, B is 2g bits, both fit.
+    sub_into_reg(circ, &mut c_prod, &a_prod);
+    sub_into_reg(circ, &mut c_prod, &b_prod);
+    // M is m+1 bits in c_prod[0..m+1]; fold at shift h. Its carry can ripple through
+    // the populated A-high/B region up to prod's top, so span the rest of prod.
+    add_value_into_prod_span(circ, prod, &c_prod[..m + 1], h, 2 * m - h, false);
+    // Restore C = M + A + B in c_prod, then unbuild the square of s.
+    add_into_reg(circ, &mut c_prod, &b_prod);
+    add_into_reg(circ, &mut c_prod, &a_prod);
+    kara_square_into_prod_reverse(circ, &s, c_prod);
+    unbuild_kara_sum(circ, lo, hi, s);
+
+    // --- Unbuild B and A (drain their registers). ---
+    kara_square_into_prod_reverse(circ, hi, b_prod);
+    kara_square_into_prod_reverse(circ, lo, a_prod);
+}
+
+/// `s = lo + hi` over unequal widths (lo = h bits, hi = g >= h bits); result is
+/// g+1 bits, returned in a fresh |0> register. Built exactly like
+/// [`build_sum_hi_lo`]: copy hi into s, then one full-width `cuccaro_carry` of
+/// (lo zero-padded to g) into s[..g] with carry-out into s[g].
+fn build_kara_sum(circ: &mut B, lo: &[QubitId], hi: &[QubitId]) -> Vec<QubitId> {
+    let h = lo.len();
+    let g = hi.len();
+    let s = alloc_zeroes(circ, g + 1);
+    for i in 0..g {
+        circ.cx(hi[i], s[i]);
+    }
+    let pads = alloc_zeroes(circ, g - h);
+    let mut lo_ext: Vec<QubitId> = lo.to_vec();
+    lo_ext.extend_from_slice(&pads);
+    cuccaro_carry(circ, None, &lo_ext, &s[..g], None, Some(&s[g]));
+    free_zeroes(circ, pads);
+    s
+}
+
+/// Gate-inverse of [`build_kara_sum`]: drains `s` back to |0>.
+fn unbuild_kara_sum(circ: &mut B, lo: &[QubitId], hi: &[QubitId], s: Vec<QubitId>) {
+    let h = lo.len();
+    let g = hi.len();
+    let pads = alloc_zeroes(circ, g - h);
+    let mut lo_ext: Vec<QubitId> = lo.to_vec();
+    lo_ext.extend_from_slice(&pads);
+    // Reverse the carry: ~s += lo_ext over the (g+1)-bit register (X-sandwich), so
+    // s -= lo_ext, undoing the forward add.
+    for q in &s { circ.x(*q); }
+    cuccaro_carry(circ, None, &lo_ext, &s, None, None);
+    for q in &s { circ.x(*q); }
+    free_zeroes(circ, pads);
+    for i in 0..g {
+        circ.cx(hi[i], s[i]);
+    }
+    free_zeroes(circ, s);
+}
+
+/// Gate-reverse of [`kara_square_into_prod`]: SUBTRACTS x^2 from `prod`, draining
+/// it back to |0> (mirror of the forward fold order). For the schoolbook bottom
+/// it delegates to [`symmetric_square_into_prod_reverse`].
+fn kara_square_into_prod_reverse(circ: &mut B, x: &[QubitId], prod: Vec<QubitId>) {
+    let m = x.len();
+    let threshold: usize = std::env::var("TLM_SQUARE_KARA2_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(96);
+    if m <= threshold || std::env::var("TLM_SQUARE_KARA2").ok().as_deref() != Some("1") {
+        symmetric_square_into_prod_reverse(circ, x, prod);
+        return;
+    }
+    let h = m / 2;
+    let lo = &x[..h];
+    let hi = &x[h..];
+    let g = m - h;
+    let mut prod = prod;
+    assert_eq!(prod.len(), 2 * m, "reverse expects full 2m prod");
+
+    // Rebuild A, B (live), and C-from-M scaffold, mirroring the forward fold with
+    // every prod-fold NEGATED. Forward fold order was A@0, B@2h, M@h. The reverse
+    // subtracts in the reverse order (M@h, B@2h, A@0) after re-deriving each term.
+
+    // Re-build A and B (needed to re-derive M and to subtract A,B at the end).
+    let mut a_prod: Vec<QubitId> = Vec::new();
+    kara_square_into_prod(circ, lo, &mut a_prod);
+    let mut b_prod: Vec<QubitId> = Vec::new();
+    kara_square_into_prod(circ, hi, &mut b_prod);
+
+    // Re-build s, C=s^2 into c_prod, then M = C - A - B in c_prod.
+    let s = build_kara_sum(circ, lo, hi);
+    let mut c_prod: Vec<QubitId> = Vec::new();
+    kara_square_into_prod(circ, &s, &mut c_prod);
+    sub_into_reg(circ, &mut c_prod, &a_prod);
+    sub_into_reg(circ, &mut c_prod, &b_prod);
+
+    // Subtract M@h, then B@2h, then A@0 (reverse of the forward fold order, same spans).
+    add_value_into_prod_span(circ, &mut prod, &c_prod[..m + 1], h, 2 * m - h, true);
+    add_value_into_prod_span(circ, &mut prod, &b_prod, 2 * h, 2 * g, true);
+    add_value_into_prod_span(circ, &mut prod, &a_prod, 0, 2 * h, true);
+
+    // Restore C in c_prod (M -> C), unbuild s^2, s; unbuild B, A.
+    add_into_reg(circ, &mut c_prod, &b_prod);
+    add_into_reg(circ, &mut c_prod, &a_prod);
+    kara_square_into_prod_reverse(circ, &s, c_prod);
+    unbuild_kara_sum(circ, lo, hi, s);
+    kara_square_into_prod_reverse(circ, hi, b_prod);
+    kara_square_into_prod_reverse(circ, lo, a_prod);
+
+    for q in prod {
+        circ.zero_and_free(q);
+    }
+}
+
+/// `reg -= value` (X-sandwiched add), value zero-extended to reg width.
+fn sub_into_reg(circ: &mut B, reg: &mut Vec<QubitId>, value: &[QubitId]) {
+    let lenc = reg.len();
+    assert!(value.len() <= lenc);
+    let pads = alloc_zeroes(circ, lenc - value.len());
+    let mut v = value.to_vec();
+    v.extend_from_slice(&pads);
+    for q in reg.iter() { circ.x(*q); }
+    let k = super::next_sqrow_k();
+    super::arith::hybrid_add_adaptive(circ, reg, &v, k);
+    for q in reg.iter() { circ.x(*q); }
+    free_zeroes(circ, pads);
+}
+
+/// `reg += value` (plain add), value zero-extended to reg width.
+fn add_into_reg(circ: &mut B, reg: &mut Vec<QubitId>, value: &[QubitId]) {
+    let lenc = reg.len();
+    assert!(value.len() <= lenc);
+    let pads = alloc_zeroes(circ, lenc - value.len());
+    let mut v = value.to_vec();
+    v.extend_from_slice(&pads);
+    let k = super::next_sqrow_k();
+    super::arith::hybrid_add_adaptive(circ, reg, &v, k);
+    free_zeroes(circ, pads);
+}
+
 /// Gate-reverse of [`symmetric_square_into_prod`]: rebuilds each row and
 /// SUBTRACTS it from `prod`, draining `prod` back to |0>. Rows run in reverse
 /// order; `prod` is freed lazily (mirror of the forward lazy growth).
@@ -370,26 +584,6 @@ fn apply_f_times_value_tagged(circ: &mut B, value: &[QubitId], output_reg: &[Qub
         return;
     }
 
-    // Shifted-low f-fold: instead of physically doubling `value` to each NAF
-    // shift (the old `mod_double` ramp: ~64 doublings of shift-shuffle overhead),
-    // read the 256-bit `value` register at each fixed bit offset and apply the
-    // explicit `+f`/`-f` overflow folds for the `shift` bits that wrap past bit
-    // 255. This is the same value-exact modular-shift technique already used by
-    // `apply_shifted_hi_term` / the shifted-low square route: each shifted term
-    // `±= (value << shift) mod q` is computed by `apply_shifted_hi_term`, which
-    // mirrors the mod_double ramp's per-term result gate-for-gate in value, while
-    // avoiding the doubling shuffle. Requires the full 256-bit register.
-    if value.len() == N {
-        for &(shift, sub_f_op) in &F_NAF_TERMS {
-            let term_op = match op {
-                ShiftOp::Sub => sub_f_op,
-                ShiftOp::Add => flipped(sub_f_op),
-            };
-            apply_shifted_hi_term(circ, value, output_reg, shift, term_op);
-        }
-        return;
-    }
-
     let pads = alloc_zeroes(circ, N + 1 - value.len());
     let mut ext = Vec::with_capacity(N + 1);
     ext.extend_from_slice(value);
@@ -501,33 +695,33 @@ pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], o
 
     circ.set_phase("square_c_sum_build");
     let mut c_prod: Vec<QubitId> = Vec::with_capacity(2 * sum.len());
-    symmetric_square_into_prod(circ, &sum, &mut c_prod);
+    kara_square_into_prod(circ, &sum, &mut c_prod);
     circ.set_phase("square_c_sum_apply_shifted_128_sub");
     apply_shifted_128_tagged(circ, &c_prod, output_reg, ShiftOp::Sub, "c");
     circ.set_phase("square_c_sum_unbuild");
-    symmetric_square_into_prod_reverse(circ, &sum, c_prod);
+    kara_square_into_prod_reverse(circ, &sum, c_prod);
 
     circ.set_phase("square_a_lo_build");
     let lo = &lambda[..128];
     let mut a_prod: Vec<QubitId> = Vec::with_capacity(2 * lo.len());
-    symmetric_square_into_prod(circ, lo, &mut a_prod);
+    kara_square_into_prod(circ, lo, &mut a_prod);
     circ.set_phase("square_a_lo_apply_unshifted_sub");
     apply_unshifted_value(circ, &a_prod, output_reg, ShiftOp::Sub);
     circ.set_phase("square_a_lo_apply_shifted_128_add");
     apply_shifted_128_tagged(circ, &a_prod, output_reg, ShiftOp::Add, "a");
     circ.set_phase("square_a_lo_unbuild");
-    symmetric_square_into_prod_reverse(circ, lo, a_prod);
+    kara_square_into_prod_reverse(circ, lo, a_prod);
 
     circ.set_phase("square_b_hi_build");
     let hi = &lambda[128..N];
     let mut b_prod: Vec<QubitId> = Vec::with_capacity(2 * hi.len());
-    symmetric_square_into_prod(circ, hi, &mut b_prod);
+    kara_square_into_prod(circ, hi, &mut b_prod);
     circ.set_phase("square_b_hi_apply_shifted_128_add");
     apply_shifted_128_tagged(circ, &b_prod, output_reg, ShiftOp::Add, "b");
     circ.set_phase("square_b_hi_apply_f_times_sub");
     apply_f_times_value(circ, &b_prod, output_reg, ShiftOp::Sub);
     circ.set_phase("square_b_hi_unbuild");
-    symmetric_square_into_prod_reverse(circ, hi, b_prod);
+    kara_square_into_prod_reverse(circ, hi, b_prod);
 
     circ.set_phase("square_sum_hi_lo_unbuild");
     unbuild_sum_hi_lo(circ, lambda, sum);
