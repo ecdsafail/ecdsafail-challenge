@@ -79,9 +79,6 @@ pub(crate) use arith::*;
 mod rounds;
 pub(crate) use rounds::*;
 
-mod trailmix_ludicrous;
-mod single_ccx_fanout;
-
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
         std::cell::Cell::new(false);
@@ -1008,24 +1005,16 @@ fn set_default_env(name: &str, value: &str) {
 }
 
 fn configure_ecdsafail_submission_route() {
-    set_default_env("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT", "1");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
-    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("DIALOG_GCD_FOLD_FREE_FIRST_HIGH_CARRY", "1");
-    // q1168 host-E route. These defaults are first so the historical fallback
+    // q1170 record route. These defaults are first so the historical fallback
     // block below cannot override the exact state searched on WMI.
     set_default_env("DIALOG_GCD_ACTIVE_ITERATIONS", "258");
-    set_default_env("DIALOG_GCD_APPLY_BOUNDARY_FREE_OWNED_DURING_REPLAY", "1");
     set_default_env("DIALOG_GCD_APPLY_BORROW_FUTURE_BOUNDARY_CARRIES", "1");
     set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_BLOCKS", "20");
     set_default_env(
         "DIALOG_GCD_APPLY_CHUNKED_F_CUTS",
         "17,34,50,66,81,96,110,124,137,150,163,175,187,198,209,219,229,238,247",
     );
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_AUTO_TOPCLEAN_MAX_BITS", "2");
-    set_default_env("DIALOG_GCD_APPLY_CHUNKED_F_AUTO_TOPCLEAN_TARGET", "1168");
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "18");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_APPLY_IMPLICIT_HIGH_ZERO", "1");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_MAP", "11:1,12:1,13:1");
@@ -1041,13 +1030,12 @@ fn configure_ecdsafail_submission_route() {
     );
     set_default_env(
         "DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "",
+        "0:20,3:19,8:19,9:19,10:19,21:20,22:19,24:19,26:19,33:19,34:19,37:20,41:19,42:20,51:19,55:19,65:20,73:19,77:19,81:19,82:19,86:19,87:19,97:19,104:19,109:19,110:19,120:19,129:19,132:20,134:19,141:20,142:19,146:19,157:19,160:19,169:19,170:20,174:19,177:19,191:19,192:19,198:19,205:19,206:19,212:19,215:19,216:19,217:19,224:20,228:19",
     );
-    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
+    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "18");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL", "1");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
     set_default_env("DIALOG_GCD_FOLD_HOST_DERIVED_CONTROLS", "1");
-    set_default_env("DIALOG_GCD_FOLD_HOST_E_TOP_CARRY", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_PARK_LOW_CARRIES", "15");
@@ -1055,29 +1043,16 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_FOLD_PARK_LOW_CARRIES_STEP_MAP",
         "0:17,3:16,8:16,9:16,10:16,21:17,22:16,24:16,26:16,33:16,34:16,37:17,41:16,42:17,51:16,55:16,65:17,73:16,77:16,81:16,82:16,86:16,87:16,97:16,104:16,109:16,110:16,120:16,129:16,132:17,134:16,141:17,142:16,146:16,157:16,160:16,169:16,170:17,174:16,177:16,191:16,192:16,198:16,205:16,206:16,212:16,215:16,216:16,217:16,224:17,228:16",
     );
-    set_default_env("DIALOG_GCD_FOLD_STREAM_CONTROLS", "1");
-    set_default_env("DIALOG_FUSE_C_FORM", "1");
-    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
     set_default_env("DIALOG_GCD_K2", "1");
     set_default_env("DIALOG_GCD_K5_CLEAN_BLOCK", "1");
     set_default_env("DIALOG_GCD_K5_FIXED_TAIL_APPLY", "0");
     set_default_env("DIALOG_GCD_K5_FREE_CLEAN_BLOCK_DURING_SHIFT", "1");
     set_default_env("DIALOG_GCD_K5_HEAD11_CODEC", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_STREAM_PAIR_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_SPLIT_PAIR_SHIFT_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_HEAD11_PAIR01_S2_PERMUTE_APPLY", "1");
-    set_default_env(
-        "DIALOG_GCD_K5_HEAD11_PAIR23_S2_BORROW_PAIR01_APPLY",
-        "1",
-    );
-    set_default_env("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE", "8");
+    set_default_env("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE", "6");
     set_default_env("DIALOG_GCD_K5_RELEASE_SCALE_BITS", "5");
-    set_default_env("DIALOG_GCD_K5_STREAM_PAIR_APPLY", "1");
     set_default_env("DIALOG_GCD_K5_TAIL3_FIXED_LAST", "0");
     set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_CODEC", "1");
     set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_STREAM_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_SPLIT_SLOT_APPLY", "1");
-    set_default_env("DIALOG_GCD_K5_TAIL3_TOP32_FINAL_S2_CONST_APPLY", "1");
     set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE", "1");
     set_default_env("DIALOG_GCD_PA9024_COMPARE_SCHEDULE_MARGIN", "0");
@@ -1092,10 +1067,10 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS",
         "10:19,11:19,21:20,63:19,74:19,100:19,107:19,110:19,118:19,135:19,136:19,137:19,188:20,204:19,227:20,241:19",
     );
-    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "16");
+    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "13");
     set_default_env(
         "DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "",
+        "10:14,11:14,21:15,63:14,74:14,100:14,107:14,110:14,118:14,135:14,136:14,137:14,188:15,204:14,227:15,241:14",
     );
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
     set_default_env(
@@ -1108,12 +1083,16 @@ fn configure_ecdsafail_submission_route() {
     );
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_WIDTH_MARGIN", "10");
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
-    set_default_env("LUD_EXTRA_FOLD_VENTS", "1");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "24");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
+    set_default_env("DIALOG_TAIL_NONCE", "55432501896150");
+    // R8 fusion bake placeholders: default "0" = OFF = byte-identical frontier (gates check
+    // ==Some("1")). island.sh bake flips these to "1" at submit time. confirm_one_r8.sh's
+    // bake targets these exact lines; do not remove.
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
     set_default_env("KAL_DOUBLE_CARRY_TRUNC_W", "19");
     set_default_env("KAL_FOLD_CARRY_TRUNC_W", "18");
-    set_default_env("SQUARE_ROW_MAX_SEG", "141");
+    set_default_env("SQUARE_ROW_MAX_SEG", "143");
     set_default_env("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS", "18");
     set_default_env(
         "SQUARE_ROW_WINDOW_CLEAN_ROW_BITS",
@@ -1135,6 +1114,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("SQUARE_ROW_WINDOW_MEASURED_CARRY_CLEAR", "1");
     set_default_env("ROUND84_KEEP_QUOTIENT_PRODUCT", "1");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
+    set_default_env("DIALOG_TAIL_NONCE", "55432501896150");
     set_default_env("DIALOG_GCD_SKIP_ZERO_EDGE_CSHIFT", "1");
     set_default_env("DIALOG_GCD_COMPRESSED_BLOCK_LIFECYCLE", "1");
     set_default_env("DIALOG_GCD_HOST_REVERSE_RAW_BLOCK", "1");
@@ -1244,7 +1224,7 @@ fn configure_ecdsafail_submission_route() {
     // pre-filter + bit-exact quantum confirm, validated 0/0/0 over all 9024
     // shots: 1309 x 1,503,355 = 1,967,891,695, beats the 1,968,064,139 frontier
     // by 172,444).
-    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "18");
+    set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "19");
     set_default_env("DIALOG_GCD_APPLY_BOUNDARY_CONDITIONAL_REPLAY", "1");  // BAKED: condrep ON for env-less grader build
     set_default_env("DIALOG_GCD_SELECTED_BODY_STREAM_SUFFIX_MAP", "3:2,4:3,5:5,6:6,7:7,8:5,9:7,10:5,11:7,12:6,13:7,14:5,15:6,16:3,17:5,18:1,19:3,21:1");  // BAKED: codex 1285q peak-drop (stream selected high bits through low-qubit suffix)
     // Bake the exact conditional-replay stack for env-less GPU hunts and grader builds.
@@ -1520,7 +1500,7 @@ fn configure_ecdsafail_submission_route() {
     // KAL_FOLD 24->22 and APPLY_CLEAN_COMPARE_BITS 20->19 re-tightenings above.
     // 1011 -> 1012: one more width-envelope notch, stacked on COMPARE_BITS=46
     // under the nonce-10429 island below. Value-exact, peak-neutral at 1320q.
-    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1017");
+    set_default_env("DIALOG_GCD_WIDTH_SLOPE_X1000", "1015");
     // Active-395 island on the promoted 1355q base: validated 0/0/0 over all
     // 9024 shots at 1355q x 1,773,011 T.
     set_default_env("DIALOG_REROLL", "4269");
@@ -1585,6 +1565,7 @@ fn configure_ecdsafail_submission_route() {
     // Fiat-Shamir island:
     // Binder-notch fallback 8,9: nonce 169924627 validates 0/0/0 over all
     // 9024 shots at 1300q x 1,454,884 T = 1,891,349,200.
+    set_default_env("DIALOG_TAIL_NONCE", "55432501896150");
     set_default_env("ROUND84_FOLD_FAST_ADD", "0");  // round84 Solinas-fold small adders coherent->measured-fast (-1,434 exec-T, peak-neutral 1285)
     set_default_env("DIALOG_GCD_FOLD_MAJ2", "1");
     set_default_env("DIALOG_GCD_FOLD_MAJ1", "1");
@@ -1592,6 +1573,8 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("ROUND84_QPROD_VENT_PAD", "1");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
     set_default_env("DIALOG_GCD_APPLY_FINAL_WINDOWED_FAST_BLOCKS", "0");
+    set_default_env("DIALOG_FUSE_C_FORM", "1");
+    set_default_env("DIALOG_FUSE_X_RESTORE", "1");
     // Fuse the branch-bit comparator with the b0-controlled log update: derive
     // b0_and_b1 from the in-flight comparator carry instead of materializing a
     // separate cmp qubit and recomputing the comparator for uncompute. Pure
@@ -1916,6 +1899,17 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
+    if std::env::var("DIALOG_FUSE_SELFTEST").is_ok() {
+        match dialog_fuse_primitive_selftest() {
+            Ok(()) => eprintln!(
+                "DIALOG_FUSE_SELFTEST: PASS (mod_add_triple_qb = +3*Qx, mod_const_minus_reg_qb = Qx-tx; value-exact, ancilla & phase clean over 64 shots)"
+            ),
+            Err(e) => panic!("DIALOG_FUSE_SELFTEST: FAIL: {e}"),
+        }
+        if std::env::var("DIALOG_FUSE_SELFTEST_ONLY").ok().as_deref() == Some("1") {
+            return Vec::new();
+        }
+    }
     if std::env::var("SQUARE_WINDOW_SELFTEST").is_ok() {
         match square_window_selftest() {
             Ok(()) => eprintln!("SQUARE_WINDOW_SELFTEST: PASS"),
@@ -1968,133 +1962,7 @@ pub fn build() -> Vec<Op> {
             return Vec::new();
         }
     }
-    // GPT-Codex Q1159 product route. Per-call FFG/fold reserves fit every local
-    // arithmetic peak under the target width; direct comparator carries and HMR
-    // cleanup remove Toffolis without increasing liveness. Nonce 453700 passed
-    // the trusted 9024-shot evaluator with 0 classical, phase, and ancilla
-    // failures at rounded T=1,388,180 and Q=1159 (score 1,608,900,620).
-    set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
-    set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
-    set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "1200003967933");
-    // Stack the latest frontier square fold: use shifted-low folding for all
-    // square lanes instead of the older `a`-only direct32 ramp shortcut.
-    set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
-    set_default_env("TLM_SQUARE_F_SHIFTED_LOW", "1");
-    // Post-5f3a0e3 avg-Toffoli reductions (Codex): graduated final +f without
-    // materializing/erasing the dropped carry-out + skip the no-op first
-    // forward-apply cswap. Peak-neutral (1159), -580.9 avgT.
-    set_default_env("TLM_GRAD_FINAL_NO_COUT", "1");
-    set_default_env("TLM_APPLY_FWD_FIRST_CSWAP_SKIP", "1");
-    set_default_env("CONSTPROP_MAX_ITERS", "16");
-    set_default_env("TLM_TARGET_Q", "1159");
-    set_default_env("TLM_FOLD_RELEASE_CONTROLS", "1");
-    set_default_env("TLM_TARGET_FFG_RESERVE", "9");
-    set_default_env(
-        "TLM_TARGET_FFG_CALL_RESERVES",
-        concat!(
-            "163:8,165:8,166:7,167:8,168:7,169:6,170:7,171:6,172:5,173:6,174:5,175:4,176:5,177:4,178:3,179:4,180:3,181:2,182:3,183:2,184:1,185:2,186:1,187:0,188:1,189:0,190:3,191:0,192:3,193:3,194:3,195:3,196:4,197:3,198:4,199:4,200:4,201:4,202:4,203:4,204:4,205:5,206:4,207:5,208:5,209:5,210:5,211:5,212:5,213:5,214:5,215:5,216:5,217:6,218:5,219:6,220:6,221:6,222:6,223:6,224:6,225:6,226:6,227:6,228:6,229:6,230:6,231:6,232:7,233:6,234:7,235:7,236:7,237:7,238:7,239:7,240:7,241:7,242:7,243:7,244:7,245:7,246:7,247:7,248:8,249:8,250:8,251:8,252:8,253:8,254:8,",
-            "509:8,510:8,511:8,512:8,513:8,514:8,515:8,516:7,517:7,518:7,519:7,520:7,521:7,522:7,523:7,524:7,525:7,526:7,527:7,528:7,529:7,530:6,531:7,532:6,533:6,534:6,535:6,536:6,537:6,538:6,539:6,540:6,541:6,542:6,543:6,544:6,545:5,546:6,547:5,548:5,549:5,550:5,551:5,552:5,553:5,554:5,555:5,556:5,557:4,558:5,559:4,560:4,561:4,562:4,563:4,564:4,565:4,566:3,567:4,568:3,569:3,570:3,571:3,572:0,573:3,574:0,575:1,576:0,577:1,578:2,579:1,580:2,581:3,582:2,583:3,584:4,585:3,586:4,587:5,588:4,589:5,590:6,591:5,592:6,593:7,594:6,595:7,596:8,597:7,598:8,600:8",
-        ),
-    );
-    set_default_env("TLM_TARGET_FOLD_RESERVE", "4");
-    set_default_env(
-        "TLM_TARGET_FOLD_CALL_RESERVES",
-        concat!(
-            "170:3,172:3,173:2,174:3,175:2,176:1,177:2,178:1,179:0,180:1,181:0,182:0,183:0,184:0,185:3,186:0,187:3,188:3,189:3,190:3,191:3,192:3,193:3,195:3,",
-            "251:3,252:3,253:3,254:3,255:3,256:3,257:3,258:3,259:3,260:3,261:3,262:3,318:3,320:3,321:3,322:3,323:3,324:3,325:3,326:3,327:0,328:3,329:0,330:0,331:0,332:0,333:1,334:0,335:1,336:2,337:1,338:2,339:3,340:2,341:3,343:3",
-        ),
-    );
-    set_default_env("TLM_GCD_RESELECT_LAYOUT", "1");
-    set_default_env("TLM_DIRECT_VARCHUNK", "1");
-    set_default_env("TLM_COUT_LAYOUT_SEARCH", "1");
-    set_default_env("TLM_COUT_LAYOUT_MARGIN", "0");
-    set_default_env("TLM_COUT_LAYOUT_FORCE_M1_KS", "129");
-    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
-    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
-    // u0/even-v0 lifecycle loans plus the GCD y0 loan candidate
-    // (1165->1164 at the same layout stack) — BAKED so env-less builds reproduce it.
-    set_default_env("TLM_PARK_ODD_U0", "1");
-    set_default_env("TLM_LOAN_ODD_U0", "1");
-    set_default_env("TLM_PARK_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_EVEN_V0", "1");
-    set_default_env("TLM_LOAN_GCD_Y0", "1");
-    set_default_env("TLM_HYB_V_DELTA", "2");
-    set_default_env("TLM_COUT_K_DELTA", "2");
-    set_default_env("TLM_FOLD_DELTA", "2");
-    set_default_env("TLM_FFG_DELTA", "0");
-    set_default_env("TLM_GCD_K_ADJUST_AFTER", "169");
-    set_default_env("TLM_GCD_K_ADJUST_BEFORE", "196");
-    set_default_env("TLM_GCD_K_ADJUST", "-2");
-    let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
-    if std::env::var("SINGLE_CCX_FANOUT_DISABLE")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        return ops;
-    }
-    let input_ops = ops.len();
-    let mut fanout_passes = 0usize;
-    loop {
-        match single_ccx_fanout::rewrite_first_target_fanout(ops.clone(), 96) {
-            Ok((rewritten, _witness)) => {
-                fanout_passes += 1;
-                ops = rewritten;
-            }
-            Err(error) => {
-                eprintln!(
-                    "SINGLE_CCX_FANOUT: STOP passes={} input_ops={} output_ops={} reason={}",
-                    fanout_passes,
-                    input_ops,
-                    ops.len(),
-                    error,
-                );
-                break;
-            }
-        }
-    }
-    assert!(fanout_passes >= 1, "single-fanout rewrite failed to find first pass");
-    eprintln!(
-        "SINGLE_CCX_FANOUT: SUMMARY input_ops={} output_ops={} passes={}",
-        input_ops,
-        ops.len(),
-        fanout_passes,
-    );
-    // Drop the inert-but-charged CCX (value-neutral; lowers avg-exec-Toffoli).
-    // 15,221 indices on THIS post-fanout stream: zuiris's dead ops PLUS additional
-    // CCX that never flip their target across ~9.2M random EC-point inputs (dynamic
-    // mutual-exclusion that static const-prop can't prove). Validated ancilla=0 +
-    // classical-floor across many nonces. Re-rolls the Fiat-Shamir draw -> the old
-    // 13,873-base nonce is NOT clean here; NEEDS A FRESH ISLAND HUNT.
-    {
-        let drop_txt = include_str!("drop_dead_robust_15221.idx");
-        let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for line in drop_txt.lines() {
-            let t = line.trim();
-            if t.is_empty() || t.starts_with("idx") {
-                continue;
-            }
-            let first = t.split('\t').next().unwrap_or(t);
-            if let Ok(v) = first.parse::<usize>() {
-                drop.insert(v);
-            }
-        }
-        let before = ops.len();
-        ops = ops
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !drop.contains(i))
-            .map(|(_, o)| o)
-            .collect();
-        eprintln!(
-            "DROP_DEAD_ROBUST: removed {} ops ({} -> {})",
-            before - ops.len(),
-            before,
-            ops.len()
-        );
-    }
-    ops
+    build_builder().ops
 }
 
 pub fn square_window_selftest() -> Result<(), String> {

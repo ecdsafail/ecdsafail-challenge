@@ -31,6 +31,8 @@ pub(crate) fn round84_emit_fused_square_xtail(
         squaring_sub_from_acc_schoolbook_lowq_shift22(b, tx, lam, p);
     }
     if dialog_fuse_c_form_enabled() {
+        // FUSE_C_FORM: leave tx = dx - lam^2; the +3*Qx is applied in the driver's
+        // c-form via mod_add_triple_qb (telescoping the [+2Qx, neg, -Qx, neg] chain).
         return;
     }
     b.set_phase("round84_fused_square_xtail_add_double_ox");
@@ -412,55 +414,6 @@ pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize
     active_width.saturating_sub(w).max(2)
 }
 
-/// Band-trim the LIVE (vented) divstep body sub/add to body_carry_trunc_width,
-/// mirroring the materialized-path trim (which is baked+validated) onto the
-/// cuccaro_*_ctrl_vented else-branch that currently runs full active_width. The
-/// trimmed-off top cells are |0> on reachable GCD support (WIDTH_MARGIN premise)
-/// and the post-cswap body never borrows past the active operand, so the result
-/// is value-exact on that support. Default OFF = byte-identical.
-pub(crate) fn dialog_gcd_vented_body_band_trim_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_BAND_TRIM").ok().as_deref() == Some("1")
-}
-
-/// Effective vented-body sub/add width at this step. OFF => full active_width n.
-/// With the knob ON it mirrors body_carry_trunc_width (the baked schedule);
-/// DIALOG_GCD_VENTED_BODY_UNIFORM_TRIM=N overrides with a flat (n-N) trim so the
-/// score/lambda_cl Pareto can be swept (N=1 conservative .. larger = more lossy).
-pub(crate) fn dialog_gcd_vented_body_width(n: usize, step: usize) -> usize {
-    if !dialog_gcd_vented_body_band_trim_enabled() {
-        return n;
-    }
-    if let Some(u) = std::env::var("DIALOG_GCD_VENTED_BODY_UNIFORM_TRIM")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&u| u > 0)
-    {
-        return n.saturating_sub(u).max(2);
-    }
-    let mut w = dialog_gcd_body_carry_trunc_width(n, step).min(n).max(2);
-    // Optional per-step trim CAP: cap the schedule's trim at K bits (w >= n-K).
-    // With overshoot<=8 < WIDTH_MARGIN=10, cap=2 keeps the trimmed cells |0> on
-    // ALL reachable inputs (bitlen <= active_width-2) => value-exact-always =>
-    // density-neutral, trading a little cut for a guaranteed-clean island.
-    if let Some(cap) = std::env::var("DIALOG_GCD_VENTED_BODY_TRIM_CAP")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-    {
-        w = w.max(n.saturating_sub(cap)).min(n);
-    }
-    w
-}
-
-/// Skip bit 0 of the LIVE vented divstep body (mirrors the materialized
-/// body_start=1 fastpath, which is wired only to the dead MATERIALIZED_SUB
-/// branch). Kaliski invariant: u kept odd (subtrahend[0]=1) and acc[0]=ctrl at
-/// the sub site / acc[0]=0 at the reverse-add site, so the bit-0 result is a
-/// known cx(ctrl,acc[0]) with NO carry into bit 1 — value-exact, density-neutral,
-/// orthogonal to the band-trim (band trims the top, this the bottom). Default OFF.
-pub(crate) fn dialog_gcd_vented_body_odd_lowbit_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT").ok().as_deref() == Some("1")
-}
-
 pub(crate) fn dialog_gcd_binder_notch_steps() -> Vec<usize> {
     std::env::var("DIALOG_GCD_BINDER_NOTCH_STEPS")
         .ok()
@@ -835,18 +788,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             if let Some(vents) =
                 borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
             {
-                let bw = dialog_gcd_vented_body_width(n, step);
-                if dialog_gcd_vented_body_odd_lowbit_enabled()
-                    && dialog_gcd_odd_u_lowbit_fastpath_enabled()
-                    && bw >= 3
-                {
-                    // Bit-0 result = cx(ctrl, acc[0]); no borrow into bit 1 (acc[0]=ctrl,
-                    // subtrahend[0]=1). Run the vented body over [1..bw].
-                    b.cx(ctrl, acc[0]);
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
-                } else {
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
-                }
+                cuccaro_sub_ctrl_vented(b, subtrahend, acc, ctrl, &vents[..n - 1]);
                 return;
             }
         }
@@ -1048,18 +990,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
             if let Some(vents) =
                 borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
             {
-                let bw = dialog_gcd_vented_body_width(n, step);
-                if dialog_gcd_vented_body_odd_lowbit_enabled()
-                    && dialog_gcd_odd_u_lowbit_fastpath_enabled()
-                    && bw >= 3
-                {
-                    // Reverse-add mirror: acc[0]=0, addend[0]=1 => bit-0 result =
-                    // cx(ctrl, acc[0]), no carry into bit 1. Body over [1..bw].
-                    b.cx(ctrl, acc[0]);
-                    cuccaro_add_ctrl_vented(b, &addend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
-                } else {
-                    cuccaro_add_ctrl_vented(b, &addend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
-                }
+                cuccaro_add_ctrl_vented(b, addend, acc, ctrl, &vents[..n - 1]);
                 return;
             }
         }
@@ -1621,41 +1552,6 @@ fn dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
     b.free_vec(&owned);
 }
 
-fn dialog_gcd_add_fast_low_to_ext_with_borrowed_carries_topclean(
-    b: &mut B,
-    a: &[QubitId],
-    acc_ext: &[QubitId],
-    c_in: QubitId,
-    borrowed_carries: &[QubitId],
-    clean_top: usize,
-) {
-    let clean_top = clean_top.min(a.len().saturating_sub(1));
-    if clean_top == 0 {
-        return dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
-            b,
-            a,
-            acc_ext,
-            c_in,
-            borrowed_carries,
-        );
-    }
-    let needed_carries = a.len() - clean_top;
-    let borrowed = borrowed_carries.len().min(needed_carries);
-    let owned = b.alloc_qubits(needed_carries - borrowed);
-    let mut carries = Vec::with_capacity(needed_carries);
-    carries.extend_from_slice(&borrowed_carries[..borrowed]);
-    carries.extend_from_slice(&owned);
-    cuccaro_add_fast_low_to_ext_borrowed_carries_topclean(
-        b,
-        a,
-        acc_ext,
-        c_in,
-        &carries,
-        clean_top,
-    );
-    b.free_vec(&owned);
-}
-
 fn dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
     b: &mut B,
     a: &[QubitId],
@@ -1670,41 +1566,6 @@ fn dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
     carries.extend_from_slice(borrowed);
     carries.extend_from_slice(&owned);
     cuccaro_sub_fast_low_to_ext_borrowed_carries(b, a, acc_ext, c_in, &carries);
-    b.free_vec(&owned);
-}
-
-fn dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries_topclean(
-    b: &mut B,
-    a: &[QubitId],
-    acc_ext: &[QubitId],
-    c_in: QubitId,
-    borrowed_carries: &[QubitId],
-    clean_top: usize,
-) {
-    let clean_top = clean_top.min(a.len().saturating_sub(1));
-    if clean_top == 0 {
-        return dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
-            b,
-            a,
-            acc_ext,
-            c_in,
-            borrowed_carries,
-        );
-    }
-    let needed_carries = a.len() - clean_top;
-    let borrowed = borrowed_carries.len().min(needed_carries);
-    let owned = b.alloc_qubits(needed_carries - borrowed);
-    let mut carries = Vec::with_capacity(needed_carries);
-    carries.extend_from_slice(&borrowed_carries[..borrowed]);
-    carries.extend_from_slice(&owned);
-    cuccaro_sub_fast_low_to_ext_borrowed_carries_topclean(
-        b,
-        a,
-        acc_ext,
-        c_in,
-        &carries,
-        clean_top,
-    );
     b.free_vec(&owned);
 }
 
@@ -1736,59 +1597,6 @@ fn dialog_gcd_conditional_boundary_replay(
             phase,
         );
     }
-}
-
-fn dialog_gcd_conditional_boundary_replay_free_owned(
-    b: &mut B,
-    u: &[QubitId],
-    v: &[QubitId],
-    ctrl: QubitId,
-    c_in: QubitId,
-    targets: &[(QubitId, usize, bool)],
-) {
-    assert!(!targets.is_empty());
-    assert!(targets.windows(2).all(|w| w[0].1 < w[1].1));
-    for index in (0..targets.len()).rev() {
-        let (target, p, owned_target) = targets[index];
-        let (start, carry_in) = if index == 0 {
-            (0, c_in)
-        } else {
-            (targets[index - 1].1, targets[index - 1].0)
-        };
-        let phase = b.alloc_bit();
-        b.hmr(target, phase);
-        if owned_target {
-            b.free(target);
-        }
-        cmp_lt_phase_conditioned_with_cin(
-            b,
-            &u[start..p],
-            &v[start..p],
-            carry_in,
-            ctrl,
-            phase,
-        );
-    }
-}
-
-fn dialog_gcd_apply_auto_topclean_bits(
-    active_before_ripple: u32,
-    source_len: usize,
-    future_boundary_carries: &[QubitId],
-) -> usize {
-    let Some(target) = dialog_gcd_apply_chunked_f_auto_topclean_target() else {
-        return 0;
-    };
-    if source_len <= 1 {
-        return 0;
-    }
-    let future_borrowed = future_boundary_carries.len().min(source_len);
-    let owned_carries_without_topclean = source_len - future_borrowed;
-    let projected_peak = active_before_ripple as usize + owned_carries_without_topclean;
-    let needed = projected_peak.saturating_sub(target as usize);
-    needed
-        .min(dialog_gcd_apply_chunked_f_auto_topclean_max_bits())
-        .min(source_len - 1)
 }
 
 pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
@@ -1832,8 +1640,7 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
             b.set_phase("dialog_gcd_apply_chunk_add_final_load");
             let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo.min(n), n);
             b.set_phase("dialog_gcd_apply_chunk_add_final_ripple");
-            let final_topclean = dialog_gcd_apply_final_topclean_bits()
-                .max(dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), &[]));
+            let final_topclean = dialog_gcd_apply_final_topclean_bits();
             if final_topclean > 0 {
                 cuccaro_add_fast_low_to_ext_topclean(b, &f, &acc_ext[lo..hi], carry, final_topclean);
             } else if let Some(window_blocks) = dialog_gcd_apply_final_windowed_fast_blocks() {
@@ -1880,31 +1687,15 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         } else {
             &[]
         };
-        let topclean_bits = if implicit_high_zero {
-            dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), future_boundary_carries)
-        } else {
-            0
-        };
         b.set_phase("dialog_gcd_apply_chunk_add_ripple");
         if implicit_high_zero {
-            if topclean_bits > 0 {
-                dialog_gcd_add_fast_low_to_ext_with_borrowed_carries_topclean(
-                    b,
-                    &f,
-                    &acc_block,
-                    carry,
-                    future_boundary_carries,
-                    topclean_bits,
-                );
-            } else {
-                dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
-                    b,
-                    &f,
-                    &acc_block,
-                    carry,
-                    future_boundary_carries,
-                );
-            }
+            dialog_gcd_add_fast_low_to_ext_with_borrowed_carries(
+                b,
+                &f,
+                &acc_block,
+                carry,
+                future_boundary_carries,
+            );
         } else {
             let mut a_block = f.clone();
             a_block.push(zero);
@@ -1927,7 +1718,6 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         lo = hi;
     }
 
-    let mut boundary_replay_freed_owned = false;
     if dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() {
         if let Some(&(_, p, _)) = couts.last() {
             b.set_phase("dialog_gcd_apply_chunk_add_boundary_clear");
@@ -1936,26 +1726,14 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
                 .map(|&(cout, p, _)| (cout, p))
                 .collect::<Vec<_>>();
             if dialog_gcd_apply_boundary_conditional_replay_enabled() {
-                if dialog_gcd_apply_boundary_free_owned_during_replay_enabled() {
-                    dialog_gcd_conditional_boundary_replay_free_owned(
-                        b,
-                        &acc_ext[..p],
-                        &source[..p],
-                        ctrl,
-                        c_in,
-                        &couts,
-                    );
-                    boundary_replay_freed_owned = true;
-                } else {
-                    dialog_gcd_conditional_boundary_replay(
-                        b,
-                        &acc_ext[..p],
-                        &source[..p],
-                        ctrl,
-                        c_in,
-                        &targets,
-                    );
-                }
+                dialog_gcd_conditional_boundary_replay(
+                    b,
+                    &acc_ext[..p],
+                    &source[..p],
+                    ctrl,
+                    c_in,
+                    &targets,
+                );
             } else if let Some(split) = dialog_gcd_apply_boundary_split() {
                 ccx_cmp_lt_into_fast_prefix_targets_split(
                     b,
@@ -1976,7 +1754,7 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
         }
     }
     for &(cout, _, owned_cout) in couts.iter().rev() {
-        if owned_cout && !boundary_replay_freed_owned {
+        if owned_cout {
             b.free(cout);
         }
     }
@@ -2021,8 +1799,7 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
             b.set_phase("dialog_gcd_apply_chunk_sub_final_load");
             let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo.min(n), n);
             b.set_phase("dialog_gcd_apply_chunk_sub_final_ripple");
-            let final_topclean = dialog_gcd_apply_final_topclean_bits()
-                .max(dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), &[]));
+            let final_topclean = dialog_gcd_apply_final_topclean_bits();
             if final_topclean > 0 {
                 cuccaro_sub_fast_low_to_ext_topclean(b, &f, &acc_ext[lo..hi], borrow, final_topclean);
             } else if let Some(window_blocks) = dialog_gcd_apply_final_windowed_fast_blocks() {
@@ -2069,31 +1846,15 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         } else {
             &[]
         };
-        let topclean_bits = if implicit_high_zero {
-            dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), future_boundary_carries)
-        } else {
-            0
-        };
         b.set_phase("dialog_gcd_apply_chunk_sub_ripple");
         if implicit_high_zero {
-            if topclean_bits > 0 {
-                dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries_topclean(
-                    b,
-                    &f,
-                    &acc_block,
-                    borrow,
-                    future_boundary_carries,
-                    topclean_bits,
-                );
-            } else {
-                dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
-                    b,
-                    &f,
-                    &acc_block,
-                    borrow,
-                    future_boundary_carries,
-                );
-            }
+            dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries(
+                b,
+                &f,
+                &acc_block,
+                borrow,
+                future_boundary_carries,
+            );
         } else {
             let mut a_block = f.clone();
             a_block.push(zero);
@@ -2116,7 +1877,6 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         lo = hi;
     }
 
-    let mut boundary_replay_freed_owned = false;
     if dialog_gcd_apply_chunked_f_fuse_boundary_clears_enabled() {
         if let Some(&(_, p, _)) = bouts.last() {
             b.set_phase("dialog_gcd_apply_chunk_sub_boundary_clear");
@@ -2128,26 +1888,14 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
                 .map(|&(bout, p, _)| (bout, p))
                 .collect::<Vec<_>>();
             if dialog_gcd_apply_boundary_conditional_replay_enabled() {
-                if dialog_gcd_apply_boundary_free_owned_during_replay_enabled() {
-                    dialog_gcd_conditional_boundary_replay_free_owned(
-                        b,
-                        &source[..p],
-                        &acc_ext[..p],
-                        ctrl,
-                        c_in,
-                        &bouts,
-                    );
-                    boundary_replay_freed_owned = true;
-                } else {
-                    dialog_gcd_conditional_boundary_replay(
-                        b,
-                        &source[..p],
-                        &acc_ext[..p],
-                        ctrl,
-                        c_in,
-                        &targets,
-                    );
-                }
+                dialog_gcd_conditional_boundary_replay(
+                    b,
+                    &source[..p],
+                    &acc_ext[..p],
+                    ctrl,
+                    c_in,
+                    &targets,
+                );
             } else if let Some(split) = dialog_gcd_apply_boundary_split() {
                 ccx_cmp_lt_into_fast_prefix_targets_split(
                     b,
@@ -2177,7 +1925,7 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
         }
     }
     for &(bout, _, owned_bout) in bouts.iter().rev() {
-        if owned_bout && !boundary_replay_freed_owned {
+        if owned_bout {
             b.free(bout);
         }
     }
@@ -2944,7 +2692,7 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
 
     b.set_phase("dialog_gcd_raw_pa_c_ox_minus_rx");
     if dialog_fuse_c_form_enabled() {
-        mod_add_triple_qb(b, tx, ox, p);
+        mod_add_triple_qb(b, tx, ox, p); // c = (dx - lam^2) + 3*Qx
     } else {
         mod_sub_qb(b, tx, ox, p);
         mod_neg_inplace_fast(b, tx, p);
@@ -2964,7 +2712,7 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
 
     b.set_phase("dialog_gcd_raw_pa_x_restore");
     if dialog_fuse_x_restore_enabled() {
-        mod_const_minus_reg_qb(b, tx, ox, p);
+        mod_const_minus_reg_qb(b, tx, ox, p); // Rx = Qx - c
     } else {
         mod_neg_inplace_fast(b, tx, p);
         mod_add_qb(b, tx, ox, p);
