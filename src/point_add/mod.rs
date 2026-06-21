@@ -69,7 +69,6 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 pub mod venting;
 
 pub mod dialog_gcd_classical_filter;
-pub mod island_search;
 
 mod emit;
 pub(crate) use emit::*;
@@ -2028,7 +2027,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "720036076906");
+    set_default_env("DIALOG_TAIL_NONCE", "9600006009245");
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
@@ -2038,8 +2037,16 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_GRAD_FINAL_NO_COUT", "1");
     set_default_env("TLM_APPLY_FWD_FIRST_CSWAP_SKIP", "1");
     set_default_env("CONSTPROP_MAX_ITERS", "16");
-    set_default_env("TLM_TARGET_Q", "1159");
-    set_default_env("TLM_APPLY_INV_FIRST_CSWAP_SKIP", "1");
+    // q1156 chunk4/ffg11/s2safer route (Codex c07bf74 sweep) — peak 1156.
+    set_default_env("TLM_TARGET_Q", "1156");
+    set_default_env("TLM_FOLD_BOUNDARY_ZERO_DIRECT", "1");
+    set_default_env("TLM_FOLD_CHUNK_FORCE", "4");
+    set_default_env("TLM_TARGET_FOLD_CALL_RESERVE_OVERRIDES", "173:3,175:3,177:3,256:11,257:11,336:3,338:3,340:3,176:3,178:3,180:3,254:5,259:20,333:3,335:3,337:3,179:3,181:3,183:3,182:3,184:3,186:3,327:3,329:3,330:3,331:3,332:3,334:3");
+    set_default_env("TLM_TARGET_FFG_CALL_RESERVE_OVERRIDES", "184:4,186:4,188:4,205:6,207:6,209:6,220:7,222:7,224:7,238:8,240:8,242:8,251:9,257:10,262:10,355:10,362:10,359:10,181:3,183:3,185:3,187:4,189:4,191:4,196:5,198:5,200:5,208:6,210:6,212:6,223:7,225:7,227:7,241:8,243:8,245:8,250:9,252:9,190:4,192:4,193:5,194:4,195:5,197:5,199:5,201:5,202:6,203:5,204:6,206:6,211:6,213:6,214:7,215:6,216:7,218:7,226:7,228:8,229:8,230:8,231:8,233:8,244:8,246:8,247:9,253:9,254:10,259:11,358:10,340:11,341:11,342:11,343:11,344:11,345:11,346:11,347:11,348:11,349:11,350:11");
+    set_default_env("TLM_APPLY_FWD_S2_ZERO_LAST", "1");
+    set_default_env("TLM_APPLY_INV_S2_ZERO_LAST", "1");
+    set_default_env("TLM_APPLY_FWD_CSWAP_SKIP_LAST", "2");
+    set_default_env("TLM_APPLY_INV_CSWAP_SKIP_LAST", "1");
     set_default_env("TLM_FOLD_RELEASE_CONTROLS", "1");
     set_default_env("TLM_TARGET_FFG_RESERVE", "9");
     set_default_env(

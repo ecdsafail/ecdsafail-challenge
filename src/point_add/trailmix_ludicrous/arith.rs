@@ -917,6 +917,11 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
         {
             reserve = 8;
         }
+        if let Some(call_reserve) =
+            env_index_value("TLM_TARGET_FFG_CALL_RESERVE_OVERRIDES", call_index)
+        {
+            reserve = call_reserve;
+        }
         headroom.saturating_sub(reserve)
     });
     let scheduled_g = g_sched
