@@ -1976,7 +1976,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "950803143946");
+    set_default_env("DIALOG_TAIL_NONCE", "1200003967933");
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
@@ -2061,12 +2061,14 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
-    // Drop the 13,873 inert-but-charged CCX (value-neutral; -13,015 avg-exec-Toffoli).
-    // Indices are on THIS post-fanout stream (match drop_dead_robust_13873.idx, generated
-    // by the siege screen). Re-rolls the Fiat-Shamir draw -> re-hunted to the clean nonce
-    // DIALOG_TAIL_NONCE=950803143946 above (validated 0/0/0, q=1159, avg-T 1,365,621).
+    // Drop the inert-but-charged CCX (value-neutral; lowers avg-exec-Toffoli).
+    // 15,221 indices on THIS post-fanout stream: zuiris's dead ops PLUS additional
+    // CCX that never flip their target across ~9.2M random EC-point inputs (dynamic
+    // mutual-exclusion that static const-prop can't prove). Validated ancilla=0 +
+    // classical-floor across many nonces. Re-rolls the Fiat-Shamir draw -> the old
+    // 13,873-base nonce is NOT clean here; NEEDS A FRESH ISLAND HUNT.
     {
-        let drop_txt = include_str!("drop_dead_robust_13873.idx");
+        let drop_txt = include_str!("drop_dead_robust_15221.idx");
         let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for line in drop_txt.lines() {
             let t = line.trim();
