@@ -66,9 +66,9 @@ pub const F_BITLEN: usize = 33;
 /// Profile padding.
 pub const PAD: usize = 19;
 /// `+f` fold window width: carry beyond bit `LSBS-1` is dropped (~2^-PAD miss).
-pub const LSBS: usize = PAD + F_BITLEN; // 54
+pub const LSBS: usize = 20 + F_BITLEN; // baseline + one fold-window giveback
 /// Top-k less-than comparator width for the mod-add/sub overflow cleanup.
-pub const MSBS: usize = PAD; // 21
+pub const MSBS: usize = PAD; // comparator remains at baseline
 /// Chunk width for the measurement-vented chunked-gated register adder used on the
 /// peak-bound apply path. Sized so the per-call working set (one chunk's `W`
 /// carries + the `n/W` boundary carries + the erase comparator's `W` carries) fits
@@ -254,6 +254,10 @@ pub(crate) fn erase_carry_gated_opt(
     let s = a.len();
     let bit = circ.alloc_bit();
     circ.hmr(*carry, bit);
+    // HMR has reset the boundary carry to |0>. The phase-recovery comparator
+    // only needs the measurement bit plus the real incoming cin, so return the
+    // measured lane to the allocator before rebuilding the predicate.
+    circ.loan_zero_qubit(*carry);
     circ.push_condition(bit);
     let deposit = |c: &mut B, ta: &QubitId, tb: &QubitId, c_prev: &QubitId| match ctrl {
         Some(ct) => {
@@ -277,6 +281,44 @@ pub(crate) fn erase_carry_gated_opt(
         }
         _ => {
             super::comparator::compare_geq_cin_middle(circ, a, b, cin, deposit);
+        }
+    }
+    circ.pop_condition();
+}
+
+pub(crate) fn erase_carry_gated_zero_cin_opt(
+    circ: &mut B,
+    ctrl: Option<&QubitId>,
+    a: &[QubitId],
+    b: &[QubitId],
+    carry: &QubitId,
+    cap: Option<usize>,
+) {
+    let s = a.len();
+    let bit = circ.alloc_bit();
+    circ.hmr(*carry, bit);
+    circ.push_condition(bit);
+    let deposit = |c: &mut B, ta: &QubitId, tb: &QubitId, c_prev: &QubitId| match ctrl {
+        Some(ct) => {
+            c.z(*ct);
+            c.ccz(*ct, *ta, *tb);
+            c.cz(*ct, *c_prev);
+        }
+        None => {
+            c.neg();
+            c.cz(*ta, *tb);
+            c.z(*c_prev);
+        }
+    };
+    match cap {
+        Some(k) if k < s => {
+            let lo = s - k;
+            let zcin = circ.alloc_qubit();
+            super::comparator::compare_geq_cin_middle(circ, &a[lo..], &b[lo..], &zcin, deposit);
+            circ.zero_and_free(zcin);
+        }
+        _ => {
+            super::comparator::compare_geq_cin_middle(circ, a, b, carry, deposit);
         }
     }
     circ.pop_condition();
@@ -340,7 +382,6 @@ fn emit_chunked_capped(
         let carry = carries.pop().expect("carry present");
         let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
         erase_carry_gated_opt(circ, ctrl, &y[lo..hi], &x[lo..hi], cin, &carry, cap);
-        circ.zero_and_free(carry);
     }
     circ.zero_and_free(cin0);
 }
@@ -917,16 +958,25 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
         {
             reserve = 8;
         }
+        if let Some(call_reserve) =
+            env_index_value("TLM_TARGET_FFG_CALL_RESERVE_OVERRIDES", call_index)
+        {
+            reserve = call_reserve;
+        }
         headroom.saturating_sub(reserve)
     });
     let scheduled_g = g_sched
         .map_or_else(|| CEILING.saturating_sub(circ.active_qubits as usize), |g| g)
         .min(target_g.unwrap_or(usize::MAX))
         .min(n - 1);
+    let capped_g = std::env::var("TLM_FFG_MAX_G")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map_or(scheduled_g, |cap| scheduled_g.min(cap));
     let g = std::env::var("TLM_FFG_FORCE_G")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .map_or(scheduled_g, |forced| forced.min(n - 1));
+        .map_or(capped_g, |forced| forced.min(n - 1));
     let trace_entry_active = circ.active_qubits;
     if g >= n - 1 {
         add_f_window_clean(circ, ctrl, reg, lsbs, c); // all-clean path
@@ -1255,6 +1305,24 @@ pub fn mod_add(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
     // clean anc: anc ^= (y_top < x_top) over the top MSBS bits (consumes anc).
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
+}
+
+/// EXACT (full-width, NON-truncated) `y := y + x (mod q)`. Identical to
+/// [`mod_add`] but the overflow-clean comparator runs over ALL `n` bits instead
+/// of the ludicrous top-`MSBS` window, so the result and the ancilla clear are
+/// correct on EVERY input (no ~2^-PAD mis-clear). Used by the classical-constant
+/// `+3*ox` coordinate step, whose single off-peak add we want exactly clean on
+/// the fixed evaluation inputs without relying on the truncated approximation.
+pub fn mod_add_exact(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
+    let n = x.len();
+    assert_eq!(y.len(), n, "mod_add_exact: x,y must both be n=256 bits");
+    assert_eq!(n, 256, "secp256k1 mod_add_exact expects n=256");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    add_cout_vented_unctrl(circ, x, y, &anc);
+    add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
+    // FULL-WIDTH comparator (k = n): exact overflow clean.
+    controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], n, anc);
 }
 
 /// Low-peak modular add for off-peak recombination. This mirrors [`mod_add`],

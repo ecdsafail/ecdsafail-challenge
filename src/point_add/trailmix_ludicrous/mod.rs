@@ -14,7 +14,7 @@ mod arith;
 mod codec;
 mod comparator;
 mod constprop;
-mod ec_add;
+pub mod ec_add;
 mod fused;
 mod gcd;
 mod gidney;
@@ -356,10 +356,22 @@ fn route_swaps(src: &[QubitId], dst: &[QubitId]) -> Vec<(QubitId, QubitId)> {
     swaps
 }
 
+fn install_q1153_submission_defaults() {
+    for (name, value) in [
+        ("TLM_TARGET_Q", "1152"),
+        ("TLM_FOLD_CHUNK_ZERO_CIN", "1"),
+        ("TLM_FFG_MAX_G", "47"),
+        ("DIALOG_TAIL_NONCE", "55157796"),
+    ] {
+        std::env::set_var(name, value);
+    }
+}
+
 /// Build the product-min EC-add op-stream natively via `B`, with the 4
 /// evaluator registers (reg0=R.x qubits, reg1=R.y qubits, reg2=Q.x bits,
 /// reg3=Q.y bits) and the grinding tail nonce appended.
 pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
+    install_q1153_submission_defaults();
     let mut circ = B::new();
     load_schedule();
 

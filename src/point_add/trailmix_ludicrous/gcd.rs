@@ -173,6 +173,41 @@ fn loan_gcd_y0_enabled() -> bool {
     std::env::var("TLM_LOAN_GCD_Y0").ok().as_deref() == Some("1")
 }
 
+fn apply_fwd_cswap_skip(i: usize) -> bool {
+    let legacy_first_skip =
+        std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP").ok().as_deref() == Some("1")
+            && i + 1 == ITERS;
+    let last_n = std::env::var("TLM_APPLY_FWD_CSWAP_SKIP_LAST")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    legacy_first_skip || (last_n != 0 && i + last_n >= ITERS)
+}
+
+fn apply_inv_cswap_skip(i: usize) -> bool {
+    let last_n = std::env::var("TLM_APPLY_INV_CSWAP_SKIP_LAST")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    last_n != 0 && i + last_n >= ITERS
+}
+
+fn apply_fwd_s2_zero(i: usize) -> bool {
+    let last_n = std::env::var("TLM_APPLY_FWD_S2_ZERO_LAST")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    last_n != 0 && i + last_n >= ITERS
+}
+
+fn apply_inv_s2_zero(i: usize) -> bool {
+    let last_n = std::env::var("TLM_APPLY_INV_S2_ZERO_LAST")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    last_n != 0 && i + last_n >= ITERS
+}
+
 fn park_known_one(circ: &mut B, q: QubitId) -> QubitId {
     circ.x(q);
     if loan_odd_u0_enabled() {
@@ -958,6 +993,7 @@ fn apply_step_forward(
     dirty_vents: &[QubitId],
 ) {
     let n = 256usize;
+    let s2_known_zero = i != 0 && apply_fwd_s2_zero(i);
 
     // 1) if subtracted: y += x mod q. Apply cofactor add -> cout adder at the
     // schedule's k.
@@ -976,9 +1012,7 @@ fn apply_step_forward(
     });
     // 2) if swap: swap(x, y).
     circ.set_phase("tlm_apply_forward_swap");
-    if !(std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP").ok().as_deref() == Some("1")
-        && i + 1 == ITERS)
-    {
+    if !apply_fwd_cswap_skip(i) {
         for j in 0..n {
             circ.cswap(*swp, x_reg[j], y_reg[j]);
         }
@@ -990,6 +1024,8 @@ fn apply_step_forward(
     if i == 0 {
         controlled_mod_double(circ, t1, y_reg);
         controlled_mod_double(circ, s2, y_reg);
+    } else if s2_known_zero {
+        super::fused::fused_double_only(circ, y_reg);
     } else {
         super::fused::fused_double_cdouble(circ, s2, y_reg);
     }
@@ -1009,6 +1045,7 @@ fn apply_step_reverse(
     dirty_vents: &[QubitId],
 ) {
     let n = 256usize;
+    let s2_known_zero = i != 0 && apply_inv_s2_zero(i);
 
     // inverse of 3): i==0 two separate reverse-doublings (s2 halve then t1 halve);
     // i>0 the fused inverse double+cdouble.
@@ -1016,13 +1053,17 @@ fn apply_step_reverse(
     if i == 0 {
         controlled_mod_double_reverse(circ, s2, y_reg);
         controlled_mod_double_reverse(circ, t1, y_reg);
+    } else if s2_known_zero {
+        super::fused::fused_double_only_reverse(circ, y_reg);
     } else {
         super::fused::fused_double_cdouble_reverse(circ, s2, y_reg);
     }
     // inverse of 2): swap (involutory).
     circ.set_phase("tlm_apply_inverse_swap");
-    for j in 0..n {
-        circ.cswap(*swp, x_reg[j], y_reg[j]);
+    if !apply_inv_cswap_skip(i) {
+        for j in 0..n {
+            circ.cswap(*swp, x_reg[j], y_reg[j]);
+        }
     }
     // inverse of 1): y -= x mod q. The apply-path operands carry pseudo-Mersenne
     // representation drift, so the borrow clean uses the MBU form.
