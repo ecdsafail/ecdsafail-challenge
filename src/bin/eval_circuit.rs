@@ -20,13 +20,20 @@ use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
     Shake256,
 };
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, Read, Write};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const OPS_PATH: &str = "ops.bin";
-const MAGIC: &[u8; 8] = b"QECCOPS1";
+// "Z" framing: 16-byte plaintext header (MAGIC + u64 count) then a zstd
+// frame of the fixed-width records. The count is read before decompressing
+// so we can bound memory, and we read exactly count*OP_BYTES bytes out of
+// the decoder so a crafted frame cannot expand without bound.
+const MAGIC: &[u8; 8] = b"QECCOPSZ";
+// Cap the zstd window the decoder will accept (2^27 = 128 MiB). A forged
+// ops.bin cannot force a huge decompression-window allocation.
+const ZSTD_WINDOW_LOG_MAX: u32 = 27;
 const FIELD_BYTES: usize = 8;
 const OP_FIELDS: usize = 7;
 const OP_BYTES: usize = OP_FIELDS * FIELD_BYTES;
@@ -87,38 +94,45 @@ fn read_u64(bytes: &[u8], off: usize) -> u64 {
 }
 
 fn load_ops(path: &str) -> Result<Vec<Op>, String> {
-    let bytes = fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
-    if bytes.len() < MAGIC.len() + 8 {
-        return Err(format!("{path}: too short ({} bytes)", bytes.len()));
-    }
-    if &bytes[..MAGIC.len()] != MAGIC {
+    let mut file = File::open(path).map_err(|e| format!("open {path}: {e}"))?;
+
+    // Plaintext header: MAGIC + u64 op count. Read and validate before
+    // decompressing so the op count bounds every allocation below.
+    let mut header = [0u8; MAGIC.len() + 8];
+    file.read_exact(&mut header)
+        .map_err(|e| format!("{path}: too short to read header: {e}"))?;
+    if &header[..MAGIC.len()] != MAGIC {
         return Err(format!("{path}: bad magic"));
     }
-    let n = u64::from_le_bytes(bytes[MAGIC.len()..MAGIC.len() + 8].try_into().unwrap());
+    let n = u64::from_le_bytes(header[MAGIC.len()..].try_into().unwrap());
     if n > MAX_OPS {
         return Err(format!("{path}: op count {n} exceeds cap {MAX_OPS}"));
     }
     let n = n as usize;
-    let need = MAGIC.len() + 8 + n.saturating_mul(OP_BYTES);
-    if bytes.len() != need {
-        return Err(format!(
-            "{path}: length mismatch: got {} expected {need} for {n} ops",
-            bytes.len()
-        ));
-    }
+
+    // Stream-decompress the record body. We read exactly n * OP_BYTES bytes
+    // out of the decoder, so a forged frame cannot expand without bound; the
+    // window cap limits the decoder's own buffer allocation.
+    let mut dec = zstd::stream::read::Decoder::new(BufReader::new(file))
+        .map_err(|e| format!("{path}: zstd init: {e}"))?;
+    dec.window_log_max(ZSTD_WINDOW_LOG_MAX)
+        .map_err(|e| format!("{path}: zstd window cap: {e}"))?;
+
     let mut ops = Vec::with_capacity(n);
-    let mut off = MAGIC.len() + 8;
+    let mut rec = [0u8; OP_BYTES];
     for i in 0..n {
-        let kind_raw = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        dec.read_exact(&mut rec)
+            .map_err(|e| format!("op {i}: short read from compressed body: {e}"))?;
+        let kind_raw = u32::from_le_bytes(rec[0..4].try_into().unwrap());
         let kind = op_kind_from_u32(kind_raw)
             .ok_or_else(|| format!("op {i}: unknown kind {kind_raw}"))?;
-        // bytes[off+4..off+8] are reserved padding for 8-byte alignment.
-        let q_control2 = QubitId(read_u64(&bytes, off + 8));
-        let q_control1 = QubitId(read_u64(&bytes, off + 16));
-        let q_target = QubitId(read_u64(&bytes, off + 24));
-        let c_target = BitId(read_u64(&bytes, off + 32));
-        let c_condition = BitId(read_u64(&bytes, off + 40));
-        let r_target = RegisterId(read_u64(&bytes, off + 48));
+        // rec[4..8] are reserved padding for 8-byte alignment.
+        let q_control2 = QubitId(read_u64(&rec, 8));
+        let q_control1 = QubitId(read_u64(&rec, 16));
+        let q_target = QubitId(read_u64(&rec, 24));
+        let c_target = BitId(read_u64(&rec, 32));
+        let c_condition = BitId(read_u64(&rec, 40));
+        let r_target = RegisterId(read_u64(&rec, 48));
 
         let op = Op {
             kind,
@@ -141,7 +155,14 @@ fn load_ops(path: &str) -> Result<Vec<Op>, String> {
             return Err(format!("op {i}: {msg}"));
         }
         ops.push(op);
-        off += OP_BYTES;
+    }
+
+    // Reject trailing data: exactly n records must decompress, no more.
+    let mut extra = [0u8; 1];
+    match dec.read(&mut extra) {
+        Ok(0) => {}
+        Ok(_) => return Err(format!("{path}: trailing data after {n} ops")),
+        Err(e) => return Err(format!("{path}: error checking for trailing data: {e}")),
     }
     Ok(ops)
 }
@@ -226,8 +247,9 @@ fn run_tests(
     let mut expected = Vec::with_capacity(target_shots);
     for _ in 0..target_shots {
         let mut rb = [[0u8; 32]; 2];
-        xof.read(&mut rb[0]);
-        xof.read(&mut rb[1]);
+        // Disambiguate from std::io::Read (in scope for the zstd loader).
+        XofReader::read(&mut xof, &mut rb[0]);
+        XofReader::read(&mut xof, &mut rb[1]);
         let k1 = U256::from_le_bytes(rb[0]);
         let k2 = U256::from_le_bytes(rb[1]);
         let t = curve.mul(curve.gx, curve.gy, k1);
