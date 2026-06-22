@@ -14,7 +14,7 @@ mod arith;
 mod codec;
 mod comparator;
 mod constprop;
-mod ec_add;
+pub mod ec_add;
 mod fused;
 mod gcd;
 mod gidney;
