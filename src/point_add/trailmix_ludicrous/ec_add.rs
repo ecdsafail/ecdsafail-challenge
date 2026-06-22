@@ -373,7 +373,7 @@ pub fn ec_add(
 
     // Step 7: x2 += 3*ox.  => (P.x + 2*Q.x, lambda)  [x2 currently = dx = P.x-Q.x].
     circ.set_phase("tlm_coord_add3x");
-    coord_add3x_orig(circ, x2, ox);
+    coord_add3x(circ, x2, ox);
 
     // Step 10: x2 -= lambda^2 mod q.  (lambda = y2[..N]).
     circ.set_phase("tlm_square");
