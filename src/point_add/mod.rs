@@ -81,6 +81,11 @@ pub(crate) use rounds::*;
 
 pub mod trailmix_ludicrous;
 mod single_ccx_fanout;
+// solver-04: island_search ships in the tree but was never declared as a
+// module, so the nonce hunter was dead code. Declare it so build() can invoke
+// run_from_env() under ISLAND_SEARCH=1 (the broken #[cfg(test)] harness the
+// orchestrator references does not compile on this base).
+pub mod island_search;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -1981,6 +1986,188 @@ fn apply_drop_dead_robust_if_enabled(mut ops: Vec<Op>) -> Vec<Op> {
     ops
 }
 
+/// solver-04 dead-gate expansion: scan the FINAL op stream (post fanout +
+/// drop_dead) for EXACT inverse CCX pairs that survived the earlier
+/// constprop pass. A pair (p, q) with the same (sorted controls, target,
+/// condition) and no intervening op touching those operands is the identity
+/// CCX*CCX = I, so removing BOTH is a provable, nonce-independent rewrite.
+/// Gated on S04_EXACT_CANCEL: "report" only logs the count; "1" removes them.
+/// Indices reported are into the stream PASSED to this function.
+fn s04_exact_cancel_ccx(ops: Vec<Op>) -> Vec<Op> {
+    let mode = match std::env::var("S04_EXACT_CANCEL").ok() {
+        Some(m) => m,
+        None => return ops,
+    };
+    const NEVER: usize = usize::MAX;
+    // Determine qubit/bit dimensions.
+    let mut num_q = 0u64;
+    let mut num_b = 0u64;
+    for op in &ops {
+        for q in [op.q_control2.0, op.q_control1.0, op.q_target.0] {
+            if q != u64::MAX && q + 1 > num_q {
+                num_q = q + 1;
+            }
+        }
+        for bb in [op.c_target.0, op.c_condition.0] {
+            if bb != u64::MAX && bb + 1 > num_b {
+                num_b = bb + 1;
+            }
+        }
+    }
+    let nq = num_q as usize;
+    let nb = num_b as usize;
+    let mut wlast_q = vec![NEVER; nq];
+    let mut rlast_q = vec![NEVER; nq];
+    let mut wlast_b = vec![NEVER; nb];
+    #[derive(Clone, Copy)]
+    struct Pending {
+        idx: usize,
+        a: u64,
+        b: u64,
+        cb: u64,
+        epoch: u64,
+    }
+    let mut pending: Vec<Option<Pending>> = vec![None; nq];
+    let mut cond_epoch: u64 = 0;
+    let mut cond_stack: Vec<u64> = Vec::new();
+    let mut killed = vec![false; ops.len()];
+    let mut npairs = 0usize;
+    #[inline]
+    fn touched_after(s: usize, p: usize) -> bool {
+        s != usize::MAX && s > p
+    }
+    for (i, op) in ops.iter().enumerate() {
+        match op.kind {
+            OperationType::PushCondition => {
+                cond_epoch += 1;
+                cond_stack.push(op.c_condition.0);
+            }
+            OperationType::PopCondition => {
+                cond_epoch += 1;
+                cond_stack.pop();
+            }
+            OperationType::CCX => {
+                let c1 = op.q_control1.0;
+                let c2 = op.q_control2.0;
+                let t = op.q_target.0;
+                let (a, b) = if c1 <= c2 { (c1, c2) } else { (c2, c1) };
+                let cb = op.c_condition.0;
+                let mut cancelled = false;
+                if let Some(p) = pending[t as usize] {
+                    let same_gate = p.a == a && p.b == b && p.cb == cb;
+                    let same_epoch = p.epoch == cond_epoch;
+                    let ctrls_clean = !touched_after(wlast_q[a as usize], p.idx)
+                        && !touched_after(wlast_q[b as usize], p.idx);
+                    let tgt_clean = !touched_after(wlast_q[t as usize], p.idx)
+                        && !touched_after(rlast_q[t as usize], p.idx);
+                    let cond_clean =
+                        cb == u64::MAX || !touched_after(wlast_b[cb as usize], p.idx);
+                    let stack_clean = same_epoch
+                        && cond_stack.iter().all(|&sb| {
+                            sb == u64::MAX || !touched_after(wlast_b[sb as usize], p.idx)
+                        });
+                    if same_gate && same_epoch && ctrls_clean && tgt_clean && cond_clean
+                        && stack_clean
+                    {
+                        killed[p.idx] = true;
+                        killed[i] = true;
+                        pending[t as usize] = None;
+                        npairs += 1;
+                        cancelled = true;
+                    }
+                }
+                if !cancelled {
+                    rlast_q[a as usize] = i;
+                    rlast_q[b as usize] = i;
+                    wlast_q[t as usize] = i;
+                    pending[t as usize] = Some(Pending {
+                        idx: i,
+                        a,
+                        b,
+                        cb,
+                        epoch: cond_epoch,
+                    });
+                }
+            }
+            OperationType::CX => {
+                rlast_q[op.q_control1.0 as usize] = i;
+                wlast_q[op.q_target.0 as usize] = i;
+                pending[op.q_target.0 as usize] = None;
+            }
+            OperationType::X => {
+                wlast_q[op.q_target.0 as usize] = i;
+                pending[op.q_target.0 as usize] = None;
+            }
+            OperationType::Swap => {
+                let x = op.q_control1.0 as usize;
+                let y = op.q_target.0 as usize;
+                rlast_q[x] = i;
+                rlast_q[y] = i;
+                wlast_q[x] = i;
+                wlast_q[y] = i;
+                pending[x] = None;
+                pending[y] = None;
+            }
+            OperationType::R => {
+                wlast_q[op.q_target.0 as usize] = i;
+                pending[op.q_target.0 as usize] = None;
+            }
+            OperationType::Hmr => {
+                wlast_q[op.q_target.0 as usize] = i;
+                if op.c_target.0 != u64::MAX {
+                    wlast_b[op.c_target.0 as usize] = i;
+                }
+                pending[op.q_target.0 as usize] = None;
+            }
+            OperationType::CCZ => {
+                rlast_q[op.q_control1.0 as usize] = i;
+                rlast_q[op.q_control2.0 as usize] = i;
+                rlast_q[op.q_target.0 as usize] = i;
+            }
+            OperationType::CZ => {
+                rlast_q[op.q_control1.0 as usize] = i;
+                rlast_q[op.q_target.0 as usize] = i;
+            }
+            OperationType::Z => {
+                rlast_q[op.q_target.0 as usize] = i;
+            }
+            OperationType::BitInvert
+            | OperationType::BitStore0
+            | OperationType::BitStore1 => {
+                if op.c_target.0 != u64::MAX {
+                    wlast_b[op.c_target.0 as usize] = i;
+                }
+            }
+            OperationType::Neg
+            | OperationType::Register
+            | OperationType::AppendToRegister
+            | OperationType::DebugPrint => {}
+        }
+    }
+    eprintln!(
+        "S04_EXACT_CANCEL: found {} exact inverse CCX pairs ({} ops removable)",
+        npairs,
+        npairs * 2
+    );
+    if mode != "1" {
+        return ops;
+    }
+    let before = ops.len();
+    let ops: Vec<Op> = ops
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !killed[*i])
+        .map(|(_, op)| op)
+        .collect();
+    eprintln!(
+        "S04_EXACT_CANCEL: removed {} ops ({} -> {})",
+        before - ops.len(),
+        before,
+        ops.len()
+    );
+    ops
+}
+
 pub fn build() -> Vec<Op> {
     configure_q1153_second512_submission_defaults();
 
@@ -2219,7 +2406,7 @@ pub fn build() -> Vec<Op> {
         .as_deref()
         == Some("1")
     {
-        return apply_drop_dead_robust_if_enabled(ops);
+        return s04_exact_cancel_ccx(apply_drop_dead_robust_if_enabled(ops));
     }
     let input_ops = ops.len();
     let mut fanout_passes = 0usize;
@@ -2248,7 +2435,7 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
-    apply_drop_dead_robust_if_enabled(ops)
+    s04_exact_cancel_ccx(apply_drop_dead_robust_if_enabled(ops))
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
