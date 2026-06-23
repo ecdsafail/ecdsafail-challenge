@@ -40,6 +40,21 @@ fn env_index_value(name: &str, index: usize) -> Option<usize> {
         })
 }
 
+fn env_index_i32_value(name: &str, index: usize) -> Option<i32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().split_once(':'))
+                .find_map(|(call, value)| {
+                    (call.parse::<usize>().ok()? == index)
+                        .then(|| value.parse::<i32>().ok())
+                        .flatten()
+                })
+        })
+}
+
 fn fold_call_reserve(index: usize, default: usize) -> usize {
     let base = env_index_value("TLM_TARGET_FOLD_CALL_RESERVES", index).unwrap_or(default);
     env_index_value("TLM_TARGET_FOLD_CALL_RESERVE_OVERRIDES", index).unwrap_or(base)
@@ -561,6 +576,22 @@ fn on_ctl_apply(circ: &mut B, e: &QubitId, d: &QubitId, k: u8, q: &QubitId) {
     }
 }
 
+fn direct_dirty_control_enabled() -> bool {
+    std::env::var("TLM_FOLD_DIRECT_DIRTY_CTL")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+fn toggle_fold_ctl_into(circ: &mut B, e: &QubitId, d: &QubitId, p: usize, target: QubitId) {
+    match fold_ctl(p) {
+        1 => circ.cx(*e, target),
+        2 => circ.cx(*d, target),
+        k @ (3 | 4 | 5 | 6) => on_ctl_apply(circ, e, d, k, &target),
+        _ => {}
+    }
+}
+
 fn on_ctl(circ: &mut B, e: &QubitId, d: &QubitId, p: usize) -> OnCtl {
     match fold_ctl(p) {
         1 => OnCtl::E,
@@ -707,14 +738,17 @@ fn dirty_body(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId]
     for i in 0..l - 1 {
         let new = circ.alloc_qubit();
         let anc = circ.alloc_qubit();
-        let ctlh = on_ctl(circ, e, d, base + i);
+        let direct_ctl = direct_dirty_control_enabled();
+        let ctlh = (!direct_ctl).then(|| on_ctl(circ, e, d, base + i));
         {
             let cyi: QubitId = if i == 0 {
                 carry_in.copied().unwrap_or_else(|| *cin_owned.as_ref().unwrap())
             } else {
                 *prev_new.as_ref().unwrap()
             };
-            if let Some(ai) = on_ctl_ref(&ctlh, e, d) {
+            if direct_ctl {
+                toggle_fold_ctl_into(circ, e, d, base + i, anc);
+            } else if let Some(ai) = on_ctl_ref(ctlh.as_ref().unwrap(), e, d) {
                 circ.cx(ai, anc);
             }
             circ.cx(cyi, anc);
@@ -723,12 +757,17 @@ fn dirty_body(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId]
             circ.cx(cyi, new); // new = carry_{i+1}
             circ.cx(new, dirty[i]); // store carry copy in borrowed bit
             circ.cx(cyi, anc);
-            if let Some(ai) = on_ctl_ref(&ctlh, e, d) {
+            if direct_ctl {
+                toggle_fold_ctl_into(circ, e, d, base + i, anc);
+                toggle_fold_ctl_into(circ, e, d, base + i, y[i]); // y[i] = sum_i
+            } else if let Some(ai) = on_ctl_ref(ctlh.as_ref().unwrap(), e, d) {
                 circ.cx(ai, anc);
                 circ.cx(ai, y[i]); // y[i] = sum_i
             }
         }
-        on_ctl_free(circ, e, d, base + i, ctlh);
+        if let Some(ctlh) = ctlh {
+            on_ctl_free(circ, e, d, base + i, ctlh);
+        }
         circ.zero_and_free(anc);
         if i == 0 {
             if let Some(c) = cin_owned.take() {
@@ -884,7 +923,9 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let base_code = super::next_fold();
+    let code = env_index_i32_value("TLM_FOLD_CALL_CODE_OVERRIDES", call_index)
+        .unwrap_or(base_code);
     let mut selected_nv = None;
     if code < 0 {
         let chunk = std::env::var("TLM_FOLD_CHUNK_FORCE")
@@ -929,7 +970,9 @@ fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let base_code = super::next_fold();
+    let code = env_index_i32_value("TLM_FOLD_CALL_CODE_OVERRIDES", call_index)
+        .unwrap_or(base_code);
     let default_reserve = std::env::var("TLM_TARGET_FOLD_RESERVE")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
