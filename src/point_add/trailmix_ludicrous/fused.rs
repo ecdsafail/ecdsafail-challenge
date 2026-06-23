@@ -83,6 +83,13 @@ fn toggle_dnot_e_from_intersection(
 /// prefix-controlled increments (`mcx_clean_k`, log* ancillae): the clean-tail
 /// fold's tail [nv, L).
 fn add_carry_into_tail_prefix(circ: &mut B, y: &[QubitId], c: &QubitId) {
+    if std::env::var("TLM_FOLD_TAIL_CINC").ok().as_deref() == Some("1") {
+        // Exact replacement for the old quadratic prefix cascade.
+        let yv: Vec<QubitId> = y.to_vec();
+        super::mcx::cinc_khattar_gidney(circ, &yv, c);
+        return;
+    }
+
     let t = y.len();
     for k in (1..t).rev() {
         let mut ctrls: Vec<&QubitId> = Vec::with_capacity(k + 1);
@@ -376,14 +383,15 @@ fn fold_chunk_clean(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: O
 
 /// Gated-erase a boundary carry: materialize the addend into a temp, run the
 /// uncontrolled gated erase on (y, temp), un-materialize.
-fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: &QubitId, carry: QubitId) {
+fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: Option<&QubitId>, carry: QubitId) {
     if std::env::var("TLM_FOLD_BOUNDARY_ZERO_DIRECT")
         .ok()
         .as_deref()
         == Some("1")
+        && cin.is_some()
         && ctl.iter().all(Option::is_none)
     {
-        fold_boundary_erase_zero_direct(circ, y, cin, carry);
+        fold_boundary_erase_zero_direct(circ, y, cin.expect("cin checked"), carry);
         return;
     }
     let s = y.len();
@@ -391,8 +399,13 @@ fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin
     for (i, c) in ctl.iter().enumerate() {
         if let Some(a) = c { circ.cx(*a, temp[i]); }
     }
-    super::arith::erase_carry_gated_opt(circ, None, y, &temp, cin, &carry, None);
-    circ.zero_and_free(carry);
+    match cin {
+        Some(cin) => super::arith::erase_carry_gated_opt(circ, None, y, &temp, cin, &carry, None),
+        None => {
+            super::arith::erase_carry_gated_zero_cin_opt(circ, None, y, &temp, &carry, None);
+            circ.zero_and_free(carry);
+        }
+    }
     for (i, c) in ctl.iter().enumerate() {
         if let Some(a) = c { circ.cx(*a, temp[i]); }
     }
@@ -404,6 +417,7 @@ fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, c
     assert!(n >= 1, "zero boundary erase needs >= 1 bit");
     let bit = circ.alloc_bit();
     circ.hmr(carry, bit);
+    circ.zero_and_free(carry);
     circ.push_condition(bit);
 
     let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(n);
@@ -449,7 +463,6 @@ fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, c
     circ.x(c0);
     circ.zero_and_free(c0);
     circ.pop_condition();
-    circ.zero_and_free(carry);
 }
 
 fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_chunk: usize) {
@@ -458,10 +471,14 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         .ok()
         .as_deref()
         == Some("1");
+    let zero_cin = std::env::var("TLM_FOLD_CHUNK_ZERO_CIN")
+        .ok()
+        .as_deref()
+        == Some("1");
     let mut controls = Some(build_fold_controls(circ, e, d));
     let (cc, sxor, sor, dne) = controls.expect("fold controls present");
     let mut ctl = fold_ctl_map(*e, *d, cc, sxor, sor, dne, l);
-    let cin0 = circ.alloc_qubit();
+    let cin0 = (!zero_cin).then(|| circ.alloc_qubit());
     let nch = l.div_ceil(s_chunk);
     let last_control_chunk = 11usize.min(l - 1) / s_chunk;
     let mut boundary: Vec<QubitId> = Vec::with_capacity(nch);
@@ -469,8 +486,12 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let cout = circ.alloc_qubit();
-        let cin = if j == 0 { cin0 } else { boundary[j - 1] };
-        fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], Some(&cin), &cout);
+        let cin = if j == 0 {
+            cin0.as_ref()
+        } else {
+            Some(&boundary[j - 1])
+        };
+        fold_chunk_clean(circ, &ctl[lo..hi], &y[lo..hi], cin, &cout);
         boundary.push(cout);
         if release_controls && j == last_control_chunk && j + 1 < nch {
             let (cc, sxor, sor, dne) = controls.take().expect("fold controls present");
@@ -486,10 +507,16 @@ fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_
         let lo = j * s_chunk;
         let hi = ((j + 1) * s_chunk).min(l);
         let bnd = boundary.pop().expect("boundary present");
-        let cin = if j == 0 { cin0 } else { boundary[j - 1] };
-        fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], &cin, bnd);
+        let cin = if j == 0 {
+            cin0.as_ref()
+        } else {
+            Some(&boundary[j - 1])
+        };
+        fold_boundary_erase(circ, &ctl[lo..hi], &y[lo..hi], cin, bnd);
     }
-    circ.zero_and_free(cin0);
+    if let Some(cin0) = cin0 {
+        circ.zero_and_free(cin0);
+    }
     let (cc, sxor, sor, dne) = controls.take().expect("fold controls restored");
     uncompute_fold_controls(circ, e, d, cc, sxor, sor, dne);
 }
@@ -938,6 +965,16 @@ fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
     }
 }
 
+fn trace_fold_alloc(circ: &B, name: &str, stage: &str, i: usize) {
+    if std::env::var_os("TRACE_TLM_FOLD_ALLOC").is_some() {
+        eprintln!(
+            "TLM_FOLD_ALLOC name={name} stage={stage} i={i} active={} ops={}",
+            circ.active_qubits,
+            circ.current_ops_len(),
+        );
+    }
+}
+
 /// Fused double-then-controlled-double: `y := y * 2 * (1 + s2) mod q`. `y.len() == n
 /// == 256`; the doubling uses two transient overflow bits (a 258-bit working view),
 /// not a persistent reg slot.
@@ -946,8 +983,11 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     let n = 256usize;
     assert_eq!(y.len(), n, "fused double expects 256-bit y (transient overflow)");
     let _ = F_SECP256K1;
+    trace_fold_alloc(circ, "fwd_cdouble", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "fwd_cdouble", "after_hi", usize::MAX);
     let hi2 = circ.alloc_qubit();
+    trace_fold_alloc(circ, "fwd_cdouble", "after_hi2", usize::MAX);
     // 258-bit view: y[0..n] ++ hi (256) ++ hi2 (257).
     let mut w: Vec<QubitId> = y.to_vec();
     w.push(hi);
@@ -974,7 +1014,9 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
 pub fn fused_double_only(circ: &mut B, y: &[QubitId]) {
     let n = 256usize;
     assert_eq!(y.len(), n, "fused double expects 256-bit y");
+    trace_fold_alloc(circ, "fwd_only", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "fwd_only", "after_hi", usize::MAX);
     let mut w: Vec<QubitId> = y.to_vec();
     w.push(hi);
     for i in (1..w.len()).rev() {
@@ -991,8 +1033,11 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     maybe_run_gradual_fold_nonlinear_control_hmr_selftest();
     let n = 256usize;
     assert_eq!(y.len(), n, "fused halve expects 256-bit y (transient overflow)");
+    trace_fold_alloc(circ, "rev_cdouble", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "rev_cdouble", "after_hi", usize::MAX);
     let hi2 = circ.alloc_qubit();
+    trace_fold_alloc(circ, "rev_cdouble", "after_hi2", usize::MAX);
     let mut w: Vec<QubitId> = y.to_vec();
     w.push(hi);
     w.push(hi2);
@@ -1022,7 +1067,9 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
 pub fn fused_double_only_reverse(circ: &mut B, y: &[QubitId]) {
     let n = 256usize;
     assert_eq!(y.len(), n, "fused halve expects 256-bit y");
+    trace_fold_alloc(circ, "rev_only", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
+    trace_fold_alloc(circ, "rev_only", "after_hi", usize::MAX);
     let mut w: Vec<QubitId> = y.to_vec();
     w.push(hi);
     circ.cx(y[0], w[n]);
