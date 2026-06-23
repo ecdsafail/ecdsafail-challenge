@@ -2027,7 +2027,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "100118751586"); // confirmed coord3x island, 0/0/0, score 1,579,049,760
+    set_default_env("DIALOG_TAIL_NONCE", "200060214302"); // confirmed island 0/0/0, score 1,577,963,120 (peak 1156 x avgT 1,365,020)
     // Stack the latest frontier square fold: use shifted-low folding for all
     // square lanes instead of the older `a`-only direct32 ramp shortcut.
     set_default_env("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", "");
@@ -2131,7 +2131,7 @@ pub fn build() -> Vec<Op> {
         let drop_txt: String = match std::env::var("DROP_DEAD_IDX_FILE") {
             Ok(idx_path) => std::fs::read_to_string(&idx_path)
                 .unwrap_or_else(|e| panic!("DROP_DEAD_IDX_FILE {idx_path}: {e}")),
-            Err(_) => include_str!("dead_k1_coord3x.idx").to_string(),
+            Err(_) => include_str!("dead_coord3x_sched_notc.idx").to_string(),
         };
         let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for line in drop_txt.lines() {
