@@ -40,6 +40,21 @@ fn env_index_value(name: &str, index: usize) -> Option<usize> {
         })
 }
 
+fn env_index_i32_value(name: &str, index: usize) -> Option<i32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().split_once(':'))
+                .find_map(|(call, value)| {
+                    (call.parse::<usize>().ok()? == index)
+                        .then(|| value.parse::<i32>().ok())
+                        .flatten()
+                })
+        })
+}
+
 fn fold_call_reserve(index: usize, default: usize) -> usize {
     let base = env_index_value("TLM_TARGET_FOLD_CALL_RESERVES", index).unwrap_or(default);
     env_index_value("TLM_TARGET_FOLD_CALL_RESERVE_OVERRIDES", index).unwrap_or(base)
@@ -884,7 +899,9 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let base_code = super::next_fold();
+    let code = env_index_i32_value("TLM_FOLD_CALL_CODE_OVERRIDES", call_index)
+        .unwrap_or(base_code);
     let mut selected_nv = None;
     if code < 0 {
         let chunk = std::env::var("TLM_FOLD_CHUNK_FORCE")
@@ -929,7 +946,9 @@ fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let base_code = super::next_fold();
+    let code = env_index_i32_value("TLM_FOLD_CALL_CODE_OVERRIDES", call_index)
+        .unwrap_or(base_code);
     let default_reserve = std::env::var("TLM_TARGET_FOLD_RESERVE")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())

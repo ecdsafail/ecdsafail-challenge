@@ -816,14 +816,27 @@ fn controlled_add_const_chunked_graduated_off(circ: &mut B, ctrl: &QubitId, a: &
         return;
     }
     let mut bounds: Vec<(usize, usize)> = Vec::new();
-    let (mut lo, mut i) = (0usize, 0usize);
-    while lo < n && k > i + 3 {
-        let cc = (k - 3 - i).min(n - lo);
-        bounds.push((lo, lo + cc));
-        lo += cc;
-        i += 1;
+    if let Some(cap) = std::env::var("TLM_GRAD_CHUNK_CAP")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+    {
+        let mut lo = 0usize;
+        while lo < n {
+            let hi = (lo + cap).min(n);
+            bounds.push((lo, hi));
+            lo = hi;
+        }
+    } else {
+        let (mut lo, mut i) = (0usize, 0usize);
+        while lo < n && k > i + 3 {
+            let cc = (k - 3 - i).min(n - lo);
+            bounds.push((lo, lo + cc));
+            lo += cc;
+            i += 1;
+        }
     }
-    assert_eq!(lo, n, "graduated staircase (k={k}) covers {lo} < n={n}");
+    assert_eq!(bounds.last().map(|&(_, hi)| hi).unwrap_or(0), n, "graduated staircase (k={k}) did not cover n={n}");
     let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
     for (j, &(clo, chi)) in bounds.iter().enumerate() {
         if std::env::var("TLM_GRAD_FINAL_NO_COUT").ok().as_deref() == Some("1") && j + 1 == bounds.len() {
@@ -886,7 +899,7 @@ fn add_f_window_hybrid(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usiz
         // Graduated-chunked suffix. With `g` (the prefix size) schedule-driven
         // (deterministic), graduated runs with fixed params -> phase-clean. kmin
         // always fits. sn < 2 falls to the borrowed-dirty path.
-        if sn >= 2 {
+        if sn >= 2 && std::env::var("TLM_GRAD_DISABLE").ok().as_deref() != Some("1") {
             controlled_add_const_chunked_graduated_off(circ, ctrl, &a_hi, c, k, &cin, graduated_const_kmin(sn));
         } else {
             dirty_carryin(circ, ctrl, &a_hi, c, k, &dirty, &cin);
