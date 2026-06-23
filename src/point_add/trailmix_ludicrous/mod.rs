@@ -364,9 +364,7 @@ fn install_q1153_submission_defaults() {
         ("TLM_APPLY_ADD_SKIP_LASTK", "1"),
         ("DIALOG_TAIL_NONCE", "2430844"),
     ] {
-        if name == "DIALOG_TAIL_NONCE" && std::env::var_os(name).is_some() {
-            continue;
-        } else {
+        if std::env::var_os(name).is_none() {
             std::env::set_var(name, value);
         }
     }
