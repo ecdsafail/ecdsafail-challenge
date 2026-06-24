@@ -182,11 +182,55 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
     let n = a.len();
     assert_eq!(b.len(), n, "compare_geq_cin_middle: a,b equal width");
     assert!(n >= 1, "needs >= 1 bit");
+    if std::env::var("TLM_COMPARE_CIN_CUCCARO")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        let c = circ.alloc_qubit();
+        circ.x(c);
+        circ.cx(*cin, c); // c_0 = ~cin
+        for i in 0..n - 1 {
+            circ.x(b[i]);
+            circ.cx(c, b[i]);
+            circ.cx(c, a[i]);
+            circ.ccx(a[i], b[i], c); // c = c_{i+1}
+        }
+        {
+            let i = n - 1;
+            circ.x(b[i]);
+            circ.cx(c, b[i]);
+            circ.cx(c, a[i]);
+            body(circ, &a[i], &b[i], &c);
+            circ.cx(c, a[i]);
+            circ.cx(c, b[i]);
+            circ.x(b[i]);
+        }
+        for i in (0..n - 1).rev() {
+            circ.ccx(a[i], b[i], c);
+            circ.cx(c, a[i]);
+            circ.cx(c, b[i]);
+            circ.x(b[i]);
+        }
+        circ.cx(*cin, c);
+        circ.x(c);
+        circ.zero_and_free(c);
+        return;
+    }
+    let borrow_cin_c0 = std::env::var("TLM_COMPARE_BORROW_CIN_C0")
+        .ok()
+        .as_deref()
+        == Some("1");
     let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(n);
-    let c0 = circ.alloc_qubit();
-    circ.x(c0);
-    circ.cx(*cin, c0); // cy[0] = 1 ^ cin = ~cin (carry-in of a + ~b + ~cin)
-    cy.push(Some(c0));
+    if borrow_cin_c0 {
+        circ.x(*cin); // cy[0] = ~cin, restored before return.
+        cy.push(Some(*cin));
+    } else {
+        let c0 = circ.alloc_qubit();
+        circ.x(c0);
+        circ.cx(*cin, c0); // cy[0] = 1 ^ cin = ~cin (carry-in of a + ~b + ~cin)
+        cy.push(Some(c0));
+    }
     for i in 0..n - 1 {
         let next = circ.alloc_qubit();
         let ci = cy[i].as_ref().unwrap();
@@ -223,9 +267,14 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
         circ.x(b[i]);
     }
     let c0 = cy[0].take().unwrap();
-    circ.cx(*cin, c0); // ~cin -> 1
-    circ.x(c0); // 1 -> 0
-    circ.zero_and_free(c0);
+    if borrow_cin_c0 {
+        debug_assert_eq!(c0, *cin);
+        circ.x(*cin);
+    } else {
+        circ.cx(*cin, c0); // ~cin -> 1
+        circ.x(c0); // 1 -> 0
+        circ.zero_and_free(c0);
+    }
 }
 
 /// Vented uncompute of a GCD swap-decision flag that holds `ctrl AND (v_top <

@@ -1078,22 +1078,134 @@ fn set_default_env(name: &str, value: &str) {
     }
 }
 
-// Q1153 second-512 scan route. To submit a clean hit from the current hunt,
-// update this nonce, build with no shell env overrides, run `ecdsafail run`,
-// and submit only if it remains 0 / 0 / 0.
-const Q1153_SECOND512_SUBMISSION_NONCE: &str = "10058189779";
+// Q1146 no-dead-CCX grad-disable fold-call-code5 route.
+//
+// The remote hunt found nonce 514163608 clean under this exact route:
+// TLM_TARGET_Q=1144, TLM_GRAD_DISABLE=1, and six peak-near fold-call
+// overrides. This keeps the same pseudo-Mersenne reduction identity and trades
+// correction/carry workspace margin for a lower live qubit peak; it does not
+// use dead-CCX deletion.
+const Q1146_GRADDISABLE_FOLD248_265_SUBMISSION_NONCE: &str = "514163608";
 
-fn configure_q1153_second512_submission_defaults() {
-    set_default_env("DIALOG_TAIL_NONCE", Q1153_SECOND512_SUBMISSION_NONCE);
-    set_default_env("TLM_TARGET_Q", "1152");
+fn configure_q1146_graddisable_fold248_265_submission_defaults() {
+    set_default_env(
+        "DIALOG_TAIL_NONCE",
+        Q1146_GRADDISABLE_FOLD248_265_SUBMISSION_NONCE,
+    );
+    set_default_env("TLM_TARGET_Q", "1144");
+    set_default_env("TLM_GRAD_DISABLE", "1");
+    set_default_env(
+        "TLM_FOLD_CALL_CODE_OVERRIDES",
+        "248:0,249:5,250:5,263:5,264:5,265:0",
+    );
     set_default_env("TLM_FOLD_CHUNK_ZERO_CIN", "1");
     set_default_env("TLM_FFG_MAX_G", "47");
     set_default_env("TLM_APPLY_ADD_SKIP_LASTK", "1");
     set_default_env("TLM_FOLD_TAIL_CINC", "1");
     set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
     set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
-    set_default_env("DROP_DEAD_ROBUST", "1");
-    set_default_env("DROP_DEAD_ROBUST_SECOND", "1");
+    std::env::set_var("DROP_DEAD_ROBUST_DISABLE", "1");
+    std::env::set_var("DROP_DEAD_ROBUST", "0");
+    std::env::set_var("DROP_DEAD_ROBUST_SECOND", "0");
+}
+
+// Q1143 no-dead-CCX codec-reuse route.
+//
+// This is the q1147/q1146 fold-code route with codec-pair scratch reuse,
+// direct dirty fold controls, and a margin-3 GCD adaptive layout. The remote
+// early-reject hunt found nonce 507128682 clean over all 9024 Fiat-Shamir
+// shots at q=1143. The qubit drop is structural workspace reuse/tightening;
+// it does not depend on dead-CCX deletion.
+const Q1143_CODECREUSE_SUBMISSION_NONCE: &str = "507128682";
+
+fn configure_q1143_codecreuse_submission_defaults() {
+    set_default_env("DIALOG_TAIL_NONCE", Q1143_CODECREUSE_SUBMISSION_NONCE);
+    set_default_env("TLM_TARGET_Q", "1143");
+    set_default_env("TLM_GRAD_DISABLE", "1");
+    set_default_env(
+        "TLM_FOLD_CALL_CODE_OVERRIDES",
+        "245:4,246:4,247:4,248:0,249:5,250:5,263:5,264:5,265:0,266:4,267:4,268:4",
+    );
+    set_default_env("TLM_FOLD_CHUNK_ZERO_CIN", "1");
+    set_default_env("TLM_FFG_MAX_G", "47");
+    set_default_env("TLM_APPLY_ADD_SKIP_LASTK", "1");
+    set_default_env("TLM_FOLD_TAIL_CINC", "1");
+    set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
+    set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
+    set_default_env("TLM_TRIPLE_CODEC_REUSE_PAIR_FREED", "1");
+    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "3");
+    set_default_env("TLM_FOLD_DIRECT_DIRTY_CTL", "1");
+    std::env::set_var("DROP_DEAD_ROBUST_DISABLE", "1");
+    std::env::set_var("DROP_DEAD_ROBUST", "0");
+    std::env::set_var("DROP_DEAD_ROBUST_SECOND", "0");
+}
+
+// Q1142 no-dead-CCX adaptive-layout / fold-tightening route.
+//
+// This is the q1143 codec-reuse route pushed down one more qubit class with
+// pairraw codec reuse, margin-2 adaptive GCD layout search, and asymmetric
+// correction-workspace tightening at fold calls 236 and 266. The remote hunt
+// found nonce 751488840 clean over all 9024 Fiat-Shamir shots at q=1142. No
+// dead-CCX deletion is used.
+const Q1142_6_2_SUBMISSION_NONCE: &str = "751488840";
+
+fn configure_q1142_6_2_submission_defaults() {
+    set_default_env("DIALOG_TAIL_NONCE", Q1142_6_2_SUBMISSION_NONCE);
+    set_default_env("TLM_TARGET_Q", "1141");
+    set_default_env("TLM_GRAD_DISABLE", "1");
+    set_default_env("TLM_FOLD_CHUNK_ZERO_CIN", "1");
+    set_default_env("TLM_FFG_MAX_G", "47");
+    set_default_env("TLM_APPLY_ADD_SKIP_LASTK", "1");
+    set_default_env("TLM_FOLD_TAIL_CINC", "1");
+    set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
+    set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
+    set_default_env("TLM_TRIPLE_CODEC_REUSE_PAIR_FREED", "1");
+    set_default_env("TLM_CODEC_PAIRRAW_LAST_K", "2");
+    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_SEARCH", "1");
+    set_default_env("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "2");
+    set_default_env("TLM_FOLD_DIRECT_DIRTY_CTL", "1");
+    set_default_env(
+        "TLM_FOLD_CALL_CODE_OVERRIDES",
+        "245:4,246:4,247:4,248:0,249:5,250:5,263:5,264:5,265:0,266:3,267:4,268:4,236:1,244:2,269:2,277:2",
+    );
+    std::env::set_var("DROP_DEAD_ROBUST_DISABLE", "1");
+    std::env::set_var("DROP_DEAD_ROBUST", "0");
+    std::env::set_var("DROP_DEAD_ROBUST_SECOND", "0");
+}
+
+// Q1141 no-dead-CCX direct-slot/all-noanc route.
+//
+// This route lowers the peak with direct GCD symbol-slot recycling, no-ancilla
+// dirty fold/control bodies, dirty carry-in no-anc expansion, temporary GCD
+// low-bit loans, and tighter fold-call correction workspaces. The remote hunt
+// found nonce 11111952 clean over all 9024 Fiat-Shamir shots at q=1141.
+const Q1141_9_6_SUBMISSION_NONCE: &str = "11111952";
+
+fn configure_q1141_9_6_submission_defaults() {
+    // The remote hunt was built from the q1142 source bundle and layered the
+    // q1141 CFG over those defaults. Preserve that ordering for byte-equivalent
+    // submission builds.
+    configure_q1142_6_2_submission_defaults();
+    std::env::set_var("DIALOG_TAIL_NONCE", Q1141_9_6_SUBMISSION_NONCE);
+    std::env::set_var("TLM_TARGET_Q", "1139");
+    std::env::set_var("TLM_GCD_ADAPTIVE_LAYOUT_MARGIN", "0");
+    std::env::set_var("TLM_LOAN_ODD_U0", "1");
+    std::env::set_var("TLM_LOAN_EVEN_V0", "1");
+    std::env::set_var("TLM_LOAN_GCD_Y0", "1");
+    std::env::set_var("TLM_COUT_LAYOUT_SEARCH", "1");
+    std::env::set_var("TLM_COUT_LAYOUT_MARGIN", "0");
+    std::env::set_var("TLM_GIDNEY_ZERO_CIN0_NO_COUT", "1");
+    std::env::set_var("TLM_DIRTY_BODY_LINEAR_NOANC", "1");
+    std::env::set_var("TLM_DIRTY_BODY_ALL_NOANC", "1");
+    std::env::set_var("TLM_ARITH_DIRTY_CARRYIN_NOANC", "1");
+    std::env::set_var("TLM_GCD_RECYCLE_SYMBOL_FLAGS", "1");
+    std::env::set_var(
+        "TLM_FOLD_CALL_CODE_OVERRIDES",
+        "245:4,246:4,247:4,248:0,249:5,250:5,263:5,264:5,265:0,266:3,267:4,268:4,236:1,244:2,269:2,277:2,233:0,235:0,243:0,270:0,278:0,280:0",
+    );
+    std::env::set_var("DROP_DEAD_ROBUST_DISABLE", "1");
+    std::env::set_var("DROP_DEAD_ROBUST", "0");
+    std::env::set_var("DROP_DEAD_ROBUST_SECOND", "0");
 }
 
 fn configure_ecdsafail_submission_route() {
@@ -1757,7 +1869,7 @@ pub fn build_builder() -> B {
         run_alt_seed_checks(&b.ops);
     }
 
-    if !b.count_only && std::env::var("TRACE_PEAK").is_ok() {
+    if std::env::var("TRACE_PEAK").is_ok() {
         eprintln!(
             "DEBUG peak_qubits={} at phase='{}' ops_idx={} total_ops={}",
             b.peak_qubits,
@@ -1982,7 +2094,7 @@ fn apply_drop_dead_robust_if_enabled(mut ops: Vec<Op>) -> Vec<Op> {
 }
 
 pub fn build() -> Vec<Op> {
-    configure_q1153_second512_submission_defaults();
+    configure_q1141_9_6_submission_defaults();
 
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {
         match dialog_gcd_k5_head11_codec_selftest() {

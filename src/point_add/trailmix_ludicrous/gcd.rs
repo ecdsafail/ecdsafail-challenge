@@ -268,6 +268,13 @@ fn restore_known_zero(circ: &mut B, parked: QubitId) -> QubitId {
     }
 }
 
+fn recycle_symbol_flags_enabled() -> bool {
+    std::env::var("TLM_GCD_RECYCLE_SYMBOL_FLAGS")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 fn loan_known_one_gcd_y0(circ: &mut B, q: QubitId) {
     circ.x(q);
     circ.loan_zero_qubit(q);
@@ -402,9 +409,10 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         }
     }
 
-    let subtracted = circ.alloc_qubit();
+    let recycle_symbol_flags = recycle_symbol_flags_enabled();
+    let mut subtracted_slot = Some(circ.alloc_qubit());
     let mut swap_flag: Option<QubitId> = None;
-    let s2 = circ.alloc_qubit(); // the single jump=2 extra-shift flag
+    let mut s2_slot = Some(circ.alloc_qubit()); // the single jump=2 extra-shift flag
     let t1 = circ.alloc_qubit(); // step-0 shift1-fired flag (= x even)
 
     // Incremental all-triple codec: compress each codec window inline the instant
@@ -424,6 +432,8 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
     let mut tail4_prefix_encoded = false;
     for i in 0..iters {
         let trace_region_start = circ.phase_active_regions.len();
+        let subtracted = *subtracted_slot.get_or_insert_with(|| circ.alloc_qubit());
+        let s2 = *s2_slot.get_or_insert_with(|| circ.alloc_qubit());
         circ.set_phase(if apply_inv.is_some() {
             "tlm_inverse_gcd_forward_shift"
         } else {
@@ -564,14 +574,33 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
         } else {
             "tlm_multiply_gcd_forward_codec"
         });
-        let slots: Vec<QubitId> = (0..sym_bits).map(|_| circ.alloc_qubit()).collect();
-        circ.swap(subtracted, slots[0]);
+        let mut slots: Vec<QubitId> = Vec::with_capacity(sym_bits);
+        let slot0 = circ.alloc_qubit();
+        circ.swap(subtracted, slot0);
+        slots.push(slot0);
         if i == 0 {
-            circ.cx(slots[0], slots[1]);
+            let slot1 = circ.alloc_qubit();
+            circ.cx(slots[0], slot1);
+            slots.push(slot1);
+            if recycle_symbol_flags {
+                circ.zero_and_free(subtracted_slot.take().expect("subtracted flag live"));
+            }
         } else {
-            circ.swap(swp, slots[1]);
+            let slot1 = circ.alloc_qubit();
+            circ.swap(swp, slot1);
+            slots.push(slot1);
+            if recycle_symbol_flags {
+                circ.zero_and_free(subtracted_slot.take().expect("subtracted flag live"));
+                let sf = swap_flag.take().expect("swap flag live after symbol record");
+                circ.zero_and_free(sf);
+            }
         }
-        circ.swap(s2, slots[2]);
+        let slot2 = circ.alloc_qubit();
+        circ.swap(s2, slot2);
+        slots.push(slot2);
+        if recycle_symbol_flags {
+            circ.zero_and_free(s2_slot.take().expect("s2 flag live"));
+        }
         if i == 0 {
             debug_assert_eq!(window_plan[win_idx], super::codec::DialogCodec::Step0);
             let data = super::codec::compress_step0_with_t1(circ, t1, &slots);
@@ -639,11 +668,15 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
     for q in u {
         circ.zero_and_free(q);
     }
-    circ.zero_and_free(subtracted);
+    if let Some(subtracted) = subtracted_slot {
+        circ.zero_and_free(subtracted);
+    }
     if let Some(swap_flag) = swap_flag {
         circ.zero_and_free(swap_flag);
     }
-    circ.zero_and_free(s2);
+    if let Some(s2) = s2_slot {
+        circ.zero_and_free(s2);
+    }
     assert_eq!(tape.len(), super::codec::dialog_tape_qubits(n3, iters));
     tape
 }
@@ -681,9 +714,10 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
     let mut u: Vec<QubitId> = vec![circ.alloc_qubit()];
     circ.x(u[0]);
 
-    let subtracted = circ.alloc_qubit();
-    let mut swap_flag: Option<QubitId> = Some(circ.alloc_qubit());
-    let s2 = circ.alloc_qubit();
+    let recycle_symbol_flags = recycle_symbol_flags_enabled();
+    let mut subtracted_slot: Option<QubitId> = (!recycle_symbol_flags).then(|| circ.alloc_qubit());
+    let mut swap_flag: Option<QubitId> = (!recycle_symbol_flags).then(|| circ.alloc_qubit());
+    let mut s2_slot: Option<QubitId> = (!recycle_symbol_flags).then(|| circ.alloc_qubit());
     let mut step0_t1: Option<QubitId> = None;
 
     for i in (0..iters).rev() {
@@ -743,25 +777,43 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
                 pending.len(),
             );
         }
-        circ.swap(subtracted, cur[0]);
-        let swp = if i == 0 {
-            circ.cx(subtracted, cur[1]);
-            subtracted
+        let mut decoded_symbol_slots: Option<Vec<QubitId>> = None;
+        let (subtracted, swp, s2) = if recycle_symbol_flags {
+            // Use the raw decoded slots directly as the live symbol flags.  The
+            // reverse GCD uncomputes these controls to |0>, so they can be freed
+            // at the end of the iteration without ever allocating duplicate flags.
+            let sub = cur[0];
+            let s2q = cur[2];
+            let swap = if i == 0 {
+                circ.cx(sub, cur[1]);
+                sub
+            } else {
+                cur[1]
+            };
+            decoded_symbol_slots = Some(cur);
+            (sub, swap, s2q)
         } else {
-            let sf = *swap_flag
-                .as_ref()
-                .expect("swap flag live for non-step0 replay");
-            circ.swap(sf, cur[1]);
-            sf
+            let sub = *subtracted_slot.get_or_insert_with(|| circ.alloc_qubit());
+            let s2q = *s2_slot.get_or_insert_with(|| circ.alloc_qubit());
+            circ.swap(sub, cur[0]);
+            let swap = if i == 0 {
+                circ.cx(sub, cur[1]);
+                sub
+            } else {
+                let sf = *swap_flag.get_or_insert_with(|| circ.alloc_qubit());
+                circ.swap(sf, cur[1]);
+                sf
+            };
+            circ.swap(s2q, cur[2]);
+            // Free the 3 now-|0> symbol slots here -- before the apply -- so they are not
+            // carried as dead live qubits through the apply + GCD-undo, where they would
+            // inflate the peak by sym_bits=3. The next window's decompress re-allocs
+            // from these freed slots.
+            for q in cur {
+                circ.zero_and_free(q);
+            }
+            (sub, swap, s2q)
         };
-        circ.swap(s2, cur[2]);
-        // Free the 3 now-|0> symbol slots here -- before the apply -- so they are not
-        // carried as dead live qubits through the apply + GCD-undo, where they would
-        // inflate the peak by sym_bits=3. The next window's decompress re-allocs
-        // from these freed slots.
-        for q in cur {
-            circ.zero_and_free(q);
-        }
 
         circ.set_phase(if apply_fwd.is_some() {
             "tlm_multiply_gcd_reverse_apply"
@@ -862,7 +914,20 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
             let t1 = step0_t1.take().expect("step0 t1 present");
             circ.zero_and_free(t1);
         }
-        if i == 1 {
+        if let Some(cur) = decoded_symbol_slots.take() {
+            for q in cur {
+                circ.zero_and_free(q);
+            }
+        } else if recycle_symbol_flags {
+            let sub = subtracted_slot.take().expect("subtracted flag live");
+            circ.zero_and_free(sub);
+            if i != 0 {
+                let sf = swap_flag.take().expect("swap flag live");
+                circ.zero_and_free(sf);
+            }
+            let s2q = s2_slot.take().expect("s2 flag live");
+            circ.zero_and_free(s2q);
+        } else if i == 1 {
             let sf = swap_flag.take().expect("swap flag still allocated");
             circ.zero_and_free(sf);
         }
@@ -890,11 +955,15 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
     for q in u {
         circ.zero_and_free(q);
     }
-    circ.zero_and_free(subtracted);
+    if let Some(subtracted) = subtracted_slot {
+        circ.zero_and_free(subtracted);
+    }
     if let Some(swap_flag) = swap_flag {
         circ.zero_and_free(swap_flag);
     }
-    circ.zero_and_free(s2);
+    if let Some(s2) = s2_slot {
+        circ.zero_and_free(s2);
+    }
 }
 
 // =====================================================================

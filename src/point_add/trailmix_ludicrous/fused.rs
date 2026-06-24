@@ -40,6 +40,21 @@ fn env_index_value(name: &str, index: usize) -> Option<usize> {
         })
 }
 
+fn env_index_i32_value(name: &str, index: usize) -> Option<i32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().split_once(':'))
+                .find_map(|(call, value)| {
+                    (call.parse::<usize>().ok()? == index)
+                        .then(|| value.parse::<i32>().ok())
+                        .flatten()
+                })
+        })
+}
+
 fn fold_call_reserve(index: usize, default: usize) -> usize {
     let base = env_index_value("TLM_TARGET_FOLD_CALL_RESERVES", index).unwrap_or(default);
     env_index_value("TLM_TARGET_FOLD_CALL_RESERVE_OVERRIDES", index).unwrap_or(base)
@@ -415,16 +430,25 @@ fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin
 fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, carry: QubitId) {
     let n = y.len();
     assert!(n >= 1, "zero boundary erase needs >= 1 bit");
+    let borrow_cin_c0 = std::env::var("TLM_FOLD_ZERO_DIRECT_BORROW_CIN_C0")
+        .ok()
+        .as_deref()
+        == Some("1");
     let bit = circ.alloc_bit();
     circ.hmr(carry, bit);
     circ.zero_and_free(carry);
     circ.push_condition(bit);
 
     let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(n);
-    let c0 = circ.alloc_qubit();
-    circ.x(c0);
-    circ.cx(*cin, c0);
-    cy.push(Some(c0));
+    if borrow_cin_c0 {
+        circ.x(*cin);
+        cy.push(Some(*cin));
+    } else {
+        let c0 = circ.alloc_qubit();
+        circ.x(c0);
+        circ.cx(*cin, c0);
+        cy.push(Some(c0));
+    }
     for i in 0..n - 1 {
         let next = circ.alloc_qubit();
         let ci = cy[i].as_ref().unwrap();
@@ -459,9 +483,14 @@ fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, c
         circ.cx(*ci, y[i]);
     }
     let c0 = cy[0].take().unwrap();
-    circ.cx(*cin, c0);
-    circ.x(c0);
-    circ.zero_and_free(c0);
+    if borrow_cin_c0 {
+        debug_assert_eq!(c0, *cin);
+        circ.x(*cin);
+    } else {
+        circ.cx(*cin, c0);
+        circ.x(c0);
+        circ.zero_and_free(c0);
+    }
     circ.pop_condition();
 }
 
@@ -561,6 +590,22 @@ fn on_ctl_apply(circ: &mut B, e: &QubitId, d: &QubitId, k: u8, q: &QubitId) {
     }
 }
 
+fn direct_dirty_control_enabled() -> bool {
+    std::env::var("TLM_FOLD_DIRECT_DIRTY_CTL")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+fn toggle_fold_ctl_into(circ: &mut B, e: &QubitId, d: &QubitId, p: usize, target: QubitId) {
+    match fold_ctl(p) {
+        1 => circ.cx(*e, target),
+        2 => circ.cx(*d, target),
+        k @ (3 | 4 | 5 | 6) => on_ctl_apply(circ, e, d, k, &target),
+        _ => {}
+    }
+}
+
 fn on_ctl(circ: &mut B, e: &QubitId, d: &QubitId, p: usize) -> OnCtl {
     match fold_ctl(p) {
         1 => OnCtl::E,
@@ -580,6 +625,117 @@ fn on_ctl_ref(c: &OnCtl, e: &QubitId, d: &QubitId) -> Option<QubitId> {
         OnCtl::E => Some(*e),
         OnCtl::D => Some(*d),
         OnCtl::Owned(q) => Some(*q),
+    }
+}
+
+fn fold_ctl_linear_noanc_enabled() -> bool {
+    std::env::var("TLM_DIRTY_BODY_LINEAR_NOANC")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+fn fold_ctl_all_noanc_enabled() -> bool {
+    std::env::var("TLM_DIRTY_BODY_ALL_NOANC")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+fn fold_ctl_is_linear(p: usize) -> bool {
+    matches!(fold_ctl(p), 0 | 1 | 2 | 3)
+}
+
+fn xor_linear_fold_ctl_into(circ: &mut B, e: &QubitId, d: &QubitId, p: usize, target: QubitId) {
+    match fold_ctl(p) {
+        1 => circ.cx(*e, target),
+        2 => circ.cx(*d, target),
+        3 => {
+            circ.cx(*e, target);
+            circ.cx(*d, target);
+        }
+        _ => {}
+    }
+}
+
+fn xor_and_linear_fold_ctl(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    p: usize,
+    other: QubitId,
+    target: QubitId,
+) {
+    match fold_ctl(p) {
+        1 => circ.ccx(*e, other, target),
+        2 => circ.ccx(*d, other, target),
+        3 => {
+            circ.ccx(*e, other, target);
+            circ.ccx(*d, other, target);
+        }
+        _ => {}
+    }
+}
+
+fn borrowed_xor_c3(
+    circ: &mut B,
+    a: QubitId,
+    b: QubitId,
+    c: QubitId,
+    target: QubitId,
+    borrow: QubitId,
+) {
+    debug_assert_ne!(borrow, a);
+    debug_assert_ne!(borrow, b);
+    debug_assert_ne!(borrow, c);
+    debug_assert_ne!(borrow, target);
+    circ.ccx(borrow, c, target);
+    circ.ccx(a, b, borrow);
+    circ.ccx(borrow, c, target);
+    circ.ccx(a, b, borrow);
+}
+
+fn pick_fold_ctl_borrow(
+    dirty: &[QubitId],
+    e: QubitId,
+    d: QubitId,
+    other: QubitId,
+    target: QubitId,
+) -> QubitId {
+    dirty
+        .iter()
+        .copied()
+        .find(|&q| q != e && q != d && q != other && q != target)
+        .expect("no borrowed dirty lane available for nonlinear fold-control term")
+}
+
+fn xor_and_fold_ctl_noanc(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    p: usize,
+    other: QubitId,
+    target: QubitId,
+    borrow: QubitId,
+) {
+    match fold_ctl(p) {
+        1 => circ.ccx(*e, other, target),
+        2 => circ.ccx(*d, other, target),
+        3 => {
+            circ.ccx(*e, other, target);
+            circ.ccx(*d, other, target);
+        }
+        4 => {
+            circ.ccx(*e, other, target);
+            circ.ccx(*d, other, target);
+            borrowed_xor_c3(circ, *e, *d, other, target, borrow);
+        }
+        5 => {
+            circ.ccx(*d, other, target);
+            borrowed_xor_c3(circ, *e, *d, other, target, borrow);
+        }
+        6 => borrowed_xor_c3(circ, *e, *d, other, target, borrow),
+        _ => {}
     }
 }
 
@@ -701,35 +857,78 @@ fn dirty_body(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId]
     let l = y.len();
     assert!(l >= 2);
     assert!(dirty.len() >= l - 1, "need L-1 borrowed dirty bits");
-    let mut cin_owned = if carry_in.is_none() { Some(circ.alloc_qubit()) } else { None };
+    let linear_noanc = fold_ctl_linear_noanc_enabled();
+    let all_noanc = fold_ctl_all_noanc_enabled();
+    let first_zero_linear = carry_in.is_none() && linear_noanc && fold_ctl_is_linear(base);
+    let first_zero_noanc = carry_in.is_none() && all_noanc;
+    let mut cin_owned = if carry_in.is_none() && !first_zero_linear && !first_zero_noanc {
+        Some(circ.alloc_qubit())
+    } else {
+        None
+    };
     let mut bits: Vec<BitId> = Vec::with_capacity(l - 1); // bits[i] = measured cy_{i+1}
     let mut prev_new: Option<QubitId> = None;
     for i in 0..l - 1 {
         let new = circ.alloc_qubit();
-        let anc = circ.alloc_qubit();
-        let ctlh = on_ctl(circ, e, d, base + i);
-        {
-            let cyi: QubitId = if i == 0 {
-                carry_in.copied().unwrap_or_else(|| *cin_owned.as_ref().unwrap())
-            } else {
-                *prev_new.as_ref().unwrap()
-            };
-            if let Some(ai) = on_ctl_ref(&ctlh, e, d) {
-                circ.cx(ai, anc);
+        let cyi = if i == 0 {
+            carry_in.copied().or_else(|| cin_owned.as_ref().copied())
+        } else {
+            Some(*prev_new.as_ref().unwrap())
+        };
+        if all_noanc {
+            let borrow_y = pick_fold_ctl_borrow(dirty, *e, *d, y[i], new);
+            if let Some(cyi) = cyi {
+                let borrow_c = pick_fold_ctl_borrow(dirty, *e, *d, cyi, new);
+                circ.ccx(y[i], cyi, new);
+                xor_and_fold_ctl_noanc(circ, e, d, base + i, cyi, new, borrow_c);
             }
-            circ.cx(cyi, anc);
-            circ.cx(cyi, y[i]);
-            circ.ccx(y[i], anc, new);
-            circ.cx(cyi, new); // new = carry_{i+1}
+            xor_and_fold_ctl_noanc(circ, e, d, base + i, y[i], new, borrow_y);
             circ.cx(new, dirty[i]); // store carry copy in borrowed bit
-            circ.cx(cyi, anc);
-            if let Some(ai) = on_ctl_ref(&ctlh, e, d) {
-                circ.cx(ai, anc);
-                circ.cx(ai, y[i]); // y[i] = sum_i
+            if let Some(cyi) = cyi {
+                circ.cx(cyi, y[i]);
             }
+            toggle_fold_ctl_into(circ, e, d, base + i, y[i]); // y[i] = sum_i
+        } else if linear_noanc && fold_ctl_is_linear(base + i) {
+            if let Some(cyi) = cyi {
+                circ.ccx(y[i], cyi, new);
+                xor_and_linear_fold_ctl(circ, e, d, base + i, cyi, new);
+            }
+            xor_and_linear_fold_ctl(circ, e, d, base + i, y[i], new);
+            circ.cx(new, dirty[i]); // store carry copy in borrowed bit
+            if let Some(cyi) = cyi {
+                circ.cx(cyi, y[i]);
+            }
+            xor_linear_fold_ctl_into(circ, e, d, base + i, y[i]); // y[i] = sum_i
+        } else {
+            let anc = circ.alloc_qubit();
+            let direct_ctl = direct_dirty_control_enabled();
+            let ctlh = (!direct_ctl).then(|| on_ctl(circ, e, d, base + i));
+            {
+                let cyi = cyi.expect("nonlinear dirty body needs materialized carry-in");
+                if direct_ctl {
+                    toggle_fold_ctl_into(circ, e, d, base + i, anc);
+                } else if let Some(ai) = on_ctl_ref(ctlh.as_ref().unwrap(), e, d) {
+                    circ.cx(ai, anc);
+                }
+                circ.cx(cyi, anc);
+                circ.cx(cyi, y[i]);
+                circ.ccx(y[i], anc, new);
+                circ.cx(cyi, new); // new = carry_{i+1}
+                circ.cx(new, dirty[i]); // store carry copy in borrowed bit
+                circ.cx(cyi, anc);
+                if direct_ctl {
+                    toggle_fold_ctl_into(circ, e, d, base + i, anc);
+                    toggle_fold_ctl_into(circ, e, d, base + i, y[i]); // y[i] = sum_i
+                } else if let Some(ai) = on_ctl_ref(ctlh.as_ref().unwrap(), e, d) {
+                    circ.cx(ai, anc);
+                    circ.cx(ai, y[i]); // y[i] = sum_i
+                }
+            }
+            if let Some(ctlh) = ctlh {
+                on_ctl_free(circ, e, d, base + i, ctlh);
+            }
+            circ.zero_and_free(anc);
         }
-        on_ctl_free(circ, e, d, base + i, ctlh);
-        circ.zero_and_free(anc);
         if i == 0 {
             if let Some(c) = cin_owned.take() {
                 circ.zero_and_free(c);
@@ -884,7 +1083,9 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let base_code = super::next_fold();
+    let code = env_index_i32_value("TLM_FOLD_CALL_CODE_OVERRIDES", call_index)
+        .unwrap_or(base_code);
     let mut selected_nv = None;
     if code < 0 {
         let chunk = std::env::var("TLM_FOLD_CHUNK_FORCE")
@@ -929,7 +1130,9 @@ fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
     let call_index = next_fold_call_index();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
-    let code = super::next_fold();
+    let base_code = super::next_fold();
+    let code = env_index_i32_value("TLM_FOLD_CALL_CODE_OVERRIDES", call_index)
+        .unwrap_or(base_code);
     let default_reserve = std::env::var("TLM_TARGET_FOLD_RESERVE")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
