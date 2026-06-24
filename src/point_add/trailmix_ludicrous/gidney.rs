@@ -38,6 +38,13 @@ fn dirty_vent_pool() -> Vec<QubitId> {
     DIRTY_VENT_POOL.with(|pool| pool.borrow().clone())
 }
 
+fn zero_cin0_no_cout_enabled() -> bool {
+    std::env::var("TLM_GIDNEY_ZERO_CIN0_NO_COUT")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 fn trace_schedule_fit(
     trace_env: &str,
     family: &str,
@@ -460,7 +467,7 @@ fn adaptive_chunk_size(n: usize) -> usize {
 }
 
 pub(crate) fn adaptive_layout(n: usize, k: usize) -> AdaptiveLayout {
-    let c = ((n as f64).sqrt() as usize).clamp(1, n);
+    let c = adaptive_chunk_size(n);
     adaptive_layout_for_chunk(n, k, c)
 }
 
@@ -602,19 +609,22 @@ fn emit_adaptive_layout_no_cout(
         bounds.push((lo, hi));
         lo = hi;
     }
-    let cin0 = circ.alloc_qubit();
+    let direct_zero_cin0 = zero_cin0_no_cout_enabled();
+    let cin0 = (!direct_zero_cin0).then(|| circ.alloc_qubit());
     let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
     for (j, &(lo, hi)) in bounds.iter().enumerate() {
         let cout = circ.alloc_qubit();
-        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
-        controlled_clean_add_threaded(circ, ctrl, &a[lo..hi], &b[lo..hi], Some(cin), Some(&cout), hi - lo);
+        let cin: Option<&QubitId> = if j == 0 { cin0.as_ref() } else { Some(&carries[j - 1]) };
+        controlled_clean_add_threaded(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, Some(&cout), hi - lo);
         carries.push(cout);
     }
     if layout.plain_len > 0 {
-        let cin: &QubitId = carries.last().unwrap_or(&cin0);
-        controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], Some(cin), None, layout.plain_len);
+        let cin: Option<&QubitId> = carries.last().or(cin0.as_ref());
+        controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], cin, None, layout.plain_len);
     }
-    circ.zero_and_free(cin0);
+    if let Some(cin0) = cin0 {
+        circ.zero_and_free(cin0);
+    }
     for j in (0..bounds.len()).rev() {
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
@@ -719,7 +729,8 @@ fn controlled_hybrid_add_adaptive_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qubit
         }
         return;
     }
-    let cin0 = circ.alloc_qubit();
+    let direct_zero_cin0 = zero_cin0_no_cout_enabled();
+    let cin0 = (!direct_zero_cin0).then(|| circ.alloc_qubit());
     let mut bounds: Vec<(usize, usize)> = Vec::new();
     let (l, plain_len) = if tight {
         let (mut lo, mut i) = (0usize, 0usize);
@@ -743,15 +754,17 @@ fn controlled_hybrid_add_adaptive_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qubit
     let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
     for (j, &(lo, hi)) in bounds.iter().enumerate() {
         let cout = circ.alloc_qubit();
-        let cin: &QubitId = if j == 0 { &cin0 } else { &carries[j - 1] };
-        controlled_clean_add_threaded(circ, ctrl, &a[lo..hi], &b[lo..hi], Some(cin), Some(&cout), hi - lo);
+        let cin: Option<&QubitId> = if j == 0 { cin0.as_ref() } else { Some(&carries[j - 1]) };
+        controlled_clean_add_threaded(circ, ctrl, &a[lo..hi], &b[lo..hi], cin, Some(&cout), hi - lo);
         carries.push(cout);
     }
     if plain_len > 0 {
-        let cin: &QubitId = carries.last().unwrap_or(&cin0);
-        controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], Some(cin), None, plain_len);
+        let cin: Option<&QubitId> = carries.last().or(cin0.as_ref());
+        controlled_clean_add_threaded(circ, ctrl, &a[l..n], &b[l..n], cin, None, plain_len);
     }
-    circ.zero_and_free(cin0);
+    if let Some(cin0) = cin0 {
+        circ.zero_and_free(cin0);
+    }
     for j in (0..bounds.len()).rev() {
         let (lo, hi) = bounds[j];
         let carry = carries.pop().expect("carry present");
