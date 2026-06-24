@@ -412,55 +412,6 @@ pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize
     active_width.saturating_sub(w).max(2)
 }
 
-/// Band-trim the LIVE (vented) divstep body sub/add to body_carry_trunc_width,
-/// mirroring the materialized-path trim (which is baked+validated) onto the
-/// cuccaro_*_ctrl_vented else-branch that currently runs full active_width. The
-/// trimmed-off top cells are |0> on reachable GCD support (WIDTH_MARGIN premise)
-/// and the post-cswap body never borrows past the active operand, so the result
-/// is value-exact on that support. Default OFF = byte-identical.
-pub(crate) fn dialog_gcd_vented_body_band_trim_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_BAND_TRIM").ok().as_deref() == Some("1")
-}
-
-/// Effective vented-body sub/add width at this step. OFF => full active_width n.
-/// With the knob ON it mirrors body_carry_trunc_width (the baked schedule);
-/// DIALOG_GCD_VENTED_BODY_UNIFORM_TRIM=N overrides with a flat (n-N) trim so the
-/// score/lambda_cl Pareto can be swept (N=1 conservative .. larger = more lossy).
-pub(crate) fn dialog_gcd_vented_body_width(n: usize, step: usize) -> usize {
-    if !dialog_gcd_vented_body_band_trim_enabled() {
-        return n;
-    }
-    if let Some(u) = std::env::var("DIALOG_GCD_VENTED_BODY_UNIFORM_TRIM")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&u| u > 0)
-    {
-        return n.saturating_sub(u).max(2);
-    }
-    let mut w = dialog_gcd_body_carry_trunc_width(n, step).min(n).max(2);
-    // Optional per-step trim CAP: cap the schedule's trim at K bits (w >= n-K).
-    // With overshoot<=8 < WIDTH_MARGIN=10, cap=2 keeps the trimmed cells |0> on
-    // ALL reachable inputs (bitlen <= active_width-2) => value-exact-always =>
-    // density-neutral, trading a little cut for a guaranteed-clean island.
-    if let Some(cap) = std::env::var("DIALOG_GCD_VENTED_BODY_TRIM_CAP")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-    {
-        w = w.max(n.saturating_sub(cap)).min(n);
-    }
-    w
-}
-
-/// Skip bit 0 of the LIVE vented divstep body (mirrors the materialized
-/// body_start=1 fastpath, which is wired only to the dead MATERIALIZED_SUB
-/// branch). Kaliski invariant: u kept odd (subtrahend[0]=1) and acc[0]=ctrl at
-/// the sub site / acc[0]=0 at the reverse-add site, so the bit-0 result is a
-/// known cx(ctrl,acc[0]) with NO carry into bit 1 — value-exact, density-neutral,
-/// orthogonal to the band-trim (band trims the top, this the bottom). Default OFF.
-pub(crate) fn dialog_gcd_vented_body_odd_lowbit_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT").ok().as_deref() == Some("1")
-}
-
 pub(crate) fn dialog_gcd_binder_notch_steps() -> Vec<usize> {
     std::env::var("DIALOG_GCD_BINDER_NOTCH_STEPS")
         .ok()
@@ -835,18 +786,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             if let Some(vents) =
                 borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
             {
-                let bw = dialog_gcd_vented_body_width(n, step);
-                if dialog_gcd_vented_body_odd_lowbit_enabled()
-                    && dialog_gcd_odd_u_lowbit_fastpath_enabled()
-                    && bw >= 3
-                {
-                    // Bit-0 result = cx(ctrl, acc[0]); no borrow into bit 1 (acc[0]=ctrl,
-                    // subtrahend[0]=1). Run the vented body over [1..bw].
-                    b.cx(ctrl, acc[0]);
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
-                } else {
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
-                }
+                cuccaro_sub_ctrl_vented(b, subtrahend, acc, ctrl, &vents[..n - 1]);
                 return;
             }
         }
@@ -1048,18 +988,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
             if let Some(vents) =
                 borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
             {
-                let bw = dialog_gcd_vented_body_width(n, step);
-                if dialog_gcd_vented_body_odd_lowbit_enabled()
-                    && dialog_gcd_odd_u_lowbit_fastpath_enabled()
-                    && bw >= 3
-                {
-                    // Reverse-add mirror: acc[0]=0, addend[0]=1 => bit-0 result =
-                    // cx(ctrl, acc[0]), no carry into bit 1. Body over [1..bw].
-                    b.cx(ctrl, acc[0]);
-                    cuccaro_add_ctrl_vented(b, &addend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
-                } else {
-                    cuccaro_add_ctrl_vented(b, &addend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
-                }
+                cuccaro_add_ctrl_vented(b, addend, acc, ctrl, &vents[..n - 1]);
                 return;
             }
         }
