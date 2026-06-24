@@ -21,6 +21,23 @@ use super::*;
 pub(crate) fn emit_inverse<F: FnOnce(&mut B)>(b: &mut B, f: F) {
     if b.count_only {
         let snap = b.count_snapshot();
+        if b.fiat_hash.is_some() {
+            let hash_before = b.fiat_hash.clone();
+            b.count_only_capture_stack.push(Vec::new());
+            f(b);
+            let forward = b
+                .count_only_capture_stack
+                .pop()
+                .expect("count-only inverse capture stack");
+            b.restore_count_snapshot(snap);
+            b.fiat_hash = hash_before;
+            emit_inverse_ops_allowing_clean_resets(
+                b,
+                &forward,
+                "count-only hashed emit_inverse",
+            );
+            return;
+        }
         f(b);
         let delta = b.count_delta_since(snap);
         b.restore_count_snapshot(snap);
