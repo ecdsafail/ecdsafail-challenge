@@ -1081,7 +1081,7 @@ fn set_default_env(name: &str, value: &str) {
 // Q1153 second-512 scan route. To submit a clean hit from the current hunt,
 // update this nonce, build with no shell env overrides, run `ecdsafail run`,
 // and submit only if it remains 0 / 0 / 0.
-const Q1153_SECOND512_SUBMISSION_NONCE: &str = "810197699946";
+const Q1153_SECOND512_SUBMISSION_NONCE: &str = "930308424560";
 
 fn configure_q1153_second512_submission_defaults() {
     set_default_env("DIALOG_TAIL_NONCE", Q1153_SECOND512_SUBMISSION_NONCE);
@@ -2149,7 +2149,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "2430844");
+    set_default_env("DIALOG_TAIL_NONCE", "930308424560");
     set_default_env("TLM_FOLD_TAIL_CINC", "1");
     set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
     set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
