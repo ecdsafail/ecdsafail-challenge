@@ -362,7 +362,7 @@ fn install_q1153_submission_defaults() {
         ("TLM_FOLD_CHUNK_ZERO_CIN", "1"),
         ("TLM_FFG_MAX_G", "47"),
         ("TLM_APPLY_ADD_SKIP_LASTK", "1"),
-        ("DIALOG_TAIL_NONCE", "2430844"),
+        ("DIALOG_TAIL_NONCE", "930308424560"),
     ] {
         if name == "DIALOG_TAIL_NONCE" && std::env::var_os(name).is_some() {
             continue;
