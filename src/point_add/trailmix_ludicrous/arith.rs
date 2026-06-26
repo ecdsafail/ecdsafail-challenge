@@ -105,6 +105,18 @@ fn env_index_value(name: &str, index: usize) -> Option<usize> {
         })
 }
 
+fn env_index_list_contains(name: &str, index: usize) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .filter_map(|item| item.trim().parse::<usize>().ok())
+                .any(|candidate| candidate == index)
+        })
+        .unwrap_or(false)
+}
+
 const FFG_DEAD_HYBRID_CARRY_RANGES: &[(usize, usize, usize)] = &[
     (264, 1, 46),
     (265, 1, 46),
@@ -1315,6 +1327,25 @@ fn add_f_window_hybrid(
     }
     // prefix sums bits 0..k.
     for i in 0..k { if cbit(c, i) { circ.cx(*ctrl, a[i]); } }
+    let release_cy0_during_suffix =
+        std::env::var("TLM_FFG_RELEASE_CY0_DURING_SUFFIX")
+            .ok()
+            .as_deref()
+            == Some("1")
+            && (std::env::var_os("TLM_FFG_RELEASE_CY0_CALLS").is_none()
+                || env_index_list_contains("TLM_FFG_RELEASE_CY0_CALLS", trace_call_index))
+            && k > 1
+            && cbit(c, 0);
+    if release_cy0_during_suffix {
+        let cy0 = *cy[0].as_ref().unwrap();
+        // After bit 0's sum, final a0 = original_a0 ^ ctrl because f[0] = 1.
+        // So cy0 = ctrl & original_a0 = ctrl & !final_a0; clear it while the
+        // suffix runs, then restore it before the prefix reverse consumes it.
+        circ.x(a[0]);
+        circ.ccx(*ctrl, a[0], cy0);
+        circ.x(a[0]);
+        circ.loan_zero_qubit(cy0);
+    }
     // suffix [k,n): carry-in cy_k = cy[k-1]. Graduated-chunked when the remaining
     // headroom covers it (avoids the large-suffix borrowed-dirty path), else
     // borrowed-dirty.
@@ -1330,6 +1361,13 @@ fn add_f_window_hybrid(
         } else {
             dirty_carryin(circ, ctrl, &a_hi, c, k, &dirty, &cin);
         }
+    }
+    if release_cy0_during_suffix {
+        let cy0 = *cy[0].as_ref().unwrap();
+        circ.reclaim_zero_qubit(cy0);
+        circ.x(a[0]);
+        circ.ccx(*ctrl, a[0], cy0);
+        circ.x(a[0]);
     }
     // prefix reverse bits k-1..1: vent cy[i] (=carry_{i+1}) via CZ discharge.
     for i in (1..k).rev() {
@@ -1700,7 +1738,18 @@ pub fn mod_sub(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     for q in y {
         circ.x(*q);
     }
-    cuccaro_carry(circ, None, x, y, None, Some(&anc));
+    // Off-peak square-reduce register add: value-identical via either the 1-anc
+    // Cuccaro ripple (2n CCX) or the headroom-bounded measurement-vented add
+    // ((n-1)+(n-1-vents) CCX, peak-neutral). TLM_SQUARE_NO_VENT_REDUCE=1 forces Cuccaro.
+    if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
+        cuccaro_carry(circ, None, x, y, None, Some(&anc));
+    } else {
+        // Support-bounded vent: takes the cuccaro call-index (keeps downstream
+        // guards aligned) and skips the same dead carries the guard would, while
+        // venting the live ones -- captures both savings by construction.
+        let ci = next_cuccaro_call_index();
+        add_cout_vented_skip_dead(circ, x, y, &anc, ci);
+    }
     for q in y {
         circ.x(*q);
     }
@@ -1726,6 +1775,154 @@ fn add_cout_vented_unctrl(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &Qub
     b.push(zpad);
     hybrid_add_plain(circ, &a, &b, n); // vents = n => full clean over the (n+1)-bit add
     circ.zero_and_free(zpad);
+}
+
+/// Peak-hard-bounded variant of [`add_cout_vented_unctrl`]: identical value
+/// (`y := (x+y) mod 2^n`, `cout ^= carry_out(x+y)`), but the reverse-carry vent
+/// budget is capped to the live qubit headroom so the simultaneous vent ancillae
+/// never push the active count past `SQUARE_PEAK_HARD_CAP`. This is the off-peak
+/// square-reduce register add: a value-exact, ancilla-clean drop-in for the
+/// non-vented `cuccaro_carry(None, x, y, None, Some(cout))` register sub/add that
+/// costs `(n-1) + (n-1-vents)` CCX instead of `2n` -- every peak-safe vent saves
+/// one reverse-carry Toffoli. `vents = 0` degenerates to the same `2(n-1)+1` CCX
+/// shape as the Cuccaro add (so a zero-headroom call is at worst neutral).
+/// Fused single-chain `y := coord - y (mod q)` where `t1 = (coord+1) mod 2^256`
+/// is preloaded into a quantum temp. Identity: `coord - y = ~y + (coord+1) mod
+/// 2^256`, conditional `-f` on NOT(carry-out). Replaces the two-chain
+/// `mod_sub_vented` + `mod_neg` (saves the unconditional ~254-CCX negate). `t1` is
+/// untouched. Same MSBS-truncated overflow clean as the other coordinate steps.
+pub fn mod_rsub_vented_loaded(circ: &mut B, t1: &[QubitId], y: &[QubitId]) {
+    let n = y.len();
+    assert_eq!(t1.len(), n, "mod_rsub_vented_loaded: t1,y must both be n=256 bits");
+    assert_eq!(n, 256, "secp256k1 mod_rsub_vented_loaded expects n=256");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let anc = circ.alloc_qubit();
+    for q in y {
+        circ.x(*q);
+    }
+    add_cout_vented_unctrl(circ, t1, y, &anc);
+    circ.x(anc);
+    for q in &y[..LSBS] {
+        circ.x(*q);
+    }
+    add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
+    for q in &y[..LSBS] {
+        circ.x(*q);
+    }
+    circ.x(anc);
+    controlled_lt_msbs_conditional(circ, None, &y[..n], &t1[..n], MSBS, anc);
+}
+
+/// Support-bounded vent: the headroom-bounded measurement-vented add, but it
+/// ALSO skips the structurally-dead carries that the cuccaro guard would skip for
+/// `call_index` (via `cuccaro_call_has_structurally_dead_carry`). So it vents the
+/// LIVE carries at ~1 Toffoli each AND emits zero dead carries -- capturing both
+/// the venting saving and the dead-carry removal the guards do, by construction.
+/// `cout ^= carry_out`; `x` restored. Identical value to the guarded cuccaro add.
+fn add_cout_vented_skip_dead(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId, call_index: usize) {
+    let n = y.len();
+    assert_eq!(x.len(), n, "add_cout_vented_skip_dead: x,y width mismatch");
+    let dead = |i: usize| cuccaro_call_has_structurally_dead_carry(call_index, i);
+    let zpad = circ.alloc_qubit();
+    let live = circ.active_qubits as usize;
+    let margin = std::env::var("TLM_SQUARE_VENT_MARGIN")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(SQUARE_VENT_MARGIN);
+    let vents_budget = square_peak_hard_cap().saturating_sub(live).saturating_sub(margin);
+    // a = y ++ cout, b = x ++ zpad  (the (n+1)-bit add).
+    let mut a: Vec<QubitId> = y.to_vec();
+    a.push(*cout);
+    let mut b: Vec<QubitId> = x.to_vec();
+    b.push(zpad);
+    let m = a.len();
+    // mirror hybrid_add_plain, but gate each carry MAJ on !dead(i).
+    let mut vents_left = vents_budget;
+    for i in 1..m {
+        circ.cx(b[i], a[i]);
+    }
+    for i in (1..m - 1).rev() {
+        circ.cx(b[i], b[i + 1]);
+    }
+    let mut vent_ancs: Vec<Option<QubitId>> = (0..m - 1).map(|_| None).collect();
+    for i in 0..m - 1 {
+        if dead(i) {
+            continue; // carry into b[i+1] is provably 0 -> no MAJ, no vent
+        }
+        if vents_left > 0 {
+            let anc = circ.alloc_qubit();
+            circ.ccx(a[i], b[i], anc);
+            circ.cx(anc, b[i + 1]);
+            vent_ancs[i] = Some(anc);
+            vents_left -= 1;
+        } else {
+            circ.ccx(a[i], b[i], b[i + 1]);
+        }
+    }
+    for i in (0..m - 1).rev() {
+        circ.cx(b[i + 1], a[i + 1]); // UNCONDITIONAL sum bit i+1
+        if dead(i) {
+            continue;
+        }
+        if let Some(anc) = vent_ancs[i].take() {
+            circ.cx(anc, b[i + 1]);
+            let bit = circ.alloc_bit();
+            circ.hmr(anc, bit);
+            circ.zero_and_free(anc);
+            circ.cz_if_bit(a[i], b[i], bit);
+        } else {
+            circ.ccx(a[i], b[i], b[i + 1]);
+        }
+    }
+    for i in 1..m - 1 {
+        circ.cx(b[i], b[i + 1]);
+    }
+    circ.cx(b[0], a[0]); // UNCONDITIONAL sum bit 0
+    for i in 1..m {
+        circ.cx(b[i], a[i]);
+    }
+    circ.zero_and_free(zpad);
+}
+
+fn add_cout_vented_unctrl_bounded(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId) {
+    let n = y.len();
+    assert_eq!(x.len(), n, "add_cout_vented_unctrl_bounded: x,y width mismatch");
+    let zpad = circ.alloc_qubit();
+    // After zpad alloc, the (n+1)-bit add can host at most this many simultaneous
+    // vent ancillae before touching the hard cap. hybrid_add_plain holds at most
+    // `vents` vent ancillae live at once (allocated forward, freed in reverse).
+    let live = circ.active_qubits as usize;
+    let margin = std::env::var("TLM_SQUARE_VENT_MARGIN")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(SQUARE_VENT_MARGIN);
+    let headroom = square_peak_hard_cap().saturating_sub(live).saturating_sub(margin);
+    let mut a: Vec<QubitId> = y.to_vec();
+    a.push(*cout);
+    let mut b: Vec<QubitId> = x.to_vec();
+    b.push(zpad);
+    hybrid_add_plain(circ, &a, &b, headroom);
+    circ.zero_and_free(zpad);
+}
+
+/// Active-qubit hard cap for the off-peak square-reduce partial vents. The global
+/// peak is set in the GCD apply (1156); the square runs far below it. We cap the
+/// vent ancillae so the square reduce never reaches the apply peak. A small margin
+/// below 1156 protects against transient allocations inside the add.
+pub const SQUARE_PEAK_HARD_CAP: usize = 1153; // da51a48 binding peak (was 1156 on 27d4627); override via TLM_SQUARE_PEAK_CAP
+
+/// Headroom margin held back below the hard cap when sizing the square-reduce vent
+/// budget. Keeps a buffer under the apply peak (1156) so the partial vent is
+/// peak-neutral with slack, and is the operating point measured to pass the
+/// fixed-nonce phase/classical budget (12 classical / 7 phase / 0 ancilla at the
+/// product-min nonce, vs the baseline 16 / 9 / 0; avg Toffoli -838.9).
+pub const SQUARE_VENT_MARGIN: usize = 30;
+
+fn square_peak_hard_cap() -> usize {
+    std::env::var("TLM_SQUARE_PEAK_CAP")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(SQUARE_PEAK_HARD_CAP)
 }
 
 /// UNCONTROLLED `y := y + x (mod q)` over n=256-bit x,y. VENTED register add
@@ -1773,7 +1970,13 @@ pub fn mod_add_lowpeak(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     assert_eq!(n, 256, "secp256k1 mod_add_lowpeak expects n=256");
     let f_bytes = F_SECP256K1.to_le_bytes();
     let anc = circ.alloc_qubit();
-    cuccaro_carry(circ, None, x, y, None, Some(&anc));
+    // Off-peak square-reduce register add: headroom-bounded vent (see `mod_sub`).
+    if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
+        cuccaro_carry(circ, None, x, y, None, Some(&anc));
+    } else {
+        let ci = next_cuccaro_call_index();
+        add_cout_vented_skip_dead(circ, x, y, &anc, ci);
+    }
     add_f_window(circ, &anc, y, LSBS, &f_bytes, None);
     controlled_lt_msbs_conditional(circ, None, &y[..n], &x[..n], MSBS, anc);
 }
@@ -1792,7 +1995,14 @@ pub fn mod_add_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: us
     }
     let f_bytes = F_SECP256K1.to_le_bytes();
     let anc = circ.alloc_qubit();
-    cuccaro_carry(circ, None, x, &y[shift..], None, Some(&anc));
+    // Off-peak shifted-square reduce add: support-bounded vent (skip the same dead
+    // carries the guard would, vent the live ones). TLM_SQUARE_VENT_SHIFTED=1.
+    if std::env::var("TLM_SQUARE_VENT_SHIFTED").ok().as_deref() == Some("1") {
+        let ci = next_cuccaro_call_index();
+        add_cout_vented_skip_dead(circ, x, &y[shift..], &anc, ci);
+    } else {
+        cuccaro_carry(circ, None, x, &y[shift..], None, Some(&anc));
+    }
     add_f_window(circ, &anc, y, LSBS, &f_bytes, Some(LSBS - 1));
     controlled_lt_msbs_conditional(circ, None, &y[n - MSBS..], &x[x.len() - MSBS..], MSBS, anc);
 }
@@ -1842,7 +2052,12 @@ pub fn mod_sub_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: us
     for q in &y[shift..] {
         circ.x(*q);
     }
-    cuccaro_carry(circ, None, x, &y[shift..], None, Some(&anc));
+    if std::env::var("TLM_SQUARE_VENT_SHIFTED").ok().as_deref() == Some("1") {
+        let ci = next_cuccaro_call_index();
+        add_cout_vented_skip_dead(circ, x, &y[shift..], &anc, ci);
+    } else {
+        cuccaro_carry(circ, None, x, &y[shift..], None, Some(&anc));
+    }
     for q in &y[shift..] {
         circ.x(*q);
     }

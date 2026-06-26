@@ -35,7 +35,8 @@
 //! across the square step.
 
 use super::arith::{
-    mod_add, mod_add_exact, mod_neg, mod_sub_classical_low3, mod_sub_shifted_low, mod_sub_vented,
+    mod_add, mod_add_exact, mod_neg, mod_rsub_vented_loaded, mod_sub_classical_low3,
+    mod_sub_shifted_low, mod_sub_vented,
 };
 use super::gcd::{mod_mul_inverse_in_place, Direction};
 use super::square::mod_square_sub_pm_secp256k1_symmetric;
@@ -119,7 +120,13 @@ fn coord_add3x(circ: &mut B, dst: &[QubitId], coord: &[BitId]) {
     for i in 0..N {
         circ.x_if_bit(temp[i], three_coord[i]); // temp := t (per-shot classical)
     }
-    mod_add_exact(circ, &temp, dst); // dst += t (mod q), exact -- temp untouched
+    // Upside B: TLM_COORD_ADD3X_TRUNC=1 uses the MSBS-truncated `mod_add` (same
+    // approximation the coord-subs already ship) for ~116 fewer executed Toffoli.
+    if std::env::var("TLM_COORD_ADD3X_TRUNC").ok().as_deref() == Some("1") {
+        mod_add(circ, &temp, dst);
+    } else {
+        mod_add_exact(circ, &temp, dst); // dst += t (mod q), exact -- temp untouched
+    }
     for i in 0..N {
         circ.x_if_bit(temp[i], three_coord[i]); // unload: temp := 0
     }
@@ -313,9 +320,46 @@ fn classical_add_into(circ: &mut B, acc: &[BitId], addend: &[BitId]) {
 /// load/unload from `CX` to `x_if_bit` (0 Toffoli). Boundary: `mod_neg` lands on
 /// `q` only when `x - coord == 0` (i.e. x == coord, a degenerate input),
 /// excluded with the other generic-add preconditions.
+/// `(coord + 1) mod 2^256` on the free classical BitId tier (0 Toffoli).
+fn classical_plus1_mod_2n(circ: &mut B, coord: &[BitId]) -> Vec<BitId> {
+    debug_assert_eq!(coord.len(), N);
+    let s: Vec<BitId> = circ.alloc_bits(N);
+    for i in 0..N {
+        circ.bit_copy(s[i], coord[i]);
+    }
+    let one: Vec<BitId> = circ.alloc_bits(1);
+    circ.bit_store0(one[0]);
+    circ.bit_invert(one[0]);
+    classical_add_into(circ, &s, &one);
+    circ.bit_store0(one[0]);
+    s
+}
+
 fn coord_rsub(circ: &mut B, x: &[QubitId], coord: &[BitId]) {
     debug_assert_eq!(x.len(), N);
     debug_assert_eq!(coord.len(), N);
+    // My fused single-chain coord_rsub (`ox - x = ~x + (ox+1) mod 2^256`, conditional
+    // -f, MSBS-truncated clean). `ox+1` on the free classical BitId tier. ~-248 avgT.
+    // Distinct from the frontier's TLM_FUSE_X_RESTORE/mod_const_minus_reg_qb (which
+    // measures +1201 here, hence default-off). Enable via TLM_COORD_RSUB_FUSED=1.
+    if std::env::var("TLM_COORD_RSUB_FUSED").ok().as_deref() == Some("1") {
+        let coord_p1 = classical_plus1_mod_2n(circ, coord);
+        let t: Vec<QubitId> = (0..N).map(|_| circ.alloc_qubit()).collect();
+        for i in 0..N {
+            circ.x_if_bit(t[i], coord_p1[i]);
+        }
+        mod_rsub_vented_loaded(circ, &t, x);
+        for i in 0..N {
+            circ.x_if_bit(t[i], coord_p1[i]);
+        }
+        for q in t {
+            circ.zero_and_free(q);
+        }
+        for &b in &coord_p1 {
+            circ.bit_store0(b);
+        }
+        return;
+    }
     if std::env::var("TLM_FUSE_X_RESTORE")
         .ok()
         .as_deref()

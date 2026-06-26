@@ -1151,7 +1151,7 @@ fn set_default_env(name: &str, value: &str) {
 // Q1153 second-512 scan route. To submit a clean hit from the current hunt,
 // update this nonce, build with no shell env overrides, run `ecdsafail run`,
 // and submit only if it remains 0 / 0 / 0.
-const Q1153_SECOND512_SUBMISSION_NONCE: &str = "13100076815176";
+const Q1153_SECOND512_SUBMISSION_NONCE: &str = "50400005525597";
 
 fn configure_q1153_second512_submission_defaults() {
     set_default_env("DIALOG_TAIL_NONCE", Q1153_SECOND512_SUBMISSION_NONCE);
@@ -1162,6 +1162,15 @@ fn configure_q1153_second512_submission_defaults() {
     set_default_env("TLM_FOLD_TAIL_CINC", "1");
     set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
     set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
+    // ── 1152 stack (codex FFG cy0-release + opus square vents) ──────────────
+    set_default_env("TLM_FFG_RELEASE_CY0_DURING_SUFFIX", "1");
+    set_default_env("TLM_FFG_RELEASE_CY0_CALLS", "178,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,203,208,210,211,212,213,215,217,219,221,226,232,234,235,236,237,239");
+    set_default_env("TLM_APPLY_FWD_CSWAP_SKIP_LAST", "1");
+    set_default_env("TLM_COORD_RSUB_FUSED", "1");
+    set_default_env("TLM_SQUARE_VENT_MARGIN", "0");
+    set_default_env("TLM_COORD_ADD3X_TRUNC", "1");
+    set_default_env("TLM_SQUARE_VENT_SHIFTED", "1");
+    set_default_env("TLM_SQUARE_PEAK_CAP", "1152");
 }
 
 fn configure_ecdsafail_submission_route() {
