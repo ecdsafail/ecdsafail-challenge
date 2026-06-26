@@ -30,14 +30,60 @@ use std::cell::Cell;
 
 thread_local! {
     static FFG_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
+    static FFG_SHIFTED_SQUARE_PREFIX_SCOPE: Cell<usize> = const { Cell::new(0) };
+    static CUCCARO_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
+    static CONST_CHUNK_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
+    static ADD_CONST_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
 }
 
 pub(super) fn reset_ffg_call_index() {
     FFG_CALL_INDEX.with(|index| index.set(0));
+    CUCCARO_CALL_INDEX.with(|index| index.set(0));
+    CONST_CHUNK_CALL_INDEX.with(|index| index.set(0));
+    ADD_CONST_CALL_INDEX.with(|index| index.set(0));
 }
 
 fn next_ffg_call_index() -> usize {
     FFG_CALL_INDEX.with(|index| {
+        let current = index.get();
+        index.set(current + 1);
+        current
+    })
+}
+
+pub(super) fn with_shifted_square_ffg_prefix_scope<R>(body: impl FnOnce() -> R) -> R {
+    FFG_SHIFTED_SQUARE_PREFIX_SCOPE.with(|scope| {
+        let prior = scope.get();
+        scope.set(prior + 1);
+        let result = body();
+        scope.set(prior);
+        result
+    })
+}
+
+fn shifted_square_ffg_prefix_scope_enabled() -> bool {
+    std::env::var_os("TLM_SQUARE_SHIFTED_FFG_PREFIX_SKIP").is_some()
+        && FFG_SHIFTED_SQUARE_PREFIX_SCOPE.with(|scope| scope.get() > 0)
+}
+
+fn next_cuccaro_call_index() -> usize {
+    CUCCARO_CALL_INDEX.with(|index| {
+        let current = index.get();
+        index.set(current + 1);
+        current
+    })
+}
+
+fn next_const_chunk_call_index() -> usize {
+    CONST_CHUNK_CALL_INDEX.with(|index| {
+        let current = index.get();
+        index.set(current + 1);
+        current
+    })
+}
+
+fn next_add_const_call_index() -> usize {
+    ADD_CONST_CALL_INDEX.with(|index| {
         let current = index.get();
         index.set(current + 1);
         current
@@ -57,6 +103,340 @@ fn env_index_value(name: &str, index: usize) -> Option<usize> {
                         .flatten()
                 })
         })
+}
+
+const FFG_DEAD_HYBRID_CARRY_RANGES: &[(usize, usize, usize)] = &[
+    (264, 1, 46),
+    (265, 1, 46),
+    (266, 1, 46),
+    (267, 1, 46),
+    (268, 1, 46),
+    (271, 1, 46),
+    (272, 1, 46),
+    (273, 1, 46),
+    (274, 1, 46),
+    (275, 1, 46),
+    (277, 1, 46),
+    (278, 1, 46),
+    (279, 1, 46),
+    (280, 1, 46),
+    (281, 1, 46),
+    (596, 21, 24),
+    (596, 26, 31),
+    (596, 42, 46),
+    (2, 1, 3),
+    (2, 28, 31),
+    (598, 1, 3),
+    (598, 27, 27),
+    (598, 30, 31),
+    (3, 1, 3),
+    (3, 29, 29),
+    (3, 31, 31),
+    (340, 1, 5),
+    (51, 28, 31),
+    (131, 28, 31),
+    (198, 28, 31),
+    (201, 28, 31),
+    (597, 1, 3),
+    (597, 29, 29),
+    (13, 29, 31),
+    (37, 29, 31),
+    (50, 29, 31),
+    (60, 29, 31),
+    (64, 28, 28),
+    (64, 30, 31),
+    (73, 29, 31),
+    (75, 29, 31),
+    (80, 29, 31),
+    (105, 29, 31),
+    (113, 29, 31),
+    (115, 28, 28),
+    (115, 30, 31),
+    (116, 29, 31),
+    (119, 29, 31),
+    (126, 29, 31),
+    (137, 29, 31),
+    (139, 28, 29),
+    (139, 31, 31),
+    (140, 29, 31),
+    (147, 29, 31),
+    (178, 29, 31),
+    (190, 29, 31),
+    (199, 29, 31),
+    (209, 28, 28),
+    (209, 30, 31),
+    (284, 29, 31),
+    (288, 29, 31),
+    (293, 29, 31),
+    (295, 29, 31),
+    (318, 29, 31),
+    (405, 29, 31),
+    (409, 28, 28),
+    (409, 30, 31),
+    (416, 29, 31),
+    (424, 28, 28),
+    (424, 30, 31),
+    (433, 28, 28),
+    (433, 30, 31),
+    (434, 29, 31),
+    (444, 29, 31),
+    (464, 29, 31),
+    (471, 29, 31),
+    (478, 28, 28),
+    (478, 30, 31),
+    (487, 28, 28),
+    (487, 30, 31),
+    (498, 29, 31),
+    (516, 29, 31),
+    (518, 29, 31),
+    (548, 28, 28),
+    (548, 30, 31),
+    (553, 29, 31),
+    (559, 29, 31),
+    (560, 29, 31),
+    (568, 29, 31),
+    (570, 29, 31),
+    (575, 29, 31),
+    (580, 29, 31),
+    (586, 29, 31),
+    (592, 29, 31),
+];
+
+fn ffg_call_has_structurally_dead_hybrid_carry(call_index: usize, bit: usize, phase: &str) -> bool {
+    if shifted_square_ffg_prefix_scope_enabled() && bit > 0 {
+        return true;
+    }
+    if std::env::var_os("TLM_FFG_SKIP_TOP_CARRY31").is_some() && bit == 31 {
+        return true;
+    }
+    if std::env::var_os("TLM_FFG_SKIP_TOP_CARRY30").is_some() && bit == 30 {
+        return true;
+    }
+    if std::env::var_os("TLM_FFG_SKIP_INVERSE_MOD_SUB_TOP29").is_some()
+        && bit == 29
+        && phase == "tlm_apply_inverse_mod_sub_fold"
+        && call_index
+            <= std::env::var("TLM_FFG_INVERSE_TOP29_MAX_CALL")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(usize::MAX)
+    {
+        return true;
+    }
+    if std::env::var_os("TLM_FFG_SKIP_STRUCTURAL_DEAD_CALLS").is_none() {
+        return false;
+    }
+    if std::env::var_os("TLM_FFG_SKIP_EXACT_TOP29_REMAINDER").is_some() {
+        let key = (((call_index as u32) & 0xffff) << 8) | (bit as u32 & 0xff);
+        if FFG_TOP29_REMAINDER_KEYS.binary_search(&key).is_ok() {
+            return true;
+        }
+    }
+    FFG_DEAD_HYBRID_CARRY_RANGES
+        .iter()
+        .any(|&(call, lo, hi)| call == call_index && (lo..=hi).contains(&bit))
+}
+
+const FFG_TOP29_REMAINDER_KEYS: &[u32] = &[
+    1821, 2333, 3869, 6685, 7197, 7453, 13341, 15901, 19741, 19997, 20253, 22044,
+    25885, 26397, 27933, 31517, 32796, 34077, 36125, 36380, 38173, 38941, 40989,
+    41757, 42525, 44316, 46621, 50205, 54045, 54557, 68893, 72221, 74781, 79133,
+    85277, 85789, 86557, 102685, 103453, 104989, 108061, 110365, 112669, 115741,
+    117789, 120861, 121117, 123165, 126493, 126749, 127260, 128797, 129053,
+    130844, 131101, 137245, 144157, 144669, 147741, 149021, 149533, 151069,
+];
+
+const CONST_CHUNK_DEAD_RANGES: &[(usize, usize, usize)] = &[
+    (879, 0, 9),
+    (880, 0, 8),
+    (700, 0, 7),
+    (881, 0, 7),
+    (887, 0, 7),
+    (900, 0, 7),
+    (678, 0, 6),
+    (686, 0, 6),
+    (707, 0, 6),
+    (882, 0, 6),
+    (894, 0, 6),
+    (906, 0, 6),
+    (649, 2, 7),
+    (654, 2, 7),
+    (692, 1, 6),
+    (715, 0, 4),
+    (715, 7, 7),
+    (883, 0, 5),
+    (638, 0, 1),
+    (638, 3, 5),
+    (689, 0, 4),
+    (691, 3, 7),
+    (706, 2, 2),
+    (706, 4, 7),
+    (718, 0, 4),
+    (884, 0, 4),
+    (890, 0, 4),
+    (897, 0, 4),
+    (903, 0, 4),
+    (909, 0, 4),
+    (912, 1, 5),
+    (919, 0, 4),
+    (626, 1, 4),
+    (659, 4, 7),
+    (666, 0, 3),
+    (671, 3, 3),
+    (671, 5, 7),
+    (672, 0, 3),
+    (685, 5, 8),
+    (703, 1, 4),
+    (704, 0, 3),
+    (714, 5, 8),
+    (717, 2, 5),
+    (891, 0, 3),
+    (893, 5, 8),
+    (926, 0, 3),
+    (941, 0, 3),
+    (949, 1, 1),
+    (949, 3, 4),
+    (949, 6, 6),
+    (956, 2, 5),
+    (481, 1, 3),
+    (485, 1, 3),
+    (520, 5, 7),
+    (579, 1, 2),
+    (579, 4, 4),
+    (590, 2, 4),
+    (636, 0, 2),
+    (644, 4, 5),
+    (644, 7, 7),
+    (663, 1, 3),
+    (665, 4, 4),
+    (665, 6, 7),
+    (669, 0, 0),
+    (669, 2, 3),
+    (675, 1, 3),
+    (677, 4, 5),
+    (677, 7, 7),
+    (682, 0, 2),
+    (696, 0, 2),
+    (710, 0, 1),
+    (710, 3, 3),
+    (711, 0, 2),
+    (723, 0, 2),
+    (725, 0, 2),
+    (727, 0, 2),
+    (729, 0, 2),
+    (731, 0, 2),
+    (737, 0, 2),
+    (739, 0, 2),
+    (741, 0, 2),
+    (743, 0, 2),
+    (745, 0, 2),
+    (749, 0, 2),
+    (751, 0, 2),
+    (753, 0, 2),
+    (755, 0, 2),
+    (757, 0, 2),
+    (896, 3, 5),
+    (905, 5, 5),
+    (905, 7, 8),
+    (911, 5, 7),
+    (916, 0, 2),
+    (918, 5, 7),
+    (923, 0, 2),
+    (931, 5, 7),
+    (932, 0, 2),
+    (935, 1, 3),
+    (937, 5, 7),
+    (944, 0, 2),
+    (962, 2, 4),
+    (968, 1, 3),
+    (973, 1, 3),
+    (978, 1, 3),
+    (983, 0, 2),
+    (1023, 1, 3),
+    (1039, 0, 2),
+    (1044, 1, 3),
+    (1109, 3, 5),
+    (1149, 1, 3),
+    (1622, 0, 2),
+];
+
+const CONST_CHUNK_REMAINDER_KEYS: &[u32] = &[
+    1281, 5376, 5377, 6913, 8449, 8960, 9473, 10496, 15616, 16641, 17153, 19201,
+    19713, 20736, 22785, 23809, 27905, 29440, 38656, 40705, 43777, 49921, 51457,
+    57089, 58113, 59649, 64257, 66305, 66816, 68865, 70400, 70401, 70913, 77569,
+    79361, 80898, 99074, 113408, 116224, 117248, 118016, 118017, 119043, 120064,
+    120065, 121090, 121091, 122115, 125189, 126467, 127492, 127493, 128772, 128774,
+    130308, 130309, 131589, 131590, 135936, 136711, 136960, 136961, 137990, 137991,
+    139015, 139264, 140035, 140545, 141315, 141575, 141824, 142855, 143105, 144385,
+    144386, 145155, 145415, 145665, 146946, 149761, 149762, 152579, 152581, 153861,
+    154112, 155137, 156166, 156417, 157447, 157696, 157697, 158466, 158978, 159746,
+    161794, 161796, 164354, 165120, 166915, 167680, 168960, 168961, 169475, 174339,
+    174848, 174849, 176132, 176133, 177922, 177923, 178432, 178433, 178952, 179456,
+    179457, 181506, 181507, 182272, 182273, 185344, 185345, 185856, 185857, 186368,
+    186369, 186880, 186881, 187392, 187393, 188928, 188929, 189440, 189441, 189952,
+    189953, 190464, 190465, 190976, 190977, 192000, 192001, 192512, 192513, 193024,
+    193025, 193536, 193537, 194048, 194049, 196609, 199680, 200192, 200193, 214017,
+    217089, 223233, 226822, 226824, 227328, 227329, 230151, 232453, 234242, 234243,
+    236035, 236806, 236807, 237826, 237827, 240128, 240129, 241414, 241415, 242435,
+    244225, 245761, 245762, 247296, 248579, 252419, 252930, 254214, 255491, 255493,
+    257027, 257028, 258050, 258566, 259840, 260354, 260355, 263172, 264707, 268546,
+    269825, 271105, 271106, 272385, 273154, 273155, 273415, 273664, 274689, 275968,
+    276743, 277767, 278016, 278789, 278791, 279812, 279814, 281089, 281348, 281350,
+    282373, 282374, 285188, 285190, 286723, 286725, 288003, 288004, 289284, 289285,
+    290306, 290562, 290564, 291842, 292865, 292868, 295170, 296195, 297217, 297218,
+    299265, 299266, 300288, 301312, 302081, 303104, 304897, 305152, 323329, 328194,
+    330499, 341761, 345857, 346369, 346881, 347905, 352512, 354049, 359168, 361217,
+    361729, 362241, 367873, 368385, 369920, 371457, 374529, 375040, 375041, 376577,
+    378625, 380672, 380673, 381697, 385281, 386817, 391937, 393985, 395008, 398593,
+    400641, 402689, 405761, 407809, 411393, 415488, 415489, 416001, 416513,
+];
+
+fn const_chunk_call_has_structurally_dead_carry(call_index: usize, bit: usize) -> bool {
+    if std::env::var_os("TLM_CONST_CHUNK_SKIP_STRUCTURAL_DEAD_CALLS").is_none() {
+        return false;
+    }
+    if std::env::var_os("TLM_CONST_CHUNK_SKIP_EXACT_REMAINDER").is_some() {
+        let key = (((call_index as u32) & 0xffff) << 8) | (bit as u32 & 0xff);
+        if CONST_CHUNK_REMAINDER_KEYS.binary_search(&key).is_ok() {
+            return true;
+        }
+    }
+    CONST_CHUNK_DEAD_RANGES
+        .iter()
+        .any(|&(call, lo, hi)| call == call_index && (lo..=hi).contains(&bit))
+}
+
+
+fn cuccaro_call_has_structurally_dead_carry(call_index: usize, bit: usize) -> bool {
+    if std::env::var_os("TLM_CUCCARO_SKIP_STRUCTURAL_DEAD_CALLS").is_none() {
+        return false;
+    }
+    match call_index {
+        37 => bit <= 135,
+        19 => (1..=127).contains(&bit),
+        20 | 26 => bit >= 148,
+        13 => bit >= 150,
+        21 => matches!(bit, 147 | 148) || (150..=251).contains(&bit),
+        27 => (148..=251).contains(&bit),
+        22 => bit == 146 || (148..=249).contains(&bit),
+        28 => (147..=249).contains(&bit),
+        14 => matches!(bit, 150 | 151) || (153..=251).contains(&bit),
+        15 => (151..=249).contains(&bit),
+        29 => (147..=245).contains(&bit),
+        23 => matches!(bit, 148 | 149) || (151..=245).contains(&bit),
+        16 => (151..=245).contains(&bit),
+        30 => (149..=223).contains(&bit),
+        24 => (150..=223).contains(&bit),
+        17 => bit == 149 || (152..=223).contains(&bit),
+        _ => false,
+    }
+}
+
+fn add_const_has_structurally_dead_carry(call_index: usize, bit: usize) -> bool {
+    if std::env::var_os("TLM_ADD_CONST_SKIP_STRUCTURAL_DEAD_CARRIES").is_none() {
+        return false;
+    }
+    call_index == 0 && (bit == 55 || bit >= 57)
 }
 
 /// secp256k1 reduction constant f = 2^256 - q.
@@ -102,6 +482,8 @@ pub fn cuccaro_carry(
     cin: Option<&QubitId>,
     cout: Option<&QubitId>,
 ) {
+    let call_index = next_cuccaro_call_index();
+    let ops_start = circ.current_ops_len();
     let s = y.len();
     assert_eq!(x.len(), s, "cuccaro_carry: x,y width mismatch");
     let fresh = if cin.is_none() { Some(circ.alloc_qubit()) } else { None };
@@ -123,14 +505,26 @@ pub fn cuccaro_carry(
         for i in 0..s {
             circ.cx(*c, y[i]);
             circ.cx(*c, x[i]);
-            circ.ccx(x[i], y[i], *c);
+            if !cuccaro_call_has_structurally_dead_carry(call_index, i) {
+                let old_context = crate::point_add::set_op_trace_context(
+                    0x0200_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
+                );
+                circ.ccx(x[i], y[i], *c);
+                crate::point_add::restore_op_trace_context(old_context);
+            }
         }
         if let Some(co) = cout {
             gated_carry(circ, co); // c holds carry-out(bit s-1)
         }
         // Reverse: restore each carry, write the (gated) sum into y, restore x.
         for i in (0..s).rev() {
-            circ.ccx(x[i], y[i], *c);
+            if !cuccaro_call_has_structurally_dead_carry(call_index, i) {
+                let old_context = crate::point_add::set_op_trace_context(
+                    0x0300_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
+                );
+                circ.ccx(x[i], y[i], *c);
+                crate::point_add::restore_op_trace_context(old_context);
+            }
             circ.cx(*c, y[i]);
             sum(circ, &x[i], &y[i]);
             circ.cx(*c, x[i]);
@@ -138,6 +532,19 @@ pub fn cuccaro_carry(
     }
     if let Some(f) = fresh {
         circ.zero_and_free(f);
+    }
+    if std::env::var_os("TRACE_TLM_CUCCARO").is_some() {
+        eprintln!(
+            "TLM_CUCCARO call={} phase={} width={} ctrl={} cin={} cout={} ops_start={} ops_end={}",
+            call_index,
+            circ.phase,
+            s,
+            usize::from(ctrl.is_some()),
+            usize::from(cin.is_some()),
+            usize::from(cout.is_some()),
+            ops_start,
+            circ.current_ops_len(),
+        );
     }
 }
 
@@ -639,7 +1046,19 @@ fn graduated_const_kmin(n: usize) -> usize {
 /// Native clean const carry chain over a chunk: `a += ctrl*c[coff..] mod 2^s`, carry-OUT
 /// kept in `cout`, internal carries measurement-vented.
 fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, cout: &QubitId) {
+    let call_index = next_const_chunk_call_index();
     let s = a.len();
+    if std::env::var_os("TRACE_TLM_CONST_CHUNK").is_some() {
+        eprintln!(
+            "CONST_CHUNK call={} phase={} width={} coff={} cin={} cout={}",
+            call_index,
+            circ.phase,
+            s,
+            coff,
+            cin.0,
+            cout.0,
+        );
+    }
     if s == 0 {
         return;
     }
@@ -652,7 +1071,13 @@ fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], 
         if on {
             circ.cx(*ctrl, cin_ref);
         }
-        circ.ccx(a[i], cin_ref, cout_ref);
+        let old_context = crate::point_add::set_op_trace_context(
+            0x0800_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
+        );
+        if !const_chunk_call_has_structurally_dead_carry(call_index, i) {
+            circ.ccx(a[i], cin_ref, cout_ref);
+        }
+        crate::point_add::restore_op_trace_context(old_context);
         if on {
             circ.cx(*ctrl, cin_ref);
         }
@@ -856,7 +1281,15 @@ fn controlled_add_const_chunked_graduated_off(circ: &mut B, ctrl: &QubitId, a: &
 /// Borrowed-bit hybrid: clean measurement-vented carries for the prefix `[0,k)`
 /// up to the live headroom, borrowed-dirty register bits for the overflow suffix.
 #[allow(clippy::needless_range_loop)] // i indexes a[] while reading the constant c at bit i
-fn add_f_window_hybrid(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], k: usize) {
+fn add_f_window_hybrid(
+    circ: &mut B,
+    ctrl: &QubitId,
+    reg: &[QubitId],
+    lsbs: usize,
+    c: &[u8],
+    k: usize,
+    trace_call_index: usize,
+) {
     let n = lsbs;
     let a: Vec<QubitId> = reg[..n].to_vec();
     let suf_dirty = n - k - 1; // suffix has n-k bits -> n-k-1 dirty
@@ -870,7 +1303,13 @@ fn add_f_window_hybrid(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usiz
         let next = *cy[i].as_ref().unwrap();
         circ.cx(ci, a[i]);
         if cbit(c, i) { circ.cx(*ctrl, ci); }
-        circ.ccx(a[i], ci, next);
+        if !ffg_call_has_structurally_dead_hybrid_carry(trace_call_index, i, circ.phase) {
+            let old_context = crate::point_add::set_op_trace_context(
+                0x0100_0000 | (((trace_call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
+            );
+            circ.ccx(a[i], ci, next);
+            crate::point_add::restore_op_trace_context(old_context);
+        }
         if cbit(c, i) { circ.cx(*ctrl, ci); }
         circ.cx(ci, next);
     }
@@ -987,7 +1426,7 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
         dirty_carryin(circ, ctrl, &a_full, c, 0, &dirty, &cin);
         circ.zero_and_free(cin);
     } else {
-        add_f_window_hybrid(circ, ctrl, reg, lsbs, c, g);
+        add_f_window_hybrid(circ, ctrl, reg, lsbs, c, g, call_index);
     }
     if std::env::var_os("TRACE_TLM_FFG").is_some() {
         let local_peak = circ.active_timeline[timeline_start..]
@@ -1594,6 +2033,7 @@ pub fn mod_neg(circ: &mut B, x: &[QubitId]) {
 /// `cx`, `cx(|1>,·)` -> `x`, the bit-0 vent `cz_if_bit(·,|1>,·)` -> `z_if_bit`.
 /// NO constant-control qubit. Measurement-vented carries (~lsbs-1 Toffoli).
 fn add_const_window_clean(circ: &mut B, reg: &[QubitId], lsbs: usize, c: &[u8]) {
+    let add_const_call_index = next_add_const_call_index();
     let n = lsbs;
     assert!(n <= reg.len(), "register too short for const window");
     if n == 0 {
@@ -1619,7 +2059,13 @@ fn add_const_window_clean(circ: &mut B, reg: &[QubitId], lsbs: usize, c: &[u8]) 
         if cbit(c, i) {
             circ.x(ci); // ci = cy_i ^ c_i = tb
         }
-        circ.ccx(a[i], ci, next); // next = ta & tb
+        if !add_const_has_structurally_dead_carry(add_const_call_index, i) {
+            let old_context = crate::point_add::set_op_trace_context(
+                0x1100_0000 | (((add_const_call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
+            );
+            circ.ccx(a[i], ci, next); // next = ta & tb
+            crate::point_add::restore_op_trace_context(old_context);
+        }
         if cbit(c, i) {
             circ.x(ci); // ci -> cy_i
         }

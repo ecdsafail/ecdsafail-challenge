@@ -433,7 +433,13 @@ fn apply_shifted_128_tagged(circ: &mut B, value: &[QubitId], output_reg: &[Qubit
     free_zeroes(circ, low_pads);
 
     if value.len() > 128 {
-        apply_f_times_value_tagged(circ, &value[128..], output_reg, op, tag);
+        if matches!(tag, "a" | "b" | "c") {
+            arith::with_shifted_square_ffg_prefix_scope(|| {
+                apply_f_times_value_tagged(circ, &value[128..], output_reg, op, tag);
+            });
+        } else {
+            apply_f_times_value_tagged(circ, &value[128..], output_reg, op, tag);
+        }
     }
 }
 

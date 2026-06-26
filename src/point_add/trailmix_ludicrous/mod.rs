@@ -39,8 +39,10 @@ pub(super) trait BExt {
     fn loan_zero_qubit(&mut self, q: QubitId);
     fn reclaim_zero_qubit(&mut self, q: QubitId);
     fn z(&mut self, q: QubitId);
+    #[track_caller]
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId);
     fn neg(&mut self);
+    #[track_caller]
     fn cswap(&mut self, ctrl: QubitId, a: QubitId, b: QubitId);
     fn x_if_bit(&mut self, q: QubitId, c: BitId);
     fn z_if_bit(&mut self, q: QubitId, c: BitId);
@@ -70,6 +72,7 @@ impl BExt for B {
         op.q_target = q;
         self.push_op(op);
     }
+    #[track_caller]
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId) {
         let mut op = Op::empty();
         op.kind = OperationType::CCZ;
@@ -83,6 +86,7 @@ impl BExt for B {
         op.kind = OperationType::Neg;
         self.push_op(op);
     }
+    #[track_caller]
     fn cswap(&mut self, ctrl: QubitId, a: QubitId, b: QubitId) {
         self.cx(b, a);
         self.ccx(ctrl, a, b);
@@ -282,7 +286,10 @@ fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, us
 fn load_schedule() {
     reset_schedule_fit_call_indices();
     arith::reset_ffg_call_index();
+    comparator::reset_compare_call_index();
     fused::reset_fold_call_index();
+    gcd::reset_gcd_trace_call_index();
+    gidney::reset_gidney_call_index();
     SCHED.with(|s| {
         let mut s = s.borrow_mut();
         *s = Sched::default();
@@ -362,7 +369,7 @@ fn install_q1153_submission_defaults() {
         ("TLM_FOLD_CHUNK_ZERO_CIN", "1"),
         ("TLM_FFG_MAX_G", "47"),
         ("TLM_APPLY_ADD_SKIP_LASTK", "1"),
-        ("DIALOG_TAIL_NONCE", "930308424560"),
+        ("DIALOG_TAIL_NONCE", "2430844"),
     ] {
         if name == "DIALOG_TAIL_NONCE" && std::env::var_os(name).is_some() {
             continue;

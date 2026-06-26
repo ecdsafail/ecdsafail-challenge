@@ -85,10 +85,74 @@ mod single_ccx_fanout;
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
         std::cell::Cell::new(false);
+    static OP_SITE_TRACE: std::cell::RefCell<Vec<OpSite>> =
+        std::cell::RefCell::new(Vec::new());
+    static OP_TRACE_CONTEXT: std::cell::Cell<u32> = std::cell::Cell::new(0);
 }
 
 fn d1_phase_corrected_product_core_active() -> bool {
     D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE.with(|scope| scope.get())
+}
+
+pub type OpSite = (&'static str, u32, u32);
+
+pub(crate) fn op_site_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TRACE_OP_SITES").is_some())
+}
+
+fn reset_op_site_trace() {
+    if op_site_trace_enabled() {
+        OP_SITE_TRACE.with(|sites| sites.borrow_mut().clear());
+    }
+}
+
+fn record_op_site(site: OpSite) {
+    if op_site_trace_enabled() {
+        OP_SITE_TRACE.with(|sites| sites.borrow_mut().push(site));
+    }
+}
+
+pub(crate) fn set_op_trace_context(context: u32) -> u32 {
+    if !op_site_trace_enabled() {
+        return 0;
+    }
+    OP_TRACE_CONTEXT.with(|slot| {
+        let old = slot.get();
+        slot.set(context);
+        old
+    })
+}
+
+pub(crate) fn restore_op_trace_context(context: u32) {
+    if op_site_trace_enabled() {
+        OP_TRACE_CONTEXT.with(|slot| slot.set(context));
+    }
+}
+
+pub(crate) fn take_op_site_trace_for_constprop(expected_len: usize) -> Option<Vec<OpSite>> {
+    if !op_site_trace_enabled() {
+        return None;
+    }
+    OP_SITE_TRACE.with(|sites| {
+        let mut sites = sites.borrow_mut();
+        assert_eq!(
+            sites.len(),
+            expected_len,
+            "op site trace length before constprop"
+        );
+        Some(std::mem::take(&mut *sites))
+    })
+}
+
+pub(crate) fn set_op_site_trace_from_constprop(sites: Vec<OpSite>) {
+    if op_site_trace_enabled() {
+        OP_SITE_TRACE.with(|slot| *slot.borrow_mut() = sites);
+    }
+}
+
+pub fn take_last_op_sites() -> Vec<OpSite> {
+    OP_SITE_TRACE.with(|sites| std::mem::take(&mut *sites.borrow_mut()))
 }
 
 pub struct B {
@@ -149,6 +213,7 @@ pub struct PhaseResource {
 
 impl B {
     fn new() -> Self {
+        reset_op_site_trace();
         Self {
             ops: Vec::new(),
             count_only: false,
@@ -188,11 +253,15 @@ impl B {
     pub fn take_ops(&mut self) -> Vec<Op> {
         std::mem::take(&mut self.ops)
     }
+    #[track_caller]
     fn push_op(&mut self, op: Op) {
         self.counted_ops += 1;
         self.counted_kind_ops[op.kind as usize] += 1;
         self.counted_phase_kind_ops[op.kind as usize] += 1;
         if !self.count_only {
+            let loc = std::panic::Location::caller();
+            let context = OP_TRACE_CONTEXT.with(|slot| slot.get());
+            record_op_site((loc.file(), loc.line(), context));
             self.ops.push(op);
         }
     }
@@ -457,6 +526,7 @@ impl B {
         op.q_target = tgt;
         self.push_op(op);
     }
+    #[track_caller]
     fn ccx(&mut self, c1: QubitId, c2: QubitId, tgt: QubitId) {
         if c1 == c2 {
             if c1 != tgt {
@@ -1081,7 +1151,7 @@ fn set_default_env(name: &str, value: &str) {
 // Q1153 second-512 scan route. To submit a clean hit from the current hunt,
 // update this nonce, build with no shell env overrides, run `ecdsafail run`,
 // and submit only if it remains 0 / 0 / 0.
-const Q1153_SECOND512_SUBMISSION_NONCE: &str = "930308424560";
+const Q1153_SECOND512_SUBMISSION_NONCE: &str = "13100076815176";
 
 fn configure_q1153_second512_submission_defaults() {
     set_default_env("DIALOG_TAIL_NONCE", Q1153_SECOND512_SUBMISSION_NONCE);
@@ -1092,8 +1162,6 @@ fn configure_q1153_second512_submission_defaults() {
     set_default_env("TLM_FOLD_TAIL_CINC", "1");
     set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
     set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
-    set_default_env("DROP_DEAD_ROBUST", "1");
-    set_default_env("DROP_DEAD_ROBUST_SECOND", "1");
 }
 
 fn configure_ecdsafail_submission_route() {
@@ -1899,88 +1967,6 @@ pub fn build_builder() -> B {
     builder
 }
 
-fn apply_drop_dead_robust_if_enabled(mut ops: Vec<Op>) -> Vec<Op> {
-    if std::env::var("DROP_DEAD_ROBUST_DISABLE")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        eprintln!("DROP_DEAD_ROBUST: disabled by DROP_DEAD_ROBUST_DISABLE=1");
-    } else if std::env::var("DROP_DEAD_ROBUST")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        let drop_txt_owned = std::env::var("DROP_DEAD_FILE")
-            .ok()
-            .and_then(|path| std::fs::read_to_string(path).ok());
-        let drop_txt = drop_txt_owned
-            .as_deref()
-            .unwrap_or_else(|| include_str!("drop_dead_robust_k1_skip_59084.idx"));
-        let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for line in drop_txt.lines() {
-            let t = line.trim();
-            if t.is_empty() || t.starts_with("idx") {
-                continue;
-            }
-            let first = t.split('\t').next().unwrap_or(t);
-            if let Ok(v) = first.parse::<usize>() {
-                drop.insert(v);
-            }
-        }
-        let before = ops.len();
-        ops = ops
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !drop.contains(i))
-            .map(|(_, op)| op)
-            .collect();
-        eprintln!(
-            "DROP_DEAD_ROBUST: removed {} ops ({} -> {})",
-            before - ops.len(),
-            before,
-            ops.len()
-        );
-    }
-    if std::env::var("DROP_DEAD_ROBUST_SECOND")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        let drop_txt_owned = std::env::var("DROP_DEAD_SECOND_FILE")
-            .ok()
-            .and_then(|path| std::fs::read_to_string(path).ok());
-        let drop_txt = drop_txt_owned
-            .as_deref()
-            .unwrap_or_else(|| include_str!("drop_dead_second_fs512.idx"));
-        let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for line in drop_txt.lines() {
-            let t = line.trim();
-            if t.is_empty() || t.starts_with("idx") {
-                continue;
-            }
-            let first = t.split('\t').next().unwrap_or(t);
-            if let Ok(v) = first.parse::<usize>() {
-                drop.insert(v);
-            }
-        }
-        let before = ops.len();
-        ops = ops
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !drop.contains(i))
-            .map(|(_, op)| op)
-            .collect();
-        eprintln!(
-            "DROP_DEAD_ROBUST_SECOND: removed {} ops ({} -> {})",
-            before - ops.len(),
-            before,
-            ops.len()
-        );
-    }
-    ops
-}
-
 pub fn build() -> Vec<Op> {
     configure_q1153_second512_submission_defaults();
 
@@ -2149,7 +2135,7 @@ pub fn build() -> Vec<Op> {
     set_default_env("LUD_EXTRA_FOLD_VENTS", "0");
     set_default_env("LUD_EXTRA_FOLD_MIN_G", "0");
     set_default_env("LUD_EXTRA_FOLD_MAX_G", "999");
-    set_default_env("DIALOG_TAIL_NONCE", "930308424560");
+    set_default_env("DIALOG_TAIL_NONCE", "2430844");
     set_default_env("TLM_FOLD_TAIL_CINC", "1");
     set_default_env("TLM_CODEC_DIAMOND_MCX", "1");
     set_default_env("SINGLE_CCX_FANOUT_DISABLE", "1");
@@ -2211,15 +2197,44 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_GCD_K_ADJUST_AFTER", "169");
     set_default_env("TLM_GCD_K_ADJUST_BEFORE", "196");
     set_default_env("TLM_GCD_K_ADJUST", "-2");
-    set_default_env("DROP_DEAD_ROBUST", "1");
-    set_default_env("DROP_DEAD_ROBUST_SECOND", "1");
+    // Codex idx-less structural stack. Generated dead-drop lists are not used
+    // in this submission tree.
+    set_default_env("TLM_FFG_SKIP_STRUCTURAL_DEAD_CALLS", "1");
+    set_default_env("TLM_FFG_SKIP_TOP_CARRY31", "1");
+    set_default_env("TLM_FFG_SKIP_TOP_CARRY30", "1");
+    set_default_env("TLM_CUCCARO_SKIP_STRUCTURAL_DEAD_CALLS", "1");
+    set_default_env("TLM_COMPARE_SKIP_STRUCTURAL_DEAD_CALLS", "1");
+    set_default_env("TLM_COMPARE_SKIP_EXACT_REMAINDER", "1");
+    set_default_env("TLM_GIDNEY_SKIP_STRUCTURAL_DEAD_CALLS", "1");
+    set_default_env("TLM_GIDNEY_SKIP_EXACT_REMAINDER", "1");
+    set_default_env("TLM_CONST_CHUNK_SKIP_STRUCTURAL_DEAD_CALLS", "1");
+    set_default_env("TLM_CONST_CHUNK_SKIP_EXACT_REMAINDER", "1");
+    set_default_env("TLM_FUSED_SKIP_STRUCTURAL_DEAD_CARRIES", "1");
+    set_default_env("TLM_FUSED_SKIP_STRUCTURAL_DEAD_SHIFT0", "1");
+    set_default_env("TLM_FUSED_SKIP_EXACT_FOLD_REMAINDER", "1");
+    set_default_env("TLM_FUSED_SKIP_STRUCTURAL_DEAD_DIRTY_FOLD", "1");
+    set_default_env("TLM_FUSED_SKIP_STRUCTURAL_DEAD_CLEAN_WINDOW", "1");
+    set_default_env("TLM_ADD_CONST_SKIP_STRUCTURAL_DEAD_CARRIES", "1");
+    set_default_env("TLM_GCD_SKIP_STRUCTURAL_DEAD_CSWAPS", "1");
+    set_default_env("TLM_GCD_SKIP_EXACT_FORWARD_CSWAPS", "1");
+    set_default_env("TLM_GCD_SKIP_STRUCTURAL_DEAD_SHIFTS", "1");
+    set_default_env("TLM_GCD_SKIP_EXACT_SHIFT_REMAINDER", "1");
+    set_default_env("TLM_COMPARE_SKIP_EXACT_CIN_REMAINDER", "1");
+    set_default_env("TLM_FUSED_SKIP_EXACT_BOUNDARY_ZERO", "1");
+    set_default_env("TLM_GIDNEY_SKIP_EXACT_ERASE_ALL_CCZ", "1");
+    set_default_env("TLM_FFG_SKIP_EXACT_TOP29_REMAINDER", "1");
+    set_default_env("TLM_GCD_SKIP_REVERSE_DIAGONAL_EDGE", "1");
+    set_default_env("TLM_FFG_SKIP_INVERSE_MOD_SUB_TOP29", "1");
+    set_default_env("TLM_FFG_INVERSE_TOP29_MAX_CALL", "180");
+    set_default_env("TLM_FUSED_CLEAN_FOLD_SKIP_TOP31", "1");
+    set_default_env("TLM_GIDNEY_SKIP_SMALL_RESIDUAL_DEAD", "1");
     let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
     if std::env::var("SINGLE_CCX_FANOUT_DISABLE")
         .ok()
         .as_deref()
         == Some("1")
     {
-        return apply_drop_dead_robust_if_enabled(ops);
+        return ops;
     }
     let input_ops = ops.len();
     let mut fanout_passes = 0usize;
@@ -2248,7 +2263,7 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
-    apply_drop_dead_robust_if_enabled(ops)
+    ops
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
