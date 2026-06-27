@@ -1135,19 +1135,6 @@ pub(crate) fn iadd_dirty_2clean_qoffset(
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 pub(crate) fn isub_dirty_2clean_qoffset(
     b: &mut B,
     q_target: &[QubitId],
@@ -1286,7 +1273,6 @@ pub(crate) fn cisub_dirty_2clean_classical(
         b.cx(ctrl, q_target[k]);
     }
 }
-
 
 #[cfg(test)]
 mod tests {

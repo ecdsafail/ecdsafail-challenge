@@ -12,6 +12,7 @@
 
 mod arith;
 mod codec;
+mod compact;
 mod comparator;
 mod constprop;
 pub mod ec_add;
@@ -39,10 +40,8 @@ pub(super) trait BExt {
     fn loan_zero_qubit(&mut self, q: QubitId);
     fn reclaim_zero_qubit(&mut self, q: QubitId);
     fn z(&mut self, q: QubitId);
-    #[track_caller]
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId);
     fn neg(&mut self);
-    #[track_caller]
     fn cswap(&mut self, ctrl: QubitId, a: QubitId, b: QubitId);
     fn x_if_bit(&mut self, q: QubitId, c: BitId);
     fn z_if_bit(&mut self, q: QubitId, c: BitId);
@@ -56,6 +55,7 @@ impl BExt for B {
     fn loan_zero_qubit(&mut self, q: QubitId) {
         self.free_qubits
             .push(q.0.try_into().expect("qubit id fits in u32"));
+        self.mark_qubit_inactive_for_trace(q);
         if self.active_qubits > 0 {
             self.active_qubits -= 1;
         }
@@ -72,7 +72,6 @@ impl BExt for B {
         op.q_target = q;
         self.push_op(op);
     }
-    #[track_caller]
     fn ccz(&mut self, a: QubitId, b: QubitId, c: QubitId) {
         let mut op = Op::empty();
         op.kind = OperationType::CCZ;
@@ -86,7 +85,6 @@ impl BExt for B {
         op.kind = OperationType::Neg;
         self.push_op(op);
     }
-    #[track_caller]
     fn cswap(&mut self, ctrl: QubitId, a: QubitId, b: QubitId) {
         self.cx(b, a);
         self.ccx(ctrl, a, b);
@@ -226,7 +224,9 @@ fn target_qubit_headroom(circ: &B) -> Option<usize> {
         .map(|target| target.saturating_sub(circ.active_qubits as usize))
 }
 
-fn next_gcd_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX)) }
+fn next_gcd_k() -> usize {
+    SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX))
+}
 fn next_cout_k() -> usize {
     let base = SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX));
     let fit = fit_schedule_value(
@@ -237,7 +237,10 @@ fn next_cout_k() -> usize {
         "TLM_COUT_K_CALL_OVERRIDES",
     );
     PENDING_COUT_FIT.with(|pending| {
-        debug_assert!(pending.get().is_none(), "previous COUT schedule call was not consumed");
+        debug_assert!(
+            pending.get().is_none(),
+            "previous COUT schedule call was not consumed"
+        );
         pending.set(Some(fit));
     });
     fit.selected
@@ -253,9 +256,15 @@ fn next_fold() -> i32 {
         }
     })
 }
-fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255)) }
-fn next_cmp_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX)) }
-fn next_ffg() -> usize { SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().ffg, usize::MAX), "TLM_FFG_DELTA")) }
+fn next_gcd_branch() -> u8 {
+    SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255))
+}
+fn next_cmp_k() -> usize {
+    SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX))
+}
+fn next_ffg() -> usize {
+    SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().ffg, usize::MAX), "TLM_FFG_DELTA"))
+}
 fn next_hyb_v_fit() -> ScheduleFit {
     let base = SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX));
     fit_schedule_value(
@@ -280,16 +289,15 @@ fn take_cout_fit(selected: usize) -> ScheduleFit {
         })
     })
 }
-fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
+fn next_sqrow_k() -> usize {
+    SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX))
+}
 
 /// Load the product-min jump schedule onto the thread-local cursors.
 fn load_schedule() {
     reset_schedule_fit_call_indices();
     arith::reset_ffg_call_index();
-    comparator::reset_compare_call_index();
     fused::reset_fold_call_index();
-    gcd::reset_gcd_trace_call_index();
-    gidney::reset_gidney_call_index();
     SCHED.with(|s| {
         let mut s = s.borrow_mut();
         *s = Sched::default();
@@ -308,10 +316,7 @@ fn load_schedule() {
         let fold_g = |v: &[usize]| -> Vec<usize> {
             v.iter()
                 .map(|&x| {
-                    if extra_fold_vents > 0
-                        && x >= extra_fold_min_g
-                        && x <= extra_fold_max_g
-                    {
+                    if extra_fold_vents > 0 && x >= extra_fold_min_g && x <= extra_fold_max_g {
                         x.saturating_add(extra_fold_vents).min(53)
                     } else {
                         x
@@ -371,9 +376,7 @@ fn install_q1153_submission_defaults() {
         ("TLM_APPLY_ADD_SKIP_LASTK", "1"),
         ("DIALOG_TAIL_NONCE", "2430844"),
     ] {
-        if name == "DIALOG_TAIL_NONCE" && std::env::var_os(name).is_some() {
-            continue;
-        } else {
+        if std::env::var_os(name).is_none() {
             std::env::set_var(name, value);
         }
     }
@@ -414,7 +417,11 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         .and_then(|s| s.parse::<u64>().ok())
     {
         for i in 0..48u32 {
-            let q = if (nonce >> i) & 1 == 1 { x2_init[1] } else { x2_init[0] };
+            let q = if (nonce >> i) & 1 == 1 {
+                x2_init[1]
+            } else {
+                x2_init[0]
+            };
             circ.x(q);
             circ.x(q);
         }
@@ -443,10 +450,16 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
     // |1> control to CX/X. reg0 (x2_init) and reg1 (y2) hold per-shot input data
     // -> seeded Unknown; every other qubit id is a |0> ancilla. Can be disabled
     // with CONSTPROP_DISABLE=1.
-    if std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
-        return ops;
-    }
     let mut input_qubits = x2_init.clone();
     input_qubits.extend_from_slice(&y2);
-    constprop::run(ops, &input_qubits)
+    let ops = if std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
+        ops
+    } else {
+        constprop::run(ops, &input_qubits)
+    };
+    if std::env::var("TLM_RESET_BOUNDED_COMPACT").ok().as_deref() == Some("1") {
+        compact::run(ops, &input_qubits)
+    } else {
+        ops
+    }
 }

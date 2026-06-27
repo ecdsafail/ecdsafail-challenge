@@ -39,7 +39,6 @@ pub(crate) fn round84_emit_fused_square_xtail(
     mod_neg_inplace_fast(b, tx, p);
 }
 
-
 pub(crate) fn dialog_gcd_cmp_gt_truncated_into_width(
     b: &mut B,
     u: &[QubitId],
@@ -198,27 +197,11 @@ fn dialog_gcd_cmp_lt_phase_conditioned_hosted(
         clean.extend_from_slice(borrowed);
         clean.extend_from_slice(&owned);
         let (c_in, carries) = clean.split_first().expect("need >= 1");
-        cmp_lt_phase_conditioned_borrowed_carries(
-            b,
-            u,
-            v,
-            *c_in,
-            &carries[..n],
-            ctrl,
-            phase,
-        );
+        cmp_lt_phase_conditioned_borrowed_carries(b, u, v, *c_in, &carries[..n], ctrl, phase);
         b.free_vec(&owned);
     } else if let Some(borrowed) = borrowed.filter(|slice| slice.len() >= need) {
         let (c_in, carries) = borrowed.split_first().expect("borrowed len >= n + 1");
-        cmp_lt_phase_conditioned_borrowed_carries(
-            b,
-            u,
-            v,
-            *c_in,
-            &carries[..n],
-            ctrl,
-            phase,
-        );
+        cmp_lt_phase_conditioned_borrowed_carries(b, u, v, *c_in, &carries[..n], ctrl, phase);
     } else {
         let c_in = b.alloc_qubit();
         cmp_lt_phase_conditioned_with_cin(b, u, v, c_in, ctrl, phase);
@@ -232,7 +215,6 @@ pub(crate) fn dialog_gcd_partial_host_comparator_enabled() -> bool {
         .as_deref()
         != Some("0")
 }
-
 
 pub(crate) fn dialog_gcd_shift_right_assuming_even(b: &mut B, v: &[QubitId]) {
     assert!(!v.is_empty());
@@ -317,9 +299,7 @@ pub(crate) fn dialog_gcd_body_step_giveback(step: usize) -> usize {
     dialog_gcd_step_map_value("DIALOG_GCD_BODY_STEP_GIVEBACKS", step)
 }
 
-pub(crate) fn dialog_gcd_fused_fold_carry_trunc_window(
-    step: Option<usize>,
-) -> Option<usize> {
+pub(crate) fn dialog_gcd_fused_fold_carry_trunc_window(step: Option<usize>) -> Option<usize> {
     step.and_then(|step| {
         dialog_gcd_step_map_override("DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS", step)
     })
@@ -419,7 +399,10 @@ pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize
 /// and the post-cswap body never borrows past the active operand, so the result
 /// is value-exact on that support. Default OFF = byte-identical.
 pub(crate) fn dialog_gcd_vented_body_band_trim_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_BAND_TRIM").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_VENTED_BODY_BAND_TRIM")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 /// Effective vented-body sub/add width at this step. OFF => full active_width n.
@@ -458,7 +441,10 @@ pub(crate) fn dialog_gcd_vented_body_width(n: usize, step: usize) -> usize {
 /// known cx(ctrl,acc[0]) with NO carry into bit 1 — value-exact, density-neutral,
 /// orthogonal to the band-trim (band trims the top, this the bottom). Default OFF.
 pub(crate) fn dialog_gcd_vented_body_odd_lowbit_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(crate) fn dialog_gcd_binder_notch_steps() -> Vec<usize> {
@@ -515,7 +501,6 @@ pub(crate) fn dialog_gcd_trio_width_notch_extra() -> usize {
         .unwrap_or(2)
 }
 
-
 pub(crate) fn dialog_gcd_host_gated_enabled() -> bool {
     // Port of our KAL_GZ_EARLY_RECOVER carry-pool relocation: host the
     // materialized `gated` register (width = active_width, up to 256 at peak)
@@ -551,7 +536,9 @@ pub(crate) fn dialog_gcd_selected_body_nocin_enabled() -> bool {
     // siblings off the 1320 tier without reusing the wrapper-unsafe gap-as-c_in
     // slice that the COMPACT probe (closed) tried. Default off until traced.
     matches!(
-        std::env::var("DIALOG_GCD_SELECTED_BODY_NOCIN").ok().as_deref(),
+        std::env::var("DIALOG_GCD_SELECTED_BODY_NOCIN")
+            .ok()
+            .as_deref(),
         Some("1") | Some("2")
     )
 }
@@ -562,7 +549,10 @@ pub(crate) fn dialog_gcd_selected_body_nocin_enabled() -> bool {
 /// yields no peak win (pool unchanged) but, if eval is 0/0/0, proves the no-c_in
 /// body is route-correct and any failure under mode 1 is in the host compaction.
 pub(crate) fn dialog_gcd_selected_body_nocin_keep_pool() -> bool {
-    std::env::var("DIALOG_GCD_SELECTED_BODY_NOCIN").ok().as_deref() == Some("2")
+    std::env::var("DIALOG_GCD_SELECTED_BODY_NOCIN")
+        .ok()
+        .as_deref()
+        == Some("2")
 }
 
 /// Per-step count of high source bits streamed through the controlled low-q
@@ -649,9 +639,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
         let body_start = if odd_lowbit_fast { 1 } else { 0 };
         let body_len = body_w.saturating_sub(body_start);
         let stream_suffix = dialog_gcd_selected_body_stream_suffix_bits(step, body_len);
-        let nocin_need = if stream_suffix >= 2
-            && !dialog_gcd_selected_body_nocin_keep_pool()
-        {
+        let nocin_need = if stream_suffix >= 2 && !dialog_gcd_selected_body_nocin_keep_pool() {
             2 * (body_len - stream_suffix) + 1
         } else if dialog_gcd_selected_body_stream_top_enabled(step, body_len)
             && !dialog_gcd_selected_body_nocin_keep_pool()
@@ -749,12 +737,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             // c_in). This is exactly the premise the no-c_in body relies on.
             b.cx(ctrl, acc[0]);
             b.set_phase("dialog_gcd_raw_tobitvector_materialized_sub_body");
-            cuccaro_sub_fast_borrowed_carries_no_cin(
-                b,
-                gated,
-                &acc[body_start..body_w],
-                carries,
-            );
+            cuccaro_sub_fast_borrowed_carries_no_cin(b, gated, &acc[body_start..body_w], carries);
             b.set_phase("dialog_gcd_raw_tobitvector_materialized_sub_clear");
             for j in 0..body_len {
                 let m = b.alloc_bit();
@@ -832,9 +815,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
     } else {
         let n = subtrahend.len();
         if dialog_gcd_ctrl_body_vented_enabled() {
-            if let Some(vents) =
-                borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
-            {
+            if let Some(vents) = borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1) {
                 let bw = dialog_gcd_vented_body_width(n, step);
                 if dialog_gcd_vented_body_odd_lowbit_enabled()
                     && dialog_gcd_odd_u_lowbit_fastpath_enabled()
@@ -843,9 +824,21 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
                     // Bit-0 result = cx(ctrl, acc[0]); no borrow into bit 1 (acc[0]=ctrl,
                     // subtrahend[0]=1). Run the vented body over [1..bw].
                     b.cx(ctrl, acc[0]);
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
+                    cuccaro_sub_ctrl_vented(
+                        b,
+                        &subtrahend[1..bw],
+                        &acc[1..bw],
+                        ctrl,
+                        &vents[..bw - 2],
+                    );
                 } else {
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
+                    cuccaro_sub_ctrl_vented(
+                        b,
+                        &subtrahend[..bw],
+                        &acc[..bw],
+                        ctrl,
+                        &vents[..bw - 1],
+                    );
                 }
                 return;
             }
@@ -871,9 +864,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
         let body_start = if odd_lowbit_fast { 1 } else { 0 };
         let body_len = body_w.saturating_sub(body_start);
         let stream_suffix = dialog_gcd_selected_body_stream_suffix_bits(step, body_len);
-        let nocin_need = if stream_suffix >= 2
-            && !dialog_gcd_selected_body_nocin_keep_pool()
-        {
+        let nocin_need = if stream_suffix >= 2 && !dialog_gcd_selected_body_nocin_keep_pool() {
             2 * (body_len - stream_suffix) + 1
         } else if dialog_gcd_selected_body_stream_top_enabled(step, body_len)
             && !dialog_gcd_selected_body_nocin_keep_pool()
@@ -964,12 +955,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
             // ctrl sets the low result bit with no carry into bit 1 (omitted c_in).
             b.cx(ctrl, acc[0]);
             b.set_phase("dialog_gcd_raw_tobitvector_materialized_add_body");
-            cuccaro_add_fast_borrowed_carries_no_cin(
-                b,
-                gated,
-                &acc[body_start..body_w],
-                carries,
-            );
+            cuccaro_add_fast_borrowed_carries_no_cin(b, gated, &acc[body_start..body_w], carries);
             b.set_phase("dialog_gcd_raw_tobitvector_materialized_add_clear");
             for j in 0..body_len {
                 let m = b.alloc_bit();
@@ -1045,9 +1031,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
     } else {
         let n = addend.len();
         if dialog_gcd_ctrl_body_vented_enabled() {
-            if let Some(vents) =
-                borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
-            {
+            if let Some(vents) = borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1) {
                 let bw = dialog_gcd_vented_body_width(n, step);
                 if dialog_gcd_vented_body_odd_lowbit_enabled()
                     && dialog_gcd_odd_u_lowbit_fastpath_enabled()
@@ -1195,7 +1179,6 @@ pub(crate) fn emit_dialog_gcd_raw_tobitvector_steps_reverse(
         b.cx(v[0], b0);
     }
 }
-
 
 pub(crate) fn dialog_gcd_cmod_add_pseudomersenne_lowq(
     b: &mut B,
@@ -1415,15 +1398,7 @@ pub(crate) fn dialog_gcd_clean_truncated_underflow(
     acc_ovf: QubitId,
     step: Option<usize>,
 ) {
-    dialog_gcd_clean_truncated_underflow_with_borrowed(
-        b,
-        acc,
-        a,
-        ctrl,
-        acc_ovf,
-        step,
-        None,
-    );
+    dialog_gcd_clean_truncated_underflow_with_borrowed(b, acc, a, ctrl, acc_ovf, step, None);
 }
 
 pub(crate) fn dialog_gcd_special_underflow_clean_compare_bits(step: Option<usize>) -> usize {
@@ -1440,14 +1415,9 @@ pub(crate) fn dialog_gcd_special_overflow_clean_compare_bits(step: Option<usize>
     )
 }
 
-pub(crate) fn dialog_gcd_special_fold_carry_trunc_window(
-    step: Option<usize>,
-) -> Option<usize> {
+pub(crate) fn dialog_gcd_special_fold_carry_trunc_window(step: Option<usize>) -> Option<usize> {
     step.and_then(|step| {
-        dialog_gcd_step_map_override(
-            "DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-            step,
-        )
+        dialog_gcd_step_map_override("DIALOG_GCD_SPECIAL_FOLD_CARRY_TRUNC_STEP_WINDOWS", step)
     })
     .filter(|&window| window > 0)
     .or_else(fold_carry_trunc_window)
@@ -1645,14 +1615,7 @@ fn dialog_gcd_add_fast_low_to_ext_with_borrowed_carries_topclean(
     let mut carries = Vec::with_capacity(needed_carries);
     carries.extend_from_slice(&borrowed_carries[..borrowed]);
     carries.extend_from_slice(&owned);
-    cuccaro_add_fast_low_to_ext_borrowed_carries_topclean(
-        b,
-        a,
-        acc_ext,
-        c_in,
-        &carries,
-        clean_top,
-    );
+    cuccaro_add_fast_low_to_ext_borrowed_carries_topclean(b, a, acc_ext, c_in, &carries, clean_top);
     b.free_vec(&owned);
 }
 
@@ -1697,14 +1660,7 @@ fn dialog_gcd_sub_fast_low_to_ext_with_borrowed_carries_topclean(
     let mut carries = Vec::with_capacity(needed_carries);
     carries.extend_from_slice(&borrowed_carries[..borrowed]);
     carries.extend_from_slice(&owned);
-    cuccaro_sub_fast_low_to_ext_borrowed_carries_topclean(
-        b,
-        a,
-        acc_ext,
-        c_in,
-        &carries,
-        clean_top,
-    );
+    cuccaro_sub_fast_low_to_ext_borrowed_carries_topclean(b, a, acc_ext, c_in, &carries, clean_top);
     b.free_vec(&owned);
 }
 
@@ -1727,14 +1683,7 @@ fn dialog_gcd_conditional_boundary_replay(
         };
         let phase = b.alloc_bit();
         b.hmr(target, phase);
-        cmp_lt_phase_conditioned_with_cin(
-            b,
-            &u[start..p],
-            &v[start..p],
-            carry_in,
-            ctrl,
-            phase,
-        );
+        cmp_lt_phase_conditioned_with_cin(b, &u[start..p], &v[start..p], carry_in, ctrl, phase);
     }
 }
 
@@ -1760,14 +1709,7 @@ fn dialog_gcd_conditional_boundary_replay_free_owned(
         if owned_target {
             b.free(target);
         }
-        cmp_lt_phase_conditioned_with_cin(
-            b,
-            &u[start..p],
-            &v[start..p],
-            carry_in,
-            ctrl,
-            phase,
-        );
+        cmp_lt_phase_conditioned_with_cin(b, &u[start..p], &v[start..p], carry_in, ctrl, phase);
     }
 }
 
@@ -1819,8 +1761,7 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
     let zero_host = (!implicit_high_zero)
         .then(|| clean_scratch.first().copied())
         .flatten();
-    let boundary_hosts = &clean_scratch
-        [usize::from(!implicit_high_zero && zero_host.is_some())..];
+    let boundary_hosts = &clean_scratch[usize::from(!implicit_high_zero && zero_host.is_some())..];
     let mut couts: Vec<(QubitId, usize, bool)> = Vec::new();
 
     for blk in 0..blocks {
@@ -1832,18 +1773,19 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
             b.set_phase("dialog_gcd_apply_chunk_add_final_load");
             let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo.min(n), n);
             b.set_phase("dialog_gcd_apply_chunk_add_final_ripple");
-            let final_topclean = dialog_gcd_apply_final_topclean_bits()
-                .max(dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), &[]));
+            let final_topclean = dialog_gcd_apply_final_topclean_bits().max(
+                dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), &[]),
+            );
             if final_topclean > 0 {
-                cuccaro_add_fast_low_to_ext_topclean(b, &f, &acc_ext[lo..hi], carry, final_topclean);
-            } else if let Some(window_blocks) = dialog_gcd_apply_final_windowed_fast_blocks() {
-                cuccaro_add_fast_windowed_low_to_ext(
+                cuccaro_add_fast_low_to_ext_topclean(
                     b,
                     &f,
                     &acc_ext[lo..hi],
                     carry,
-                    window_blocks,
+                    final_topclean,
                 );
+            } else if let Some(window_blocks) = dialog_gcd_apply_final_windowed_fast_blocks() {
+                cuccaro_add_fast_windowed_low_to_ext(b, &f, &acc_ext[lo..hi], carry, window_blocks);
             } else if dialog_gcd_apply_final_lowq_enabled() {
                 let zero = b.alloc_qubit();
                 let mut f_ext = f.clone();
@@ -2008,8 +1950,7 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
     let zero_host = (!implicit_high_zero)
         .then(|| clean_scratch.first().copied())
         .flatten();
-    let boundary_hosts = &clean_scratch
-        [usize::from(!implicit_high_zero && zero_host.is_some())..];
+    let boundary_hosts = &clean_scratch[usize::from(!implicit_high_zero && zero_host.is_some())..];
     let mut bouts: Vec<(QubitId, usize, bool)> = Vec::new();
 
     for blk in 0..blocks {
@@ -2021,10 +1962,17 @@ pub(crate) fn dialog_gcd_sub_ctrl_chunked_low_to_ext(
             b.set_phase("dialog_gcd_apply_chunk_sub_final_load");
             let f = dialog_gcd_load_controlled_slice(b, ctrl, source, lo.min(n), n);
             b.set_phase("dialog_gcd_apply_chunk_sub_final_ripple");
-            let final_topclean = dialog_gcd_apply_final_topclean_bits()
-                .max(dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), &[]));
+            let final_topclean = dialog_gcd_apply_final_topclean_bits().max(
+                dialog_gcd_apply_auto_topclean_bits(b.active_qubits, f.len(), &[]),
+            );
             if final_topclean > 0 {
-                cuccaro_sub_fast_low_to_ext_topclean(b, &f, &acc_ext[lo..hi], borrow, final_topclean);
+                cuccaro_sub_fast_low_to_ext_topclean(
+                    b,
+                    &f,
+                    &acc_ext[lo..hi],
+                    borrow,
+                    final_topclean,
+                );
             } else if let Some(window_blocks) = dialog_gcd_apply_final_windowed_fast_blocks() {
                 cuccaro_sub_fast_windowed_low_to_ext(
                     b,
@@ -2612,13 +2560,7 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_borrowed_subtrahen
     f: &[QubitId],
 ) {
     dialog_gcd_cmod_sub_materialized_pseudomersenne_borrowed_subtrahend_at_step(
-        b,
-        acc,
-        a,
-        ctrl,
-        p,
-        f,
-        None,
+        b, acc, a, ctrl, p, f, None,
     );
 }
 
@@ -2716,8 +2658,12 @@ pub(crate) fn emit_dialog_gcd_raw_apply_bitvector_reverse_borrowed_subtrahend(
     }
 }
 
-
-pub(crate) fn emit_dialog_gcd_raw_ipmul(b: &mut B, factor: &[QubitId], target: &[QubitId], p: U256) {
+pub(crate) fn emit_dialog_gcd_raw_ipmul(
+    b: &mut B,
+    factor: &[QubitId],
+    target: &[QubitId],
+    p: U256,
+) {
     assert_eq!(factor.len(), N);
     assert_eq!(target.len(), N);
 
@@ -2804,7 +2750,12 @@ pub(crate) fn emit_dialog_gcd_raw_ipmul(b: &mut B, factor: &[QubitId], target: &
     b.free_vec(&dialog_log);
 }
 
-pub(crate) fn emit_dialog_gcd_raw_quotient(b: &mut B, factor: &[QubitId], target: &[QubitId], p: U256) {
+pub(crate) fn emit_dialog_gcd_raw_quotient(
+    b: &mut B,
+    factor: &[QubitId],
+    target: &[QubitId],
+    p: U256,
+) {
     assert_eq!(factor.len(), N);
     assert_eq!(target.len(), N);
 
@@ -2970,4 +2921,3 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
         mod_add_qb(b, tx, ox, p);
     }
 }
-

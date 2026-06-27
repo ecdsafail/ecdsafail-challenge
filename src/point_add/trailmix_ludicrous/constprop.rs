@@ -31,8 +31,7 @@
 //! empirical check is reported (and would indicate a static-analysis bug); the
 //! transform is then restricted to the intersection.
 
-use crate::circuit::{BitId, NO_BIT, NO_QUBIT, Op, OperationType, QubitId};
-use crate::point_add::OpSite;
+use crate::circuit::{BitId, Op, OperationType, QubitId, NO_BIT, NO_QUBIT};
 
 /// Sentinel "never touched" timestamp for the inverse-pair last-touch arrays.
 /// Treated as strictly before every op index (i.e. touched before all ops).
@@ -66,7 +65,10 @@ enum Decision {
     /// Drop: the named control qubit is claimed provably Zero.
     DropZeroCtrl { ctrl: QubitId },
     /// Fold CCX -> CX on `keep_ctrl`; `one_ctrl` is claimed provably One.
-    FoldCx { one_ctrl: QubitId, keep_ctrl: QubitId },
+    FoldCx {
+        one_ctrl: QubitId,
+        keep_ctrl: QubitId,
+    },
     /// Fold CCX -> X on target; both controls claimed provably One.
     FoldX { c1: QubitId, c2: QubitId },
     /// Drop: the two controls are provably COMPLEMENTARY (a = NOT b on every
@@ -75,7 +77,11 @@ enum Decision {
     DropComplementCtrls { a: QubitId, b: QubitId },
     /// Fold CCX -> CX(keep_ctrl, target): the two controls are provably EQUAL
     /// (a = b on every shot), so a AND b = a. `a`,`b` recorded for verification.
-    FoldEqualCtrls { a: QubitId, b: QubitId, keep_ctrl: QubitId },
+    FoldEqualCtrls {
+        a: QubitId,
+        b: QubitId,
+        keep_ctrl: QubitId,
+    },
 }
 
 struct Analyzer {
@@ -87,10 +93,18 @@ struct Analyzer {
 
 impl Analyzer {
     fn qv(&self, id: QubitId) -> Val {
-        if id == NO_QUBIT { Unknown } else { self.q[id.0 as usize] }
+        if id == NO_QUBIT {
+            Unknown
+        } else {
+            self.q[id.0 as usize]
+        }
     }
     fn bv(&self, id: BitId) -> Val {
-        if id == NO_BIT { Unknown } else { self.b[id.0 as usize] }
+        if id == NO_BIT {
+            Unknown
+        } else {
+            self.b[id.0 as usize]
+        }
     }
     fn set_q(&mut self, id: QubitId, v: Val) {
         self.q[id.0 as usize] = v;
@@ -142,12 +156,21 @@ fn and_val(a: Val, b: Val) -> Val {
 /// Merge: the target is written with `new` only on *some* shots (condition may be
 /// false), keeping `old` on the rest. Provably constant only if old==new.
 fn merge(old: Val, new: Val) -> Val {
-    if old == new { old } else { Unknown }
+    if old == new {
+        old
+    } else {
+        Unknown
+    }
 }
 
 /// Run the static forward analysis. `input_qubits` lists the qubit ids that are
 /// seeded Unknown (the IO data registers); all other qubit ids are seeded Zero.
-fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> (Vec<Decision>, ConstPropStats) {
+fn analyze(
+    ops: &[Op],
+    num_q: usize,
+    num_b: usize,
+    input_qubits: &[QubitId],
+) -> (Vec<Decision>, ConstPropStats) {
     let mut a = Analyzer {
         q: vec![Zero; num_q],
         b: vec![Zero; num_b],
@@ -176,37 +199,62 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 // classical condition: if a control is provably Zero the gate is
                 // a no-op on every shot regardless of the condition mask).
                 if c1 == Zero {
-                    decisions[i] = Decision::DropZeroCtrl { ctrl: op.q_control1 };
+                    decisions[i] = Decision::DropZeroCtrl {
+                        ctrl: op.q_control1,
+                    };
                     stats.dropped += 1;
                     // No state change (no-op).
                 } else if c2 == Zero {
-                    decisions[i] = Decision::DropZeroCtrl { ctrl: op.q_control2 };
+                    decisions[i] = Decision::DropZeroCtrl {
+                        ctrl: op.q_control2,
+                    };
                     stats.dropped += 1;
                     // No state change.
                 } else if c1 == One && c2 == One {
-                    decisions[i] = Decision::FoldX { c1: op.q_control1, c2: op.q_control2 };
+                    decisions[i] = Decision::FoldX {
+                        c1: op.q_control1,
+                        c2: op.q_control2,
+                    };
                     stats.folded_x += 1;
                     // Effect: target ^= cond. New target value:
                     let tgt = a.qv(op.q_target);
                     let nv = xor_val(tgt, One);
-                    let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
+                    let res = if a.cond_maybe_false(op) {
+                        merge(tgt, nv)
+                    } else {
+                        nv
+                    };
                     a.set_q(op.q_target, res);
                 } else if c1 == One {
-                    decisions[i] = Decision::FoldCx { one_ctrl: op.q_control1, keep_ctrl: op.q_control2 };
+                    decisions[i] = Decision::FoldCx {
+                        one_ctrl: op.q_control1,
+                        keep_ctrl: op.q_control2,
+                    };
                     stats.folded_cx += 1;
                     // Effect: target ^= cond & c2(unknown/one) -> unknown-ish.
                     let tgt = a.qv(op.q_target);
                     let delta = c2; // c2 is One or Unknown here
                     let nv = xor_val(tgt, delta);
-                    let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
+                    let res = if a.cond_maybe_false(op) {
+                        merge(tgt, nv)
+                    } else {
+                        nv
+                    };
                     a.set_q(op.q_target, res);
                 } else if c2 == One {
-                    decisions[i] = Decision::FoldCx { one_ctrl: op.q_control2, keep_ctrl: op.q_control1 };
+                    decisions[i] = Decision::FoldCx {
+                        one_ctrl: op.q_control2,
+                        keep_ctrl: op.q_control1,
+                    };
                     stats.folded_cx += 1;
                     let tgt = a.qv(op.q_target);
                     let delta = c1;
                     let nv = xor_val(tgt, delta);
-                    let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
+                    let res = if a.cond_maybe_false(op) {
+                        merge(tgt, nv)
+                    } else {
+                        nv
+                    };
                     a.set_q(op.q_target, res);
                 } else {
                     // Both controls unknown: target ^= cond & c1 & c2 -> if the
@@ -214,7 +262,11 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                     let delta = and_val(c1, c2);
                     let tgt = a.qv(op.q_target);
                     let nv = xor_val(tgt, delta);
-                    let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
+                    let res = if a.cond_maybe_false(op) {
+                        merge(tgt, nv)
+                    } else {
+                        nv
+                    };
                     a.set_q(op.q_target, res);
                 }
             }
@@ -222,13 +274,21 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 let ctrl = a.qv(op.q_control1);
                 let tgt = a.qv(op.q_target);
                 let nv = xor_val(tgt, ctrl);
-                let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
+                let res = if a.cond_maybe_false(op) {
+                    merge(tgt, nv)
+                } else {
+                    nv
+                };
                 a.set_q(op.q_target, res);
             }
             OperationType::X => {
                 let tgt = a.qv(op.q_target);
                 let nv = xor_val(tgt, One);
-                let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
+                let res = if a.cond_maybe_false(op) {
+                    merge(tgt, nv)
+                } else {
+                    nv
+                };
                 a.set_q(op.q_target, res);
             }
             OperationType::Swap => {
@@ -247,7 +307,11 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
             OperationType::R => {
                 // Reset to |0> where cond set; else unchanged.
                 let tgt = a.qv(op.q_target);
-                let res = if a.cond_maybe_false(op) { merge(tgt, Zero) } else { Zero };
+                let res = if a.cond_maybe_false(op) {
+                    merge(tgt, Zero)
+                } else {
+                    Zero
+                };
                 a.set_q(op.q_target, res);
             }
             OperationType::Hmr => {
@@ -260,23 +324,39 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 };
                 a.set_b(op.c_target, res);
                 let tgt = a.qv(op.q_target);
-                let qres = if a.cond_maybe_false(op) { merge(tgt, Zero) } else { Zero };
+                let qres = if a.cond_maybe_false(op) {
+                    merge(tgt, Zero)
+                } else {
+                    Zero
+                };
                 a.set_q(op.q_target, qres);
             }
             OperationType::BitStore0 => {
                 let cur = a.bv(op.c_target);
-                let res = if a.cond_maybe_false(op) { merge(cur, Zero) } else { Zero };
+                let res = if a.cond_maybe_false(op) {
+                    merge(cur, Zero)
+                } else {
+                    Zero
+                };
                 a.set_b(op.c_target, res);
             }
             OperationType::BitStore1 => {
                 let cur = a.bv(op.c_target);
-                let res = if a.cond_maybe_false(op) { merge(cur, One) } else { One };
+                let res = if a.cond_maybe_false(op) {
+                    merge(cur, One)
+                } else {
+                    One
+                };
                 a.set_b(op.c_target, res);
             }
             OperationType::BitInvert => {
                 let cur = a.bv(op.c_target);
                 let nv = xor_val(cur, One);
-                let res = if a.cond_maybe_false(op) { merge(cur, nv) } else { nv };
+                let res = if a.cond_maybe_false(op) {
+                    merge(cur, nv)
+                } else {
+                    nv
+                };
                 a.set_b(op.c_target, res);
             }
             // Phase-only ops, register metadata, debug: no effect on the
@@ -363,7 +443,11 @@ impl Affine {
         vec![v]
     }
     fn bv(&self, id: BitId) -> Val {
-        if id == NO_BIT { Unknown } else { self.b[id.0 as usize] }
+        if id == NO_BIT {
+            Unknown
+        } else {
+            self.b[id.0 as usize]
+        }
     }
     /// Could this op fail to execute on some shot?
     fn cond_maybe_false(&self, op: &Op) -> bool {
@@ -521,23 +605,32 @@ fn analyze_affine(
             OperationType::BitStore0 => {
                 if op.c_target != NO_BIT {
                     let cur = af.bv(op.c_target);
-                    af.b[op.c_target.0 as usize] =
-                        if af.cond_maybe_false(op) { merge(cur, Zero) } else { Zero };
+                    af.b[op.c_target.0 as usize] = if af.cond_maybe_false(op) {
+                        merge(cur, Zero)
+                    } else {
+                        Zero
+                    };
                 }
             }
             OperationType::BitStore1 => {
                 if op.c_target != NO_BIT {
                     let cur = af.bv(op.c_target);
-                    af.b[op.c_target.0 as usize] =
-                        if af.cond_maybe_false(op) { merge(cur, One) } else { One };
+                    af.b[op.c_target.0 as usize] = if af.cond_maybe_false(op) {
+                        merge(cur, One)
+                    } else {
+                        One
+                    };
                 }
             }
             OperationType::BitInvert => {
                 if op.c_target != NO_BIT {
                     let cur = af.bv(op.c_target);
                     let nv = xor_val(cur, One);
-                    af.b[op.c_target.0 as usize] =
-                        if af.cond_maybe_false(op) { merge(cur, nv) } else { nv };
+                    af.b[op.c_target.0 as usize] = if af.cond_maybe_false(op) {
+                        merge(cur, nv)
+                    } else {
+                        nv
+                    };
                 }
             }
             // Phase-only / metadata: no effect on computational-basis values.
@@ -591,29 +684,6 @@ fn apply_decisions(ops: &[Op], decisions: &[Decision]) -> Vec<Op> {
     out
 }
 
-fn apply_site_decisions(sites: &[OpSite], decisions: &[Decision]) -> Vec<OpSite> {
-    let mut out = Vec::with_capacity(sites.len());
-    for (i, site) in sites.iter().copied().enumerate() {
-        match decisions[i] {
-            Decision::Keep
-            | Decision::FoldCx { .. }
-            | Decision::FoldX { .. }
-            | Decision::FoldEqualCtrls { .. } => out.push(site),
-            Decision::DropZeroCtrl { .. } | Decision::DropComplementCtrls { .. } => {}
-        }
-    }
-    out
-}
-
-fn filter_sites(sites: &[OpSite], kill: &[bool]) -> Vec<OpSite> {
-    sites
-        .iter()
-        .copied()
-        .enumerate()
-        .filter_map(|(i, site)| (!kill[i]).then_some(site))
-        .collect()
-}
-
 // ── Inverse-pair (self-inverse) CCX cancellation ─────────────────────────────
 //
 // CCX is self-inverse. Two CCX gates G1@i, G2@j (i<j) with the SAME target `t`
@@ -664,9 +734,15 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
     // the MAX sentinel is unreachable. Simpler: init to a value that is never a
     // valid "between" — use a separate "never" marker of usize::MAX meaning the
     // qubit has not been touched yet, treated as <= any p (touched before all).
-    for v in wlast_q.iter_mut() { *v = NEVER; }
-    for v in rlast_q.iter_mut() { *v = NEVER; }
-    for v in wlast_b.iter_mut() { *v = NEVER; }
+    for v in wlast_q.iter_mut() {
+        *v = NEVER;
+    }
+    for v in rlast_q.iter_mut() {
+        *v = NEVER;
+    }
+    for v in wlast_b.iter_mut() {
+        *v = NEVER;
+    }
 
     // Pending CCX candidate per target qubit: the most recent CCX whose target is
     // this qubit and which has not yet been touched/invalidated. Keyed by target.
@@ -724,18 +800,26 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
                         && !touched_after(wlast_q[b as usize], p.idx);
                     let tgt_clean = !touched_after(wlast_q[t as usize], p.idx)
                         && !touched_after(rlast_q[t as usize], p.idx);
-                    let cond_clean = cb == u64::MAX
-                        || !touched_after(wlast_b[cb as usize], p.idx);
+                    let cond_clean = cb == u64::MAX || !touched_after(wlast_b[cb as usize], p.idx);
                     // No condition-stack bit written between p and i. (same_epoch
                     // already guarantees the stack membership is identical.)
                     let stack_clean = same_epoch
-                        && cond_stack
-                            .iter()
-                            .all(|&sb| sb == u64::MAX || !touched_after(wlast_b[sb as usize], p.idx));
-                    if same_gate && same_epoch && ctrls_clean && tgt_clean && cond_clean && stack_clean {
+                        && cond_stack.iter().all(|&sb| {
+                            sb == u64::MAX || !touched_after(wlast_b[sb as usize], p.idx)
+                        });
+                    if same_gate
+                        && same_epoch
+                        && ctrls_clean
+                        && tgt_clean
+                        && cond_clean
+                        && stack_clean
+                    {
                         killed[p.idx] = true;
                         killed[i] = true;
-                        pairs.push(PairKill { first: p.idx, second: i });
+                        pairs.push(PairKill {
+                            first: p.idx,
+                            second: i,
+                        });
                         pending[t as usize] = None;
                         cancelled = true;
                     }
@@ -778,8 +862,10 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
             OperationType::Swap => {
                 let x = op.q_control1.0 as usize;
                 let y = op.q_target.0 as usize;
-                rlast_q[x] = i; rlast_q[y] = i;
-                wlast_q[x] = i; wlast_q[y] = i;
+                rlast_q[x] = i;
+                rlast_q[y] = i;
+                wlast_q[x] = i;
+                wlast_q[y] = i;
                 pending[x] = None;
                 pending[y] = None;
             }
@@ -789,7 +875,9 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
             }
             OperationType::Hmr => {
                 wlast_q[op.q_target.0 as usize] = i;
-                if op.c_target.0 != u64::MAX { wlast_b[op.c_target.0 as usize] = i; }
+                if op.c_target.0 != u64::MAX {
+                    wlast_b[op.c_target.0 as usize] = i;
+                }
                 pending[op.q_target.0 as usize] = None;
             }
             OperationType::CCZ => {
@@ -806,10 +894,10 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
             OperationType::Z => {
                 rlast_q[op.q_target.0 as usize] = i;
             }
-            OperationType::BitInvert
-            | OperationType::BitStore0
-            | OperationType::BitStore1 => {
-                if op.c_target.0 != u64::MAX { wlast_b[op.c_target.0 as usize] = i; }
+            OperationType::BitInvert | OperationType::BitStore0 | OperationType::BitStore1 => {
+                if op.c_target.0 != u64::MAX {
+                    wlast_b[op.c_target.0 as usize] = i;
+                }
             }
             OperationType::Neg
             | OperationType::Register
@@ -842,7 +930,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
     // later CCX into cancellation adjacency). Iterate until a full sweep makes no
     // transform. Each individual pass is sound on its current input by
     // construction, so the composition is sound.
-    let mut cur_sites = crate::point_add::take_op_site_trace_for_constprop(ops.len());
     let mut cur = ops;
     let mut iter = 0usize;
     let mut tot_dropped = 0usize;
@@ -899,9 +986,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         tot_dropped += stats.dropped;
         tot_folded_cx += stats.folded_cx;
         tot_folded_x += stats.folded_x;
-        if let Some(sites) = cur_sites.as_mut() {
-            *sites = apply_site_decisions(sites, &decisions);
-        }
         cur = apply_decisions(&cur, &decisions);
 
         // ── inverse-pair cancellation pass ──
@@ -943,9 +1027,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
                     out.push(*op);
                 }
             }
-            if let Some(sites) = cur_sites.as_mut() {
-                *sites = filter_sites(sites, &kill);
-            }
             cur = out;
         }
 
@@ -953,20 +1034,17 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         let (mut aff_drop, mut aff_fold) = (0usize, 0usize);
         if !affine_disabled {
             let (nq3, nb3) = dims(&cur);
-            let (mut adec, fold_eq, drop_comp) =
-                analyze_affine(&cur, nq3, nb3, input_qubits);
+            let (mut adec, fold_eq, drop_comp) = analyze_affine(&cur, nq3, nb3, input_qubits);
 
             // Empirical corroboration of the affine relationship claims.
             if let Some(nonces) = nonces_verify {
                 if fold_eq + drop_comp > 0 {
-                    let surviving =
-                        verify_affine_relations(&cur, &adec, nq3, nb3, nonces);
+                    let surviving = verify_affine_relations(&cur, &adec, nq3, nb3, nonces);
                     let mut killed = 0usize;
                     for (i, ok) in surviving.iter().enumerate() {
                         if matches!(
                             adec[i],
-                            Decision::DropComplementCtrls { .. }
-                                | Decision::FoldEqualCtrls { .. }
+                            Decision::DropComplementCtrls { .. } | Decision::FoldEqualCtrls { .. }
                         ) && !*ok
                         {
                             killed += 1;
@@ -995,9 +1073,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
                 }
             }
             if aff_drop + aff_fold > 0 {
-                if let Some(sites) = cur_sites.as_mut() {
-                    *sites = apply_site_decisions(sites, &adec);
-                }
                 cur = apply_decisions(&cur, &adec);
             }
             let _ = (fold_eq, drop_comp);
@@ -1039,10 +1114,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         tot_dropped + tot_folded_cx + tot_folded_x + 2 * tot_pairs + tot_aff_drop + tot_aff_fold,
     );
 
-    if let Some(sites) = cur_sites {
-        crate::point_add::set_op_site_trace_from_constprop(sites);
-    }
-
     cur
 }
 
@@ -1083,15 +1154,34 @@ fn verify_control_constancy(
     use crate::sim::Simulator;
     use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
     use alloy_primitives::U256;
-    use sha3::{digest::{ExtendableOutput, Update, XofReader}, Shake256};
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake256,
+    };
 
     let curve = WeierstrassEllipticCurve {
-        modulus: U256::from_str_radix("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16).unwrap(),
+        modulus: U256::from_str_radix(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F",
+            16,
+        )
+        .unwrap(),
         a: U256::from(0u64),
         b: U256::from(7u64),
-        gx: U256::from_str_radix("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16).unwrap(),
-        gy: U256::from_str_radix("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16).unwrap(),
-        order: U256::from_str_radix("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141", 16).unwrap(),
+        gx: U256::from_str_radix(
+            "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
+            16,
+        )
+        .unwrap(),
+        gy: U256::from_str_radix(
+            "483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8",
+            16,
+        )
+        .unwrap(),
+        order: U256::from_str_radix(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+            16,
+        )
+        .unwrap(),
     };
 
     let (_tq, _tb, _nr, regs) = analyze_ops(ops.iter());
@@ -1146,9 +1236,15 @@ fn verify_control_constancy(
             let k2 = U256::from_le_bytes(rb[1]);
             let t = curve.mul(curve.gx, curve.gy, k1);
             let o = curve.mul(curve.gx, curve.gy, k2);
-            if t.0 == o.0 { continue; }
-            if t.0.is_zero() && t.1.is_zero() { continue; }
-            if o.0.is_zero() && o.1.is_zero() { continue; }
+            if t.0 == o.0 {
+                continue;
+            }
+            if t.0.is_zero() && t.1.is_zero() {
+                continue;
+            }
+            if o.0.is_zero() && o.1.is_zero() {
+                continue;
+            }
             targets.push(t);
             offsets.push(o);
         }
@@ -1175,7 +1271,10 @@ fn verify_control_constancy(
         let bad = ok.iter().filter(|b| !**b).count();
         eprintln!(
             "CONSTPROP_PROGRESS nonce={}/{} shots={} cumulative_failed_claims={}",
-            nonce + 1, nonces, n, bad
+            nonce + 1,
+            nonces,
+            n,
+            bad
         );
     }
     let _ = QubitOrBit::Bit; // silence potential unused import lints
@@ -1244,7 +1343,10 @@ fn step_and_check<R: sha3::digest::XofReader>(
                 *sim.qubit_mut(op.q_target) ^= cond;
             }
             OperationType::CCZ => {
-                let v = cond & sim.qubit(op.q_target) & sim.qubit(op.q_control1) & sim.qubit(op.q_control2);
+                let v = cond
+                    & sim.qubit(op.q_target)
+                    & sim.qubit(op.q_control1)
+                    & sim.qubit(op.q_control2);
                 sim.phase ^= v;
             }
             OperationType::CZ => {
@@ -1319,8 +1421,7 @@ mod affine_transfer_tests {
             gate(OperationType::CCX, 0, 1, 2),
             gate(OperationType::CCX, 2, 0, 3),
         ];
-        let (decisions, fold_eq, drop_comp) =
-            analyze_affine(&equal_chain, 4, 0, &[QubitId(0)]);
+        let (decisions, fold_eq, drop_comp) = analyze_affine(&equal_chain, 4, 0, &[QubitId(0)]);
         assert_eq!((fold_eq, drop_comp), (2, 0));
         assert!(matches!(decisions[1], Decision::FoldEqualCtrls { .. }));
         assert!(matches!(decisions[2], Decision::FoldEqualCtrls { .. }));
@@ -1373,15 +1474,34 @@ fn verify_inverse_pairs(
     use crate::sim::Simulator;
     use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
     use alloy_primitives::U256;
-    use sha3::{digest::{ExtendableOutput, Update, XofReader}, Shake256};
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake256,
+    };
 
     let curve = WeierstrassEllipticCurve {
-        modulus: U256::from_str_radix("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16).unwrap(),
+        modulus: U256::from_str_radix(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F",
+            16,
+        )
+        .unwrap(),
         a: U256::from(0u64),
         b: U256::from(7u64),
-        gx: U256::from_str_radix("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16).unwrap(),
-        gy: U256::from_str_radix("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16).unwrap(),
-        order: U256::from_str_radix("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141", 16).unwrap(),
+        gx: U256::from_str_radix(
+            "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
+            16,
+        )
+        .unwrap(),
+        gy: U256::from_str_radix(
+            "483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8",
+            16,
+        )
+        .unwrap(),
+        order: U256::from_str_radix(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+            16,
+        )
+        .unwrap(),
     };
 
     let (_tq, _tb, _nr, regs) = analyze_ops(ops.iter());
@@ -1422,9 +1542,15 @@ fn verify_inverse_pairs(
             let k2 = U256::from_le_bytes(rb[1]);
             let t = curve.mul(curve.gx, curve.gy, k1);
             let o = curve.mul(curve.gx, curve.gy, k2);
-            if t.0 == o.0 { continue; }
-            if t.0.is_zero() && t.1.is_zero() { continue; }
-            if o.0.is_zero() && o.1.is_zero() { continue; }
+            if t.0 == o.0 {
+                continue;
+            }
+            if t.0.is_zero() && t.1.is_zero() {
+                continue;
+            }
+            if o.0.is_zero() && o.1.is_zero() {
+                continue;
+            }
             targets.push(t);
             offsets.push(o);
         }
@@ -1449,7 +1575,9 @@ fn verify_inverse_pairs(
                 sim.set_register(&regs[3], offsets[i].1, shot);
             }
             let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
-            for s in snap_seen.iter_mut() { *s = false; }
+            for s in snap_seen.iter_mut() {
+                *s = false;
+            }
 
             step_and_check_pairs(
                 &mut sim,
@@ -1467,7 +1595,10 @@ fn verify_inverse_pairs(
         let bad = bad_pair.iter().filter(|b| **b).count();
         eprintln!(
             "CONSTPROP_PAIR_PROGRESS nonce={}/{} shots={} cumulative_unsound_pairs={}",
-            nonce + 1, nonces, n, bad
+            nonce + 1,
+            nonces,
+            n,
+            bad
         );
     }
 
@@ -1549,7 +1680,10 @@ fn step_and_check_pairs<R: sha3::digest::XofReader>(
                 *sim.qubit_mut(op.q_target) ^= cond;
             }
             OperationType::CCZ => {
-                let v = cond & sim.qubit(op.q_target) & sim.qubit(op.q_control1) & sim.qubit(op.q_control2);
+                let v = cond
+                    & sim.qubit(op.q_target)
+                    & sim.qubit(op.q_control1)
+                    & sim.qubit(op.q_control2);
                 sim.phase ^= v;
             }
             OperationType::CZ => {
@@ -1621,15 +1755,34 @@ fn verify_affine_relations(
     use crate::sim::Simulator;
     use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
     use alloy_primitives::U256;
-    use sha3::{digest::{ExtendableOutput, Update, XofReader}, Shake256};
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake256,
+    };
 
     let curve = WeierstrassEllipticCurve {
-        modulus: U256::from_str_radix("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16).unwrap(),
+        modulus: U256::from_str_radix(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F",
+            16,
+        )
+        .unwrap(),
         a: U256::from(0u64),
         b: U256::from(7u64),
-        gx: U256::from_str_radix("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16).unwrap(),
-        gy: U256::from_str_radix("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16).unwrap(),
-        order: U256::from_str_radix("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141", 16).unwrap(),
+        gx: U256::from_str_radix(
+            "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
+            16,
+        )
+        .unwrap(),
+        gy: U256::from_str_radix(
+            "483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8",
+            16,
+        )
+        .unwrap(),
+        order: U256::from_str_radix(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+            16,
+        )
+        .unwrap(),
     };
 
     let (_tq, _tb, _nr, regs) = analyze_ops(ops.iter());
@@ -1681,9 +1834,15 @@ fn verify_affine_relations(
             let k2 = U256::from_le_bytes(rb[1]);
             let t = curve.mul(curve.gx, curve.gy, k1);
             let o = curve.mul(curve.gx, curve.gy, k2);
-            if t.0 == o.0 { continue; }
-            if t.0.is_zero() && t.1.is_zero() { continue; }
-            if o.0.is_zero() && o.1.is_zero() { continue; }
+            if t.0 == o.0 {
+                continue;
+            }
+            if t.0.is_zero() && t.1.is_zero() {
+                continue;
+            }
+            if o.0.is_zero() && o.1.is_zero() {
+                continue;
+            }
             targets.push(t);
             offsets.push(o);
         }
@@ -1702,19 +1861,15 @@ fn verify_affine_relations(
                 sim.set_register(&regs[3], offsets[i].1, shot);
             }
             let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
-            step_and_check_affine(
-                &mut sim,
-                ops,
-                &is_flagged,
-                &want_equal,
-                &mut ok,
-                cond_mask,
-            );
+            step_and_check_affine(&mut sim, ops, &is_flagged, &want_equal, &mut ok, cond_mask);
         }
         let bad = flagged_idx.iter().filter(|&&i| !ok[i]).count();
         eprintln!(
             "CONSTPROP_AFFINE_PROGRESS nonce={}/{} shots={} cumulative_failed_claims={}",
-            nonce + 1, nonces, n, bad
+            nonce + 1,
+            nonces,
+            n,
+            bad
         );
     }
     ok
@@ -1775,7 +1930,10 @@ fn step_and_check_affine<R: sha3::digest::XofReader>(
                 *sim.qubit_mut(op.q_target) ^= cond;
             }
             OperationType::CCZ => {
-                let v = cond & sim.qubit(op.q_target) & sim.qubit(op.q_control1) & sim.qubit(op.q_control2);
+                let v = cond
+                    & sim.qubit(op.q_target)
+                    & sim.qubit(op.q_control1)
+                    & sim.qubit(op.q_control2);
                 sim.phase ^= v;
             }
             OperationType::CZ => {

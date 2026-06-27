@@ -63,12 +63,30 @@ fn secp256k1() -> WeierstrassEllipticCurve {
 // for the CUDA port). Validated to reproduce sha3's golden k1,k2. ────────────
 
 const KECCAK_RC: [u64; 24] = [
-    0x0000000000000001, 0x0000000000008082, 0x800000000000808a, 0x8000000080008000,
-    0x000000000000808b, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
-    0x000000000000008a, 0x0000000000000088, 0x0000000080008009, 0x000000008000000a,
-    0x000000008000808b, 0x800000000000008b, 0x8000000000008089, 0x8000000000008003,
-    0x8000000000008002, 0x8000000000000080, 0x000000000000800a, 0x800000008000000a,
-    0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
+    0x0000000000000001,
+    0x0000000000008082,
+    0x800000000000808a,
+    0x8000000080008000,
+    0x000000000000808b,
+    0x0000000080000001,
+    0x8000000080008081,
+    0x8000000000008009,
+    0x000000000000008a,
+    0x0000000000000088,
+    0x0000000080008009,
+    0x000000008000000a,
+    0x000000008000808b,
+    0x800000000000008b,
+    0x8000000000008089,
+    0x8000000000008003,
+    0x8000000000008002,
+    0x8000000000000080,
+    0x000000000000800a,
+    0x800000008000000a,
+    0x8000000080008081,
+    0x8000000000008080,
+    0x0000000080000001,
+    0x8000000080008008,
 ];
 const KECCAK_ROT: [u32; 25] = [
     0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14,
@@ -119,7 +137,11 @@ pub struct Sponge {
 }
 impl Sponge {
     pub fn new() -> Sponge {
-        Sponge { st: [0u64; 25], buf: [0u8; SHAKE256_RATE], buflen: 0 }
+        Sponge {
+            st: [0u64; 25],
+            buf: [0u8; SHAKE256_RATE],
+            buflen: 0,
+        }
     }
     fn absorb_block(&mut self) {
         for i in 0..(SHAKE256_RATE / 8) {
@@ -148,7 +170,10 @@ impl Sponge {
         self.buf[SHAKE256_RATE - 1] ^= 0x80;
         self.absorb_block();
         // Post-finalize state IS the first squeeze block; read from pos 0.
-        SqueezeReader { st: self.st, pos: 0 }
+        SqueezeReader {
+            st: self.st,
+            pos: 0,
+        }
     }
 }
 pub struct SqueezeReader {
@@ -427,10 +452,16 @@ pub fn screen_nonce(
 }
 
 fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Env-driven sweep entry point (invoked from `examples/island_search.rs`).
@@ -492,7 +523,10 @@ pub fn run_from_env() {
             let e = curve.add(t.0, t.1, o.0, o.1);
             let (dx, c) = point_add_gcd_factors(t.0, o.0, e.0);
             let dy = sub_mod_p(t.1, o.1, p);
-            let lambda = dx.inv_mod(p).map(|i| dy.mul_mod(i, p)).unwrap_or(U256::ZERO);
+            let lambda = dx
+                .inv_mod(p)
+                .map(|i| dy.mul_mod(i, p))
+                .unwrap_or(U256::ZERO);
             let verdict = match check_point_add_apply_hazards(dx, dy, lambda, c, &cfg, &apply_cfg) {
                 Ok(_) => "OK".to_string(),
                 Err(e) => format!("{e:?}").replace(' ', ""),
@@ -562,7 +596,11 @@ pub fn run_from_env() {
         }
         println!();
         // self-validate: absorb base nonce tail, finalize, squeeze 2 shots, print k1,k2
-        let mut sp2 = Sponge { st: sp.st, buf: sp.buf, buflen: sp.buflen };
+        let mut sp2 = Sponge {
+            st: sp.st,
+            buf: sp.buf,
+            buflen: sp.buflen,
+        };
         for i in 0..NONCE_BITS {
             let tb = if (base_nonce >> i) & 1 == 1 { &t1 } else { &t0 };
             sp2.absorb(tb);
@@ -610,9 +648,13 @@ pub fn run_from_env() {
             cfg.skip_zero_edge_tobit_fwd_cshift as u8
         );
         let aw: Vec<usize> = (0..ai).map(|s| cfg.active_width(s)).collect();
-        let cb: Vec<usize> = (0..ai).map(|s| cfg.compare_bits_for_step(s, aw[s])).collect();
+        let cb: Vec<usize> = (0..ai)
+            .map(|s| cfg.compare_bits_for_step(s, aw[s]))
+            .collect();
         let csw: Vec<usize> = (0..ai).map(|s| cfg.cswap_width(aw[s], s)).collect();
-        let bw: Vec<usize> = (0..ai).map(|s| cfg.body_carry_trunc_width_fast(aw[s], s)).collect();
+        let bw: Vec<usize> = (0..ai)
+            .map(|s| cfg.body_carry_trunc_width_fast(aw[s], s))
+            .collect();
         let shw: Vec<usize> = (0..ai).map(|s| cfg.shift_width(aw[s], s)).collect();
         let pr = |name: &str, v: &[usize]| {
             print!("{name}");
@@ -638,18 +680,30 @@ pub fn run_from_env() {
             .lines()
             .filter_map(|l| l.trim().parse::<u64>().ok())
             .collect();
-        eprintln!("confirming {} candidates with full predicate ({} shots)", cands.len(), shots);
+        eprintln!(
+            "confirming {} candidates with full predicate ({} shots)",
+            cands.len(),
+            shots
+        );
         use std::sync::atomic::{AtomicUsize, Ordering as O};
         use std::sync::Mutex;
         let idx = AtomicUsize::new(0);
         let clean: Mutex<Vec<u64>> = Mutex::new(Vec::new());
-        let nthreads = env_usize("ISLAND_THREADS", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+        let nthreads = env_usize(
+            "ISLAND_THREADS",
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1),
+        );
         std::thread::scope(|sc| {
             for _ in 0..nthreads.max(1) {
                 sc.spawn(|| loop {
                     let i = idx.fetch_add(1, O::Relaxed);
-                    if i >= cands.len() { break; }
-                    let r = screen_nonce(&prefix, &curve, &comb, &cfg, &apply_cfg, cands[i], shots, 0);
+                    if i >= cands.len() {
+                        break;
+                    }
+                    let r =
+                        screen_nonce(&prefix, &curve, &comb, &cfg, &apply_cfg, cands[i], shots, 0);
                     if r.hard == 0 {
                         clean.lock().unwrap().push(cands[i]);
                         println!("CONFIRMED {}", cands[i]);
@@ -659,25 +713,47 @@ pub fn run_from_env() {
         });
         let mut c = clean.into_inner().unwrap();
         c.sort_unstable();
-        eprintln!("confirmed {} true survivors of {} candidates", c.len(), cands.len());
+        eprintln!(
+            "confirmed {} true survivors of {} candidates",
+            c.len(),
+            cands.len()
+        );
         return;
     }
     eprintln!(
         "prefix ready: op_count={} base_nonce={} shots={} sweeping [{}, {})",
-        prefix.op_count, base_nonce, shots, start, start + count
+        prefix.op_count,
+        base_nonce,
+        shots,
+        start,
+        start + count
     );
 
     // Soundness self-check: the base nonce is eval-clean (0/0/0), so it MUST be
     // a filter survivor (0 hard). A nonzero count means the prefilter is
     // over-strict (false rejects) and the search would miss real survivors.
-    let base = screen_nonce(&prefix, &curve, &comb, &cfg, &apply_cfg, base_nonce, shots, usize::MAX);
+    let base = screen_nonce(
+        &prefix,
+        &curve,
+        &comb,
+        &cfg,
+        &apply_cfg,
+        base_nonce,
+        shots,
+        usize::MAX,
+    );
     eprintln!(
         "[base] nonce={} shots={} hard={}  (expect hard=0)",
         base.nonce, base.shots, base.hard
     );
 
     let early = if full { usize::MAX } else { 0 };
-    let threads = env_usize("ISLAND_THREADS", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    let threads = env_usize(
+        "ISLAND_THREADS",
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
+    );
     let near = env_usize("ISLAND_REPORT_NEAR", 0); // also log nonces with hard <= near
 
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -691,27 +767,27 @@ pub fn run_from_env() {
 
     std::thread::scope(|scope| {
         for _ in 0..threads.max(1) {
-            scope.spawn(|| {
-                loop {
-                    let nonce = next.fetch_add(1, Ordering::Relaxed);
-                    if nonce >= endx {
-                        break;
+            scope.spawn(|| loop {
+                let nonce = next.fetch_add(1, Ordering::Relaxed);
+                if nonce >= endx {
+                    break;
+                }
+                let r = screen_nonce(
+                    &prefix, &curve, &comb, &cfg, &apply_cfg, nonce, shots, early,
+                );
+                if r.hard == 0 {
+                    survivors.lock().unwrap().push(r.nonce);
+                    eprintln!("[SURVIVOR] nonce={} shots={}", r.nonce, r.shots);
+                }
+                if full {
+                    tot_hard.fetch_add(r.hard as u64, Ordering::Relaxed);
+                    tot_shots.fetch_add(r.shots as u64, Ordering::Relaxed);
+                    let mut b = best.lock().unwrap();
+                    if r.hard < b.1 {
+                        *b = (r.nonce, r.hard);
                     }
-                    let r = screen_nonce(&prefix, &curve, &comb, &cfg, &apply_cfg, nonce, shots, early);
-                    if r.hard == 0 {
-                        survivors.lock().unwrap().push(r.nonce);
-                        eprintln!("[SURVIVOR] nonce={} shots={}", r.nonce, r.shots);
-                    }
-                    if full {
-                        tot_hard.fetch_add(r.hard as u64, Ordering::Relaxed);
-                        tot_shots.fetch_add(r.shots as u64, Ordering::Relaxed);
-                        let mut b = best.lock().unwrap();
-                        if r.hard < b.1 {
-                            *b = (r.nonce, r.hard);
-                        }
-                        if near > 0 && r.hard <= near {
-                            eprintln!("[near] nonce={} hard={}/{}", r.nonce, r.hard, r.shots);
-                        }
+                    if near > 0 && r.hard <= near {
+                        eprintln!("[near] nonce={} hard={}/{}", r.nonce, r.hard, r.shots);
                     }
                 }
             });

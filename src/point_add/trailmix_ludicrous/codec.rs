@@ -14,8 +14,8 @@
 //! AND-uncompute is a measurement-vented `clear_and` (HMR + conditional-Z,
 //! zero Toffoli).
 
-use super::{B, BExt};
-use crate::circuit::{QubitId};
+use super::{BExt, B};
+use crate::circuit::QubitId;
 
 // ===================================================================
 // clear_and: measurement-vented AND-uncompute (HMR + conditional-Z).
@@ -105,16 +105,25 @@ const TAIL4_TOP32_DECODER_ANF: [&[u16]; 12] = [
     &[0],
 ];
 
+fn triple_codec_reuse_pair_freed_enabled() -> bool {
+    std::env::var("TLM_TRIPLE_CODEC_REUSE_PAIR_FREED")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 fn tail4_top32_enabled() -> bool {
     std::env::var("TLM_TAIL4_TOP32").ok().as_deref() == Some("1")
 }
 
-fn toggle_mcx_with_dirty(
-    circ: &mut B,
-    controls: &[QubitId],
-    dirty: &[QubitId],
-    target: QubitId,
-) {
+fn pairraw_last_triples() -> usize {
+    std::env::var("TLM_CODEC_PAIRRAW_LAST_K")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn toggle_mcx_with_dirty(circ: &mut B, controls: &[QubitId], dirty: &[QubitId], target: QubitId) {
     debug_assert!(!controls.contains(&target));
     match controls.len() {
         0 => circ.x(target),
@@ -157,8 +166,8 @@ fn toggle_anf_with_dirty(
 fn tail4_reordered_raw(raw: &[QubitId]) -> [QubitId; 12] {
     assert_eq!(raw.len(), 12, "tail4 raw window must contain four symbols");
     [
-        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10],
-        raw[2], raw[5], raw[8], raw[11],
+        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10], raw[2], raw[5], raw[8],
+        raw[11],
     ]
 }
 
@@ -211,7 +220,11 @@ fn decompress_tail4_top32_payload(circ: &mut B, code: &[QubitId]) -> Vec<QubitId
 }
 
 fn compress_tail4_top32(circ: &mut B, raw: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw.len(), 15, "tail4 hybrid window must contain five symbols");
+    assert_eq!(
+        raw.len(),
+        15,
+        "tail4 hybrid window must contain five symbols"
+    );
     let mut data = raw[..3].to_vec();
     data.extend(compress_tail4_top32_payload(circ, &raw[3..]));
     data
@@ -277,7 +290,11 @@ fn apply_op_off(circ: &mut B, w: &[&QubitId], op: (u8, u8, u8, u8), off: u8) {
 /// Apply [`MERGE25_OPS`] (forward or reversed) with the AND-uncompute targets
 /// vented via [`clear_and`]. `off` selects the wire layout.
 fn apply_merge25(circ: &mut B, w: &[&QubitId], off: u8, reverse: bool) {
-    let clear: &[usize] = if reverse { &MERGE25_CLEAR_REV } else { &MERGE25_CLEAR_FWD };
+    let clear: &[usize] = if reverse {
+        &MERGE25_CLEAR_REV
+    } else {
+        &MERGE25_CLEAR_FWD
+    };
     let n = MERGE25_OPS.len();
     for step in 0..n {
         let i = if reverse { n - 1 - step } else { step };
@@ -431,8 +448,20 @@ impl DialogCodec {
             slots[f] = Some(circ.alloc_qubit());
         }
         let raw: Vec<QubitId> = slots.into_iter().map(|s| s.expect("slot")).collect();
-        let clean: Vec<QubitId> = (0..self.clean_anc()).map(|_| circ.alloc_qubit()).collect();
-        let win: Vec<&QubitId> = raw.iter().chain(clean.iter()).collect();
+        let reuse_pair_freed = self == Self::Triple && triple_codec_reuse_pair_freed_enabled();
+        let clean_count = self.clean_anc() - usize::from(reuse_pair_freed);
+        let clean: Vec<QubitId> = (0..clean_count).map(|_| circ.alloc_qubit()).collect();
+        let mut win: Vec<&QubitId> = raw.iter().collect();
+        if reuse_pair_freed {
+            // Triple decode uses merge25 first, where raw[5] is still a clean
+            // freed pair wire. Reuse it as merge25's second clean scratch, then
+            // the pair reverse consumes it later as the original pair freed slot.
+            debug_assert_eq!(clean.len(), 1);
+            win.push(&clean[0]);
+            win.push(&raw[5]);
+        } else {
+            win.extend(clean.iter());
+        }
         self.decompress(circ, &win);
         for q in clean {
             circ.zero_and_free(q);
@@ -450,8 +479,19 @@ impl DialogCodec {
         if self == Self::Tail4Top32 {
             return compress_tail4_top32(circ, raw);
         }
-        let clean: Vec<QubitId> = (0..self.clean_anc()).map(|_| circ.alloc_qubit()).collect();
-        let win: Vec<&QubitId> = raw.iter().chain(clean.iter()).collect();
+        let reuse_pair_freed = self == Self::Triple && triple_codec_reuse_pair_freed_enabled();
+        let clean_count = self.clean_anc() - usize::from(reuse_pair_freed);
+        let clean: Vec<QubitId> = (0..clean_count).map(|_| circ.alloc_qubit()).collect();
+        let mut win: Vec<&QubitId> = raw.iter().collect();
+        if reuse_pair_freed {
+            // compress_2sym_fast clears raw[5] before merge25 runs. The merge25
+            // scratch is then cleared again before raw[5] is freed below.
+            debug_assert_eq!(clean.len(), 1);
+            win.push(&clean[0]);
+            win.push(&raw[5]);
+        } else {
+            win.extend(clean.iter());
+        }
         self.compress(circ, &win);
         for q in clean {
             circ.zero_and_free(q);
@@ -522,8 +562,21 @@ pub fn jump_dialog_regions(n3: usize, iters: usize) -> Vec<(DialogCodec, usize)>
     }
     let rem = codec_syms - 3 * n3;
     let mut r = vec![(DialogCodec::Step0, 1)];
-    if n3 > 0 {
-        r.push((DialogCodec::Triple, n3));
+    let pairraw_last = if tail4 == 0 {
+        pairraw_last_triples().min(n3)
+    } else {
+        0
+    };
+    let main_triples = n3 - pairraw_last;
+    if main_triples > 0 {
+        r.push((DialogCodec::Triple, main_triples));
+    }
+    // Optional transient-reduction experiment: replace the last K triple windows
+    // with Pair+Raw windows. It costs one persistent tape bit per replaced
+    // triple, but avoids the triple codec's clean scratch at those late windows.
+    for _ in 0..pairraw_last {
+        r.push((DialogCodec::Pair, 1));
+        r.push((DialogCodec::Raw, 1));
     }
     // Tail: a 3-symbol leftover packs denser as one Triple (tight regime: n3>0).
     let tight = n3 > 0;

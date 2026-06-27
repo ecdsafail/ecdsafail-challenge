@@ -152,7 +152,13 @@ pub(crate) fn cmp_lt_into_fast_with_cin_borrowed_carries(
     }
 }
 
-pub(crate) fn ccx_cmp_lt_into_fast(b: &mut B, u: &[QubitId], v: &[QubitId], ctrl: QubitId, target: QubitId) {
+pub(crate) fn ccx_cmp_lt_into_fast(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    ctrl: QubitId,
+    target: QubitId,
+) {
     if kal_vent_modadd_enabled() {
         let flag = b.alloc_qubit();
         cmp_lt_into(b, u, v, flag);
@@ -430,12 +436,7 @@ pub(crate) fn cmp_lt_phase_conditioned_with_cin_borrowed_carries(
     b.pop_condition();
 }
 
-pub(crate) fn cmp_lt_phase_conditioned(
-    b: &mut B,
-    u: &[QubitId],
-    v: &[QubitId],
-    phase: BitId,
-) {
+pub(crate) fn cmp_lt_phase_conditioned(b: &mut B, u: &[QubitId], v: &[QubitId], phase: BitId) {
     let n = u.len();
     assert_eq!(v.len(), n);
     assert!(n > 0);
@@ -590,7 +591,6 @@ pub(crate) fn ccx_cmp_lt_into_fast_prefix_targets_split(
     }
 }
 
-
 /// Slow (carry-array-free) `flag ^= (u < v + c_in)` comparator. Like
 /// `cmp_lt_into` but threads a borrowed carry-IN qubit (left clean on exit)
 /// through the bottom MAJ. Peak cost: 0 extra qubits beyond the supplied c_in
@@ -716,4 +716,3 @@ pub(crate) fn ccx_cmp_lt_into_fast_borrowed_carries(
         b.x(u[i]);
     }
 }
-
