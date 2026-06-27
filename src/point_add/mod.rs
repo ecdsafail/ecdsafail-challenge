@@ -65,6 +65,8 @@ use sha3::{
 use crate::circuit::{analyze_ops, BitId, Op, OperationType, QubitId, QubitOrBit, RegisterId};
 use crate::sim::Simulator;
 use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 pub mod venting;
 
@@ -674,6 +676,17 @@ impl B {
 }
 
 pub const N: usize = 256;
+
+#[derive(Clone, Debug)]
+struct QubitLifetime {
+    original: usize,
+    start: usize,
+    last_non_r: Option<usize>,
+    end: usize,
+    original_r: Option<usize>,
+    move_r_after: Option<usize>,
+    color: u64,
+}
 
 /// secp256k1 prime:  p = 2^256 - 2^32 - 977.
 pub const SECP256K1_P: U256 = U256::from_limbs([
@@ -1976,6 +1989,446 @@ pub fn build_builder() -> B {
     builder
 }
 
+fn qubit_field_ids(op: &Op) -> [Option<usize>; 3] {
+    [op.q_control2, op.q_control1, op.q_target].map(|q| {
+        if q.0 == u64::MAX {
+            None
+        } else {
+            Some(q.0 as usize)
+        }
+    })
+}
+
+fn max_qubit_slots(ops: &[Op]) -> usize {
+    ops.iter()
+        .flat_map(qubit_field_ids)
+        .flatten()
+        .max()
+        .map_or(0, |q| q + 1)
+}
+
+fn interval_allocator_contexts(ops: &[Op]) -> Vec<(usize, u64, u64)> {
+    const P1: u64 = 0x9e37_79b1_85eb_ca87;
+    const P2: u64 = 0xc2b2_ae3d_27d4_eb4f;
+
+    fn mix(v: u64) -> u64 {
+        let mut x = v.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+
+    let mut contexts = Vec::with_capacity(ops.len() + 1);
+    let mut stack_hashes = vec![(0u64, 0u64)];
+    for op in ops {
+        let current = *stack_hashes.last().unwrap();
+        contexts.push((stack_hashes.len() - 1, current.0, current.1));
+        match op.kind {
+            OperationType::PushCondition => {
+                let m = mix(op.c_condition.0);
+                stack_hashes.push((
+                    current.0.wrapping_mul(P1) ^ m,
+                    current.1.rotate_left(17).wrapping_add(m.wrapping_mul(P2)),
+                ));
+            }
+            OperationType::PopCondition => {
+                if stack_hashes.len() > 1 {
+                    stack_hashes.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    let current = *stack_hashes.last().unwrap();
+    contexts.push((stack_hashes.len() - 1, current.0, current.1));
+    contexts
+}
+
+fn start_or_get_lifetime(
+    original: usize,
+    current: &mut [Option<usize>],
+    by_original: &[Vec<usize>],
+    cursor: &mut [usize],
+) -> usize {
+    if let Some(id) = current[original] {
+        return id;
+    }
+    let id = by_original[original][cursor[original]];
+    cursor[original] += 1;
+    current[original] = Some(id);
+    id
+}
+
+fn remap_qubit_field(
+    q: &mut QubitId,
+    current: &mut [Option<usize>],
+    by_original: &[Vec<usize>],
+    cursor: &mut [usize],
+    lifetimes: &[QubitLifetime],
+) {
+    if q.0 == u64::MAX {
+        return;
+    }
+    let original = q.0 as usize;
+    let id = start_or_get_lifetime(original, current, by_original, cursor);
+    q.0 = lifetimes[id].color;
+}
+
+fn interval_allocator_op_site(sites: &[OpSite], idx: usize) -> String {
+    sites
+        .get(idx)
+        .map(|(file, line, context)| format!("{file}:{line}:0x{context:08x}"))
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn trace_interval_allocator_critical(
+    ops: &[Op],
+    lifetimes: &[QubitLifetime],
+    pinned_original: &[bool],
+    colors: u64,
+) {
+    if std::env::var("TRACE_TLM_INTERVAL_ALLOCATOR_CRITICAL")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return;
+    }
+
+    let limit = std::env::var("TRACE_TLM_INTERVAL_ALLOCATOR_CRITICAL_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(24);
+    let mut events: Vec<(usize, isize)> = Vec::with_capacity(lifetimes.len() * 2);
+    for lifetime in lifetimes {
+        events.push((lifetime.start, 1));
+        if let Some(end) = lifetime.end.checked_add(1) {
+            events.push((end, -1));
+        }
+    }
+    events.sort_unstable_by_key(|&(idx, delta)| (idx, delta));
+
+    let mut active = 0isize;
+    let mut max_active = 0isize;
+    let mut max_idx = 0usize;
+    let mut i = 0usize;
+    while i < events.len() {
+        let idx = events[i].0;
+        while i < events.len() && events[i].0 == idx {
+            active += events[i].1;
+            i += 1;
+        }
+        if idx < ops.len() && active > max_active {
+            max_active = active;
+            max_idx = idx;
+        }
+    }
+
+    let sites = if op_site_trace_enabled() {
+        take_last_op_sites()
+    } else {
+        Vec::new()
+    };
+    let mut active_ids: Vec<usize> = lifetimes
+        .iter()
+        .enumerate()
+        .filter_map(|(id, lifetime)| {
+            (lifetime.start <= max_idx && max_idx <= lifetime.end).then_some(id)
+        })
+        .collect();
+    let pinned_active = active_ids
+        .iter()
+        .filter(|&&id| pinned_original[lifetimes[id].original])
+        .count();
+    eprintln!(
+        "TLM_INTERVAL_CRITICAL colors={} max_active={} op={} kind={:?} pinned_active={} unpinned_active={} site={}",
+        colors,
+        max_active,
+        max_idx,
+        ops[max_idx].kind,
+        pinned_active,
+        active_ids.len().saturating_sub(pinned_active),
+        interval_allocator_op_site(&sites, max_idx)
+    );
+
+    active_ids.sort_by_key(|&id| {
+        (
+            Reverse(lifetimes[id].start),
+            lifetimes[id].end,
+            lifetimes[id].original,
+            id,
+        )
+    });
+    eprintln!("TLM_INTERVAL_CRITICAL latest_starts limit={limit}");
+    for &id in active_ids.iter().take(limit) {
+        let lifetime = &lifetimes[id];
+        eprintln!(
+            "  id={} original={} color={} pinned={} start={} end={} last_non_r={:?} r={:?} start_kind={:?} end_kind={:?} start_site={} end_site={}",
+            id,
+            lifetime.original,
+            lifetime.color,
+            pinned_original[lifetime.original],
+            lifetime.start,
+            lifetime.end,
+            lifetime.last_non_r,
+            lifetime.original_r,
+            ops[lifetime.start].kind,
+            ops[lifetime.end.min(ops.len() - 1)].kind,
+            interval_allocator_op_site(&sites, lifetime.start),
+            interval_allocator_op_site(&sites, lifetime.end.min(ops.len() - 1)),
+        );
+    }
+
+    active_ids.sort_by_key(|&id| {
+        (
+            lifetimes[id].end,
+            Reverse(lifetimes[id].start),
+            lifetimes[id].original,
+            id,
+        )
+    });
+    eprintln!("TLM_INTERVAL_CRITICAL soonest_ends limit={limit}");
+    for &id in active_ids.iter().take(limit) {
+        let lifetime = &lifetimes[id];
+        eprintln!(
+            "  id={} original={} color={} pinned={} start={} end={} last_non_r={:?} r={:?} start_kind={:?} end_kind={:?} start_site={} end_site={}",
+            id,
+            lifetime.original,
+            lifetime.color,
+            pinned_original[lifetime.original],
+            lifetime.start,
+            lifetime.end,
+            lifetime.last_non_r,
+            lifetime.original_r,
+            ops[lifetime.start].kind,
+            ops[lifetime.end.min(ops.len() - 1)].kind,
+            interval_allocator_op_site(&sites, lifetime.start),
+            interval_allocator_op_site(&sites, lifetime.end.min(ops.len() - 1)),
+        );
+    }
+}
+
+fn interval_allocator_reschedule_ops(ops: Vec<Op>) -> Vec<Op> {
+    if std::env::var("TLM_INTERVAL_ALLOCATOR_REMAP")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return ops;
+    }
+
+    let contexts = interval_allocator_contexts(&ops);
+    let max_original = max_qubit_slots(&ops);
+    let mut pinned_original = vec![false; max_original];
+    for op in &ops {
+        if op.kind == OperationType::AppendToRegister && op.q_target.0 != u64::MAX {
+            pinned_original[op.q_target.0 as usize] = true;
+        }
+    }
+    if std::env::var("TLM_INTERVAL_ALLOCATOR_SHARE_COLORS")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        pinned_original.fill(true);
+    }
+    if std::env::var("TLM_INTERVAL_ALLOCATOR_PIN_ALL")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        pinned_original.fill(true);
+    }
+    let mut current: Vec<Option<usize>> = vec![None; max_original];
+    let mut lifetimes: Vec<QubitLifetime> = Vec::new();
+    let mut close_original_r = vec![false; ops.len()];
+    let move_resets = std::env::var("TLM_INTERVAL_ALLOCATOR_MOVE_R")
+        .ok()
+        .as_deref()
+        == Some("1");
+
+    for (idx, op) in ops.iter().enumerate() {
+        for original in qubit_field_ids(op).into_iter().flatten() {
+            if current[original].is_none() {
+                let id = lifetimes.len();
+                lifetimes.push(QubitLifetime {
+                    original,
+                    start: idx,
+                    last_non_r: None,
+                    end: ops.len(),
+                    original_r: None,
+                    move_r_after: None,
+                    color: 0,
+                });
+                current[original] = Some(id);
+            }
+            let id = current[original].unwrap();
+            if op.kind == OperationType::R
+                && op.q_target.0 as usize == original
+                && contexts[idx].0 == 0
+            {
+                lifetimes[id].original_r = Some(idx);
+                if let Some(last) = lifetimes[id].last_non_r {
+                    let can_move = move_resets
+                        && last + 1 < idx
+                        && contexts[last + 1] == contexts[idx];
+                    if can_move {
+                        lifetimes[id].move_r_after = Some(last);
+                        lifetimes[id].end = last;
+                    } else {
+                        lifetimes[id].end = idx;
+                    }
+                } else {
+                    lifetimes[id].end = idx;
+                }
+                close_original_r[idx] = true;
+                current[original] = None;
+            } else if op.kind != OperationType::R {
+                lifetimes[id].last_non_r = Some(idx);
+            }
+        }
+    }
+
+    let mut order: Vec<usize> = (0..lifetimes.len()).collect();
+    order.sort_by_key(|&id| {
+        (
+            lifetimes[id].start,
+            lifetimes[id].end,
+            lifetimes[id].original,
+            id,
+        )
+    });
+    let mut active: BinaryHeap<Reverse<(usize, u64)>> = BinaryHeap::new();
+    let mut available: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
+    let mut next_color = 0u64;
+    let mut max_assigned_color = 0u64;
+    for id in order {
+        if pinned_original[lifetimes[id].original] {
+            let color = lifetimes[id].original as u64;
+            lifetimes[id].color = color;
+            max_assigned_color = max_assigned_color.max(color);
+            continue;
+        }
+        let start = lifetimes[id].start;
+        while let Some(Reverse((end, color))) = active.peek().copied() {
+            if end < start {
+                active.pop();
+                available.push(Reverse(color));
+            } else {
+                break;
+            }
+        }
+        let color = if let Some(Reverse(color)) = available.pop() {
+            color
+        } else {
+            while (next_color as usize) < pinned_original.len()
+                && pinned_original[next_color as usize]
+            {
+                next_color += 1;
+            }
+            let color = next_color;
+            next_color += 1;
+            color
+        };
+        lifetimes[id].color = color;
+        max_assigned_color = max_assigned_color.max(color);
+        active.push(Reverse((lifetimes[id].end, color)));
+    }
+
+    let mut by_original: Vec<Vec<usize>> = vec![Vec::new(); max_original];
+    let mut moved_after: Vec<Vec<usize>> = vec![Vec::new(); ops.len()];
+    let mut skip_original_r = vec![false; ops.len()];
+    for (id, lifetime) in lifetimes.iter().enumerate() {
+        by_original[lifetime.original].push(id);
+        if let Some(after) = lifetime.move_r_after {
+            moved_after[after].push(id);
+            if let Some(r) = lifetime.original_r {
+                skip_original_r[r] = true;
+            }
+        }
+    }
+    for queue in &mut by_original {
+        queue.sort_by_key(|&id| lifetimes[id].start);
+    }
+
+    let old_qubits = analyze_ops(ops.iter()).0;
+    let mut new_ops = Vec::with_capacity(ops.len());
+    let mut remap_current: Vec<Option<usize>> = vec![None; max_original];
+    let mut remap_cursor: Vec<usize> = vec![0; max_original];
+    for (idx, original_op) in ops.iter().enumerate() {
+        if !skip_original_r[idx] {
+            let original_r =
+                if original_op.kind == OperationType::R && original_op.q_target.0 != u64::MAX {
+                    Some(original_op.q_target.0 as usize)
+                } else {
+                    None
+                };
+            let mut op = *original_op;
+            remap_qubit_field(
+                &mut op.q_control2,
+                &mut remap_current,
+                &by_original,
+                &mut remap_cursor,
+                &lifetimes,
+            );
+            remap_qubit_field(
+                &mut op.q_control1,
+                &mut remap_current,
+                &by_original,
+                &mut remap_cursor,
+                &lifetimes,
+            );
+            remap_qubit_field(
+                &mut op.q_target,
+                &mut remap_current,
+                &by_original,
+                &mut remap_cursor,
+                &lifetimes,
+            );
+            new_ops.push(op);
+            if let Some(original) = original_r.filter(|_| close_original_r[idx]) {
+                remap_current[original] = None;
+            }
+        }
+
+        for &id in &moved_after[idx] {
+            let mut op = Op::empty();
+            op.kind = OperationType::R;
+            op.q_target = QubitId(lifetimes[id].color);
+            new_ops.push(op);
+            remap_current[lifetimes[id].original] = None;
+        }
+    }
+
+    if std::env::var("TLM_INTERVAL_ALLOCATOR_VALIDATE").is_ok() {
+        for op in &new_ops {
+            op.validate();
+        }
+    }
+
+    let new_qubits = analyze_ops(new_ops.iter()).0;
+    if std::env::var("TRACE_TLM_INTERVAL_ALLOCATOR").is_ok() {
+        let moved = lifetimes
+            .iter()
+            .filter(|lifetime| lifetime.move_r_after.is_some())
+            .count();
+        eprintln!(
+            "TLM_INTERVAL_ALLOCATOR old_qubits={} new_qubits={} colors={} lifetimes={} pinned={} moved_resets={} ops={}->{}",
+            old_qubits,
+            new_qubits,
+            max_assigned_color + 1,
+            lifetimes.len(),
+            pinned_original.iter().filter(|&&pinned| pinned).count(),
+            moved,
+            ops.len(),
+            new_ops.len()
+        );
+    }
+    trace_interval_allocator_critical(&ops, &lifetimes, &pinned_original, max_assigned_color + 1);
+
+    new_ops
+}
+
 pub fn build() -> Vec<Op> {
     configure_q1153_second512_submission_defaults();
 
@@ -2243,7 +2696,7 @@ pub fn build() -> Vec<Op> {
         .as_deref()
         == Some("1")
     {
-        return ops;
+        return interval_allocator_reschedule_ops(ops);
     }
     let input_ops = ops.len();
     let mut fanout_passes = 0usize;
@@ -2272,7 +2725,7 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
-    ops
+    interval_allocator_reschedule_ops(ops)
 }
 
 pub fn square_window_selftest() -> Result<(), String> {

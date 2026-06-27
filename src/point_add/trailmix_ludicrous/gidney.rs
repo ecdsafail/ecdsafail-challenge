@@ -815,6 +815,64 @@ fn gidney_skip_fullvent_top2_enabled() -> bool {
     std::env::var_os("TLM_GIDNEY_SKIP_FULLVENT_TOP2").is_some()
 }
 
+fn env_index_list_contains(name: &str, index: usize) -> bool {
+    std::env::var(name)
+        .ok()
+        .is_some_and(|value| env_index_list_contains_value(&value, index))
+}
+
+fn gidney_top2_thread_target(call_index: usize, bit: usize) -> bool {
+    if !gidney_skip_top2_thread_enabled() {
+        return false;
+    }
+    if std::env::var("TLM_GIDNEY_SKIP_TOP2_THREAD_CALLS").is_ok()
+        && !env_index_list_contains("TLM_GIDNEY_SKIP_TOP2_THREAD_CALLS", call_index)
+    {
+        return false;
+    }
+    if std::env::var("TLM_GIDNEY_SKIP_TOP2_THREAD_BITS").is_ok()
+        && !env_index_list_contains("TLM_GIDNEY_SKIP_TOP2_THREAD_BITS", bit)
+    {
+        return false;
+    }
+    true
+}
+
+fn gidney_top2_fullvent_target(call_index: usize, bit: usize) -> bool {
+    if !gidney_skip_fullvent_top2_enabled() {
+        return false;
+    }
+    if std::env::var("TLM_GIDNEY_SKIP_FULLVENT_TOP2_CALLS").is_ok()
+        && !env_index_list_contains("TLM_GIDNEY_SKIP_FULLVENT_TOP2_CALLS", call_index)
+    {
+        return false;
+    }
+    if std::env::var("TLM_GIDNEY_SKIP_FULLVENT_TOP2_BITS").is_ok()
+        && !env_index_list_contains("TLM_GIDNEY_SKIP_FULLVENT_TOP2_BITS", bit)
+    {
+        return false;
+    }
+    true
+}
+
+fn env_index_list_contains_value(spec: &str, index: usize) -> bool {
+    spec.split(',').any(|item| {
+        let item = item.trim();
+        if item.eq_ignore_ascii_case("all") {
+            return true;
+        }
+        if let Some((lo, hi)) = item.split_once('-') {
+            return lo
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .zip(hi.trim().parse::<usize>().ok())
+                .is_some_and(|(lo, hi)| lo <= index && index <= hi);
+        }
+        item.parse::<usize>().ok() == Some(index)
+    })
+}
+
 fn gidney_skip_exact_remainder_enabled() -> bool {
     std::env::var_os("TLM_GIDNEY_SKIP_EXACT_REMAINDER").is_some()
 }
@@ -841,6 +899,15 @@ fn gidney_skip_exact_erase_capped_ccz_enabled() -> bool {
 
 fn gidney_skip_small_residual_enabled() -> bool {
     std::env::var_os("TLM_GIDNEY_SKIP_SMALL_RESIDUAL_DEAD").is_some()
+}
+
+fn env_call_list_contains(name: &str, call_index: usize) -> bool {
+    std::env::var(name).ok().is_some_and(|value| {
+        value
+            .split(',')
+            .filter_map(|item| item.trim().parse::<usize>().ok())
+            .any(|call| call == call_index)
+    })
 }
 
 fn gidney_key(call_index: usize, bit: usize) -> u32 {
@@ -893,6 +960,9 @@ const GIDNEY_ERASE_CAPPED_CCZ_REMAINDER_CALLS: &[usize] = &[
 ];
 
 fn gidney_erase_ccz_has_exact_dead_call(call_index: usize) -> bool {
+    if env_call_list_contains("TLM_GIDNEY_EXTRA_ERASE_CCZ_RESIDUAL_CALLS", call_index) {
+        return true;
+    }
     if gidney_skip_small_residual_enabled()
         && GIDNEY_ERASE_CCZ_RESIDUAL_CALLS
             .binary_search(&call_index)
@@ -907,6 +977,12 @@ fn gidney_erase_ccz_has_exact_dead_call(call_index: usize) -> bool {
 }
 
 fn gidney_erase_capped_ccz_has_exact_dead_call(call_index: usize) -> bool {
+    if env_call_list_contains(
+        "TLM_GIDNEY_EXTRA_ERASE_CAPPED_CCZ_RESIDUAL_CALLS",
+        call_index,
+    ) {
+        return true;
+    }
     if gidney_skip_small_residual_enabled()
         && GIDNEY_ERASE_CAPPED_CCZ_RESIDUAL_CALLS
             .binary_search(&call_index)
@@ -918,6 +994,100 @@ fn gidney_erase_capped_ccz_has_exact_dead_call(call_index: usize) -> bool {
         && GIDNEY_ERASE_CAPPED_CCZ_REMAINDER_CALLS
             .binary_search(&call_index)
             .is_ok()
+}
+
+fn emit_extra_capped_ccz_replacement(
+    c: &mut B,
+    call_index: usize,
+    ctrl: QubitId,
+    ta: QubitId,
+    tb: QubitId,
+) -> bool {
+    if !env_call_list_contains(
+        "TLM_GIDNEY_EXTRA_ERASE_CAPPED_CCZ_RESIDUAL_CALLS",
+        call_index,
+    ) {
+        return false;
+    }
+
+    let replacement = env_capped_ccz_replacement(call_index);
+    match replacement.as_deref() {
+        Some("cz_ctrl_ta") => c.cz(ctrl, ta),
+        Some("cz_ctrl_tb") => c.cz(ctrl, tb),
+        Some("cz_ta_tb") => c.cz(ta, tb),
+        Some("z_ctrl") => c.z(ctrl),
+        Some("z_ta") => c.z(ta),
+        Some("z_tb") => c.z(tb),
+        _ => return false,
+    }
+    true
+}
+
+fn env_capped_ccz_replacement(call_index: usize) -> Option<String> {
+    if let Ok(map) = std::env::var("TLM_GIDNEY_EXTRA_ERASE_CAPPED_CCZ_REPLACEMENT_MAP") {
+        for item in map.split(',') {
+            let Some((call, replacement)) = item.split_once(':') else {
+                continue;
+            };
+            let Ok(call) = call.trim().parse::<usize>() else {
+                continue;
+            };
+            if call != call_index {
+                continue;
+            }
+            let replacement = replacement.trim();
+            return match replacement {
+                "" | "erase" | "none" | "drop" => None,
+                _ => Some(replacement.to_owned()),
+            };
+        }
+    }
+
+    std::env::var("TLM_GIDNEY_EXTRA_ERASE_CAPPED_CCZ_REPLACEMENT").ok()
+}
+
+fn emit_extra_boundary_replacement(
+    c: &mut B,
+    call_index: usize,
+    ctrl: QubitId,
+    carry: QubitId,
+    cout: QubitId,
+) -> bool {
+    if !env_call_list_contains("TLM_GIDNEY_EXTRA_BOUNDARY_RESIDUAL_CALLS", call_index) {
+        return false;
+    }
+
+    let replacement = env_boundary_replacement(call_index);
+    match replacement.as_deref() {
+        Some("cx_ctrl_cout") => c.cx(ctrl, cout),
+        Some("cx_carry_cout") => c.cx(carry, cout),
+        Some("x_cout") => c.x(cout),
+        _ => return false,
+    }
+    true
+}
+
+fn env_boundary_replacement(call_index: usize) -> Option<String> {
+    if let Ok(map) = std::env::var("TLM_GIDNEY_EXTRA_BOUNDARY_REPLACEMENT_MAP") {
+        for item in map.split(',') {
+            let Some((call, replacement)) = item.split_once(':') else {
+                continue;
+            };
+            let Ok(call) = call.trim().parse::<usize>() else {
+                continue;
+            };
+            if call != call_index {
+                continue;
+            }
+            let replacement = replacement.trim();
+            return match replacement {
+                "" | "erase" | "none" | "drop" => None,
+                _ => Some(replacement.to_owned()),
+            };
+        }
+    }
+
+    std::env::var("TLM_GIDNEY_EXTRA_BOUNDARY_REPLACEMENT").ok()
 }
 
 fn threaded_add_call_has_structurally_dead_forward(
@@ -934,10 +1104,14 @@ fn threaded_add_call_has_structurally_dead_forward(
     {
         return true;
     }
-    if gidney_skip_fullvent_top2_enabled() && vents >= width && bit + 2 >= width {
+    if gidney_skip_fullvent_top2_enabled()
+        && vents >= width
+        && bit + 2 >= width
+        && gidney_top2_fullvent_target(call_index, bit)
+    {
         return true;
     }
-    if gidney_skip_top2_thread_enabled() && bit + 2 >= total {
+    if bit + 2 >= total && gidney_top2_thread_target(call_index, bit) {
         return true;
     }
     gidney_structural_dead_enabled()
@@ -947,6 +1121,9 @@ fn threaded_add_call_has_structurally_dead_forward(
 }
 
 fn threaded_add_call_has_structurally_dead_boundary(call_index: usize) -> bool {
+    if env_call_list_contains("TLM_GIDNEY_EXTRA_BOUNDARY_RESIDUAL_CALLS", call_index) {
+        return true;
+    }
     if gidney_skip_small_residual_enabled()
         && GIDNEY_THREAD_BOUNDARY_RESIDUAL_CALLS
             .binary_search(&call_index)
@@ -971,10 +1148,14 @@ fn threaded_add_call_has_structurally_dead_sum(
     {
         return true;
     }
-    if gidney_skip_fullvent_top2_enabled() && vents >= width && bit + 2 >= width {
+    if gidney_skip_fullvent_top2_enabled()
+        && vents >= width
+        && bit + 2 >= width
+        && gidney_top2_fullvent_target(call_index, bit)
+    {
         return true;
     }
-    if gidney_skip_top2_thread_enabled() && bit + 2 >= total {
+    if bit + 2 >= total && gidney_top2_thread_target(call_index, bit) {
         return true;
     }
     gidney_structural_dead_enabled()
@@ -1251,6 +1432,8 @@ fn controlled_clean_add_threaded(
         );
         if !threaded_add_call_has_structurally_dead_boundary(call_index) {
             circ.ccx(*ctrl, *inner[s - 1].as_ref().unwrap(), *cout);
+        } else {
+            emit_extra_boundary_replacement(circ, call_index, *ctrl, *inner[s - 1].as_ref().unwrap(), *cout);
         }
         crate::point_add::restore_op_trace_context(old_context);
     }
@@ -1414,6 +1597,8 @@ fn controlled_erase_carry_gated_capped(
         );
         if !gidney_erase_capped_ccz_has_exact_dead_call(call_index) {
             c.ccz(ctrl, *ta, *tb);
+        } else {
+            emit_extra_capped_ccz_replacement(c, call_index, ctrl, *ta, *tb);
         }
         crate::point_add::restore_op_trace_context(old_context);
         c.cz(ctrl, *c_prev);

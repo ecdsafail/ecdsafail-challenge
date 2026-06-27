@@ -211,6 +211,37 @@ fn apply_fwd_cswap_skip(i: usize) -> bool {
     legacy_first_skip || (last_n != 0 && i + last_n >= ITERS)
 }
 
+fn index_spec_contains(spec: &str, index: usize) -> bool {
+    spec.split(',').any(|item| {
+        let item = item.trim();
+        if item.eq_ignore_ascii_case("all") {
+            return true;
+        }
+        if let Some((lo, hi)) = item.split_once('-') {
+            return lo
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .zip(hi.trim().parse::<usize>().ok())
+                .is_some_and(|(lo, hi)| lo <= index && index <= hi);
+        }
+        item.parse::<usize>().ok() == Some(index)
+    })
+}
+
+fn apply_fwd_cswap_partial_skip(i: usize, bit: usize) -> bool {
+    let last_n = std::env::var("TLM_APPLY_FWD_CSWAP_PARTIAL_SKIP_LAST")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    if last_n == 0 || i + last_n < ITERS {
+        return false;
+    }
+    std::env::var("TLM_APPLY_FWD_CSWAP_PARTIAL_SKIP_BITS")
+        .ok()
+        .is_some_and(|spec| index_spec_contains(&spec, bit))
+}
+
 fn apply_inv_cswap_skip(i: usize) -> bool {
     let last_n = std::env::var("TLM_APPLY_INV_CSWAP_SKIP_LAST")
         .ok()
@@ -674,8 +705,21 @@ fn gcd_shift_has_structurally_dead_gate(tag: u8, call_index: usize, bit: usize) 
         })
 }
 
-fn skip_top_zero_controlled_shift_edge() -> bool {
-    std::env::var_os("TLM_GCD_SKIP_TOP_ZERO_SHIFT_EDGE").is_some()
+fn skip_top_zero_controlled_shift_edge(call_index: usize, bit: usize) -> bool {
+    if !std::env::var_os("TLM_GCD_SKIP_TOP_ZERO_SHIFT_EDGE").is_some() {
+        return false;
+    }
+    if let Ok(spec) = std::env::var("TLM_GCD_SKIP_TOP_ZERO_SHIFT_EDGE_CALLS") {
+        if !index_spec_contains(&spec, call_index) {
+            return false;
+        }
+    }
+    if let Ok(spec) = std::env::var("TLM_GCD_SKIP_TOP_ZERO_SHIFT_EDGE_BITS") {
+        if !index_spec_contains(&spec, bit) {
+            return false;
+        }
+    }
+    true
 }
 
 // =====================================================================
@@ -689,7 +733,7 @@ fn controlled_right_shift(circ: &mut B, ctrl: &QubitId, v: &[QubitId]) {
         let old_context = crate::point_add::set_op_trace_context(
             0x0b00_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
         );
-        let top_zero_edge = skip_top_zero_controlled_shift_edge() && i + 2 == v.len();
+        let top_zero_edge = i + 2 == v.len() && skip_top_zero_controlled_shift_edge(call_index, i);
         if !top_zero_edge && !gcd_shift_has_structurally_dead_gate(11, call_index, i) {
             circ.cswap(*ctrl, v[i], v[i + 1]);
         }
@@ -704,7 +748,8 @@ fn controlled_left_shift(circ: &mut B, ctrl: &QubitId, v: &[QubitId]) {
         let old_context = crate::point_add::set_op_trace_context(
             0x0c00_0000 | (((call_index as u32) & 0xffff) << 8) | ((i - 1) as u32 & 0xff),
         );
-        let top_zero_edge = skip_top_zero_controlled_shift_edge() && i + 1 == v.len();
+        let bit = i - 1;
+        let top_zero_edge = i + 1 == v.len() && skip_top_zero_controlled_shift_edge(call_index, bit);
         if !top_zero_edge && !gcd_shift_has_structurally_dead_gate(12, call_index, i - 1) {
             circ.cswap(*ctrl, v[i], v[i - 1]);
         }
@@ -1457,7 +1502,9 @@ fn apply_step_forward(
     circ.set_phase("tlm_apply_forward_swap");
     if !apply_fwd_cswap_skip(i) {
         for j in 0..n {
-            circ.cswap(*swp, x_reg[j], y_reg[j]);
+            if !apply_fwd_cswap_partial_skip(i, j) {
+                circ.cswap(*swp, x_reg[j], y_reg[j]);
+            }
         }
     }
     // 3) y := 2*(1+s2)*y mod q. i==0: two separate controlled doublings (shift1 is

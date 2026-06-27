@@ -109,10 +109,21 @@ fn env_index_list_contains(name: &str, index: usize) -> bool {
     std::env::var(name)
         .ok()
         .map(|value| {
-            value
-                .split(',')
-                .filter_map(|item| item.trim().parse::<usize>().ok())
-                .any(|candidate| candidate == index)
+            value.split(',').any(|item| {
+                let item = item.trim();
+                if item.eq_ignore_ascii_case("all") {
+                    return true;
+                }
+                if let Some((lo, hi)) = item.split_once('-') {
+                    return lo
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                        .zip(hi.trim().parse::<usize>().ok())
+                        .is_some_and(|(lo, hi)| lo <= index && index <= hi);
+                }
+                item.parse::<usize>().ok() == Some(index)
+            })
         })
         .unwrap_or(false)
 }
@@ -1741,7 +1752,9 @@ pub fn mod_sub(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     // Off-peak square-reduce register add: value-identical via either the 1-anc
     // Cuccaro ripple (2n CCX) or the headroom-bounded measurement-vented add
     // ((n-1)+(n-1-vents) CCX, peak-neutral). TLM_SQUARE_NO_VENT_REDUCE=1 forces Cuccaro.
-    if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
+    if std::env::var("TLM_SQUARE_CHUNKED_COUT").ok().as_deref() == Some("1") {
+        add_cout_chunked_unctrl_bounded(circ, x, y, &anc);
+    } else if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
         cuccaro_carry(circ, None, x, y, None, Some(&anc));
     } else {
         // Support-bounded vent: takes the cuccaro call-index (keeps downstream
@@ -1884,6 +1897,44 @@ fn add_cout_vented_skip_dead(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &
     circ.zero_and_free(zpad);
 }
 
+fn add_cout_chunked_unctrl_bounded(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId) {
+    let n = y.len();
+    assert_eq!(x.len(), n, "add_cout_chunked_unctrl_bounded: x,y width mismatch");
+    if n == 0 {
+        return;
+    }
+    let chunk = std::env::var("TLM_SQUARE_CHUNKED_COUT_CHUNK")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(APPLY_CHUNK)
+        .clamp(1, n);
+    let live = circ.active_qubits as usize;
+    let margin = std::env::var("TLM_SQUARE_VENT_MARGIN")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(SQUARE_VENT_MARGIN);
+    let k = square_peak_hard_cap()
+        .saturating_sub(live)
+        .saturating_sub(margin)
+        .clamp(1, n);
+    let plain_len = if k >= n {
+        n
+    } else if chunk <= 1 {
+        0
+    } else {
+        ((k * chunk).saturating_sub(n) / (chunk - 1)).min(n)
+    };
+    let chunked_len = n - plain_len;
+    let mut bounds = Vec::new();
+    let mut lo = 0;
+    while lo < chunked_len {
+        let hi = (lo + chunk).min(chunked_len);
+        bounds.push((lo, hi));
+        lo = hi;
+    }
+    emit_chunked_capped(circ, None, x, y, &bounds, plain_len, Some(cout), None);
+}
+
 fn add_cout_vented_unctrl_bounded(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId) {
     let n = y.len();
     assert_eq!(x.len(), n, "add_cout_vented_unctrl_bounded: x,y width mismatch");
@@ -1971,7 +2022,9 @@ pub fn mod_add_lowpeak(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     let f_bytes = F_SECP256K1.to_le_bytes();
     let anc = circ.alloc_qubit();
     // Off-peak square-reduce register add: headroom-bounded vent (see `mod_sub`).
-    if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
+    if std::env::var("TLM_SQUARE_CHUNKED_COUT").ok().as_deref() == Some("1") {
+        add_cout_chunked_unctrl_bounded(circ, x, y, &anc);
+    } else if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
         cuccaro_carry(circ, None, x, y, None, Some(&anc));
     } else {
         let ci = next_cuccaro_call_index();
@@ -1997,7 +2050,9 @@ pub fn mod_add_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: us
     let anc = circ.alloc_qubit();
     // Off-peak shifted-square reduce add: support-bounded vent (skip the same dead
     // carries the guard would, vent the live ones). TLM_SQUARE_VENT_SHIFTED=1.
-    if std::env::var("TLM_SQUARE_VENT_SHIFTED").ok().as_deref() == Some("1") {
+    if std::env::var("TLM_SQUARE_CHUNKED_COUT").ok().as_deref() == Some("1") {
+        add_cout_chunked_unctrl_bounded(circ, x, &y[shift..], &anc);
+    } else if std::env::var("TLM_SQUARE_VENT_SHIFTED").ok().as_deref() == Some("1") {
         let ci = next_cuccaro_call_index();
         add_cout_vented_skip_dead(circ, x, &y[shift..], &anc, ci);
     } else {
@@ -2052,7 +2107,9 @@ pub fn mod_sub_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: us
     for q in &y[shift..] {
         circ.x(*q);
     }
-    if std::env::var("TLM_SQUARE_VENT_SHIFTED").ok().as_deref() == Some("1") {
+    if std::env::var("TLM_SQUARE_CHUNKED_COUT").ok().as_deref() == Some("1") {
+        add_cout_chunked_unctrl_bounded(circ, x, &y[shift..], &anc);
+    } else if std::env::var("TLM_SQUARE_VENT_SHIFTED").ok().as_deref() == Some("1") {
         let ci = next_cuccaro_call_index();
         add_cout_vented_skip_dead(circ, x, &y[shift..], &anc, ci);
     } else {
