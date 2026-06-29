@@ -80,6 +80,7 @@ mod rounds;
 pub(crate) use rounds::*;
 
 pub mod trailmix_ludicrous;
+pub mod deferred_lehmer;
 mod single_ccx_fanout;
 
 thread_local! {
@@ -2237,7 +2238,12 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_FFG_INVERSE_TOP29_MAX_CALL", "180");
     set_default_env("TLM_FUSED_CLEAN_FOLD_SKIP_TOP31", "1");
     set_default_env("TLM_GIDNEY_SKIP_SMALL_RESIDUAL_DEAD", "1");
-    let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
+    let use_deferred = std::env::var("DEFERRED_LEHMER").ok().as_deref() == Some("1");
+    let mut ops = if use_deferred {
+        deferred_lehmer::build_deferred_lehmer_ops()
+    } else {
+        trailmix_ludicrous::build_trailmix_ludicrous_ops()
+    };
     if std::env::var("SINGLE_CCX_FANOUT_DISABLE")
         .ok()
         .as_deref()
