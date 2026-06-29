@@ -32,7 +32,6 @@
 //! transform is then restricted to the intersection.
 
 use crate::circuit::{BitId, NO_BIT, NO_QUBIT, Op, OperationType, QubitId};
-use crate::point_add::OpSite;
 
 /// Sentinel "never touched" timestamp for the inverse-pair last-touch arrays.
 /// Treated as strictly before every op index (i.e. touched before all ops).
@@ -591,29 +590,6 @@ fn apply_decisions(ops: &[Op], decisions: &[Decision]) -> Vec<Op> {
     out
 }
 
-fn apply_site_decisions(sites: &[OpSite], decisions: &[Decision]) -> Vec<OpSite> {
-    let mut out = Vec::with_capacity(sites.len());
-    for (i, site) in sites.iter().copied().enumerate() {
-        match decisions[i] {
-            Decision::Keep
-            | Decision::FoldCx { .. }
-            | Decision::FoldX { .. }
-            | Decision::FoldEqualCtrls { .. } => out.push(site),
-            Decision::DropZeroCtrl { .. } | Decision::DropComplementCtrls { .. } => {}
-        }
-    }
-    out
-}
-
-fn filter_sites(sites: &[OpSite], kill: &[bool]) -> Vec<OpSite> {
-    sites
-        .iter()
-        .copied()
-        .enumerate()
-        .filter_map(|(i, site)| (!kill[i]).then_some(site))
-        .collect()
-}
-
 // ── Inverse-pair (self-inverse) CCX cancellation ─────────────────────────────
 //
 // CCX is self-inverse. Two CCX gates G1@i, G2@j (i<j) with the SAME target `t`
@@ -842,7 +818,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
     // later CCX into cancellation adjacency). Iterate until a full sweep makes no
     // transform. Each individual pass is sound on its current input by
     // construction, so the composition is sound.
-    let mut cur_sites = crate::point_add::take_op_site_trace_for_constprop(ops.len());
     let mut cur = ops;
     let mut iter = 0usize;
     let mut tot_dropped = 0usize;
@@ -899,9 +874,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         tot_dropped += stats.dropped;
         tot_folded_cx += stats.folded_cx;
         tot_folded_x += stats.folded_x;
-        if let Some(sites) = cur_sites.as_mut() {
-            *sites = apply_site_decisions(sites, &decisions);
-        }
         cur = apply_decisions(&cur, &decisions);
 
         // ── inverse-pair cancellation pass ──
@@ -942,9 +914,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
                 if !kill[i] {
                     out.push(*op);
                 }
-            }
-            if let Some(sites) = cur_sites.as_mut() {
-                *sites = filter_sites(sites, &kill);
             }
             cur = out;
         }
@@ -995,9 +964,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
                 }
             }
             if aff_drop + aff_fold > 0 {
-                if let Some(sites) = cur_sites.as_mut() {
-                    *sites = apply_site_decisions(sites, &adec);
-                }
                 cur = apply_decisions(&cur, &adec);
             }
             let _ = (fold_eq, drop_comp);
@@ -1038,10 +1004,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         tot_aff_fold,
         tot_dropped + tot_folded_cx + tot_folded_x + 2 * tot_pairs + tot_aff_drop + tot_aff_fold,
     );
-
-    if let Some(sites) = cur_sites {
-        crate::point_add::set_op_site_trace_from_constprop(sites);
-    }
 
     cur
 }
