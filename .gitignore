@@ -3,4 +3,5 @@
 score.*
 .autoresearch
 **/.DS_Store
-ops.bindepth.json
+ops.bin
+depth.json
