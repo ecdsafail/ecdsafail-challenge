@@ -68,8 +68,6 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
 pub mod venting;
 
-pub mod dialog_gcd_classical_filter;
-
 mod emit;
 pub(crate) use emit::*;
 
