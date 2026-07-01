@@ -1135,36 +1135,6 @@ pub(crate) fn iadd_dirty_2clean_qoffset(
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-pub(crate) fn isub_dirty_2clean_qoffset(
-    b: &mut B,
-    q_target: &[QubitId],
-    q_dirty: &[QubitId],
-    q_clean2: &[QubitId; 2],
-    q_offset: &[QubitId],
-) {
-    let n = q_target.len();
-    for k in 0..n {
-        b.x(q_target[k]);
-    }
-    iadd_dirty_2clean_qoffset(b, q_target, q_dirty, q_clean2, q_offset, false);
-    for k in 0..n {
-        b.x(q_target[k]);
-    }
-}
-
 /// Controlled variant of xor_right_shifted_carries_into.
 fn c_xor_right_shifted_carries_into_classical(
     b: &mut B,
