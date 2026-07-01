@@ -129,9 +129,14 @@ circuit (one point addition):
   technique) — 9.55M T @ 7 T/Toffoli (Clifford+T textbook upper bound).
 - **Per-addition physical qubits:** ≈ 2.0M (d=21) to 3.4M (d=27), including a
   2× factory/routing overhead over the 1,152 logical patches.
-- **Runtime:** 13.6 s as a *fully-sequential* reaction-limited upper bound —
-  the harness records **no T-depth**, so true wall-clock (which parallel magic-
-  state factories push toward the circuit depth) is not derivable here.
+- **Runtime:** now **measured**, not just bounded. `depth_report`
+  (`src/bin/depth_report.rs` → `depth.json`) computes the non-Clifford critical
+  path via `circuit::analyze_depth`: **toffoli-depth 1,077,263** (vs 1,364,230
+  Toffoli gates → only **1.27× non-Clifford parallelism** — the circuit is nearly
+  serial in its magic-state layer, as expected for ripple-carry modular
+  arithmetic). Reaction-limited runtime = 10.77 s (vs the 13.6 s sequential
+  upper bound), giving a **spacetime volume ≈ 3.6×10⁷ physical-qubit-seconds**
+  at d=27.
 - **Full ECDLP extrapolation (order-of-magnitude, assumption-driven):**
   ~1,600 point additions ⇒ ~2.2×10⁹ Toffoli. This lands in the same order as
   Gidney–Ekerå's RSA-2048 estimate (~3×10⁹), a useful sanity check.
@@ -141,8 +146,10 @@ circuit (one point addition):
   simultaneous width** — the README's "peak qubits" is inaccurate
   (`circuit.rs:356`). A metric that rewarded true peak width would better track
   physical qubit count.
-- **No depth / T-depth** is tracked, so spacetime volume and wall-clock are only
-  bounded, not measured. Adding a per-gate timestamp pass would close this.
+- ~~No depth / T-depth is tracked~~ **RESOLVED**: `circuit::analyze_depth` +
+  `depth_report` now measure toffoli-depth and gate-depth (critical path over
+  read/write hazards), feeding measured runtime and spacetime volume into the
+  cost model.
 - The full-attack multiplier and register-file width are assumptions pending a
   full-circuit build; only the per-addition figures are measured.
 
@@ -195,10 +202,9 @@ With §1 and §2 in place, the circuit is no longer just a leaderboard number:
 its arithmetic core is **proven correct over the whole field** (not just 9024
 samples) — at two levels, an abstract-bitvector z3 model (§1a–b) and a
 bit-precise Kani proof bound to the real `alloy` U256 type (§1c) — and its score
-is **anchored to a physical cost model** with explicit assumptions (§2). The
-remaining gaps to full scientific rigor are concrete: (i) add depth/T-depth
-tracking so wall-clock and spacetime volume become measured rather than bounded,
-and (ii) build the full ECDLP circuit to replace the extrapolation multiplier
-with a measured count. A stretch goal is symbolic execution of the emitted
-op-stream on computational-basis inputs to prove the *composed* point-add
-end-to-end.
+is **anchored to a physical cost model** with explicit assumptions and now a
+**measured** toffoli-depth → runtime → spacetime volume (§2). The remaining gap
+to full scientific rigor is concrete: build the full ECDLP circuit to replace the
+extrapolation multiplier with a measured count. A stretch goal is symbolic
+execution of the emitted op-stream on computational-basis inputs to prove the
+*composed* point-add end-to-end.

@@ -9,14 +9,16 @@ nothing here can affect the circuit or the score.
 | `verify/solinas_reduction.py` | z3 proof: `mod_add_qq` computes `(acc+a) mod p` for **all** `acc,a ∈ [0,p)`, and its overflow ancilla uncomputes to \|0⟩. |
 | `verify/peephole_identities.py` | z3 proofs of the constprop CCX identities, the ripple-carry adder recurrence, and the borrow-chain comparator (22 lemmas). |
 | `verify/run_kani.sh` | Runs the Kani (bit-precise BMC) harnesses in `src/kani_proofs.rs` that bind to the **real Rust `alloy` U256 type** (not an abstract model). |
-| `cost_model.py` | Maps the real `score.json` metrics to surface-code physical resources under explicit, editable assumptions. |
+| `cost_model.py` | Maps the real `score.json` + `depth.json` metrics to surface-code physical resources (incl. measured runtime + spacetime volume) under explicit, editable assumptions. |
+| `../src/bin/depth_report.rs` | Standalone binary: measures toffoli-depth / gate-depth of `ops.bin` via `circuit::analyze_depth`, writes `depth.json`. Does **not** run the simulator or touch `score.json`. |
 | `scientific-value.md` | Synthesis: what is proven, the cost mapping, and the generalizable vs. curve-specific techniques. |
 
 ## Run everything
 
 ```bash
-bash analysis/run.sh          # z3 proofs + cost model (fast; needs python3 + z3)
-bash analysis/verify/run_kani.sh   # Kani proofs on real Rust types (needs cargo kani)
+cargo run --release --bin depth_report   # measure depth -> depth.json (needs ops.bin)
+bash analysis/run.sh                      # z3 proofs + cost model (needs python3 + z3)
+bash analysis/verify/run_kani.sh          # Kani proofs on real Rust types (needs cargo kani)
 ```
 
 `analysis/run.sh` requires `z3` with Python bindings (`python3 -c "import z3"`).

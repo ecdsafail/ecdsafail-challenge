@@ -36,6 +36,16 @@ TOFFOLI = sj["metrics"]["toffoli"]     # avg CCX+CCZ per shot, rounded
 QUBITS = sj["metrics"]["qubits"]       # logical width = max qubit id + 1
 SCORE_VAL = sj["score"]
 
+# Optional measured depth from `depth_report` (src/bin/depth_report.rs -> depth.json).
+DEPTH = os.path.normpath(os.path.join(HERE, "..", "depth.json"))
+TOFFOLI_DEPTH = None
+GATE_DEPTH = None
+if os.path.exists(DEPTH):
+    with open(DEPTH) as f:
+        dj = json.load(f)
+    TOFFOLI_DEPTH = dj.get("toffoli_depth")
+    GATE_DEPTH = dj.get("gate_depth")
+
 # ----------------------------- ASSUMPTIONS ---------------------------------
 A = {
     "p_phys": 1e-3,          # physical gate/measurement error rate
@@ -68,8 +78,14 @@ section("REAL INPUTS (score.json)")
 print(f"  Toffoli (CCX+CCZ, avg/shot, rounded) : {TOFFOLI:,}")
 print(f"  Logical qubits (max id + 1)          : {QUBITS:,}")
 print(f"  Challenge score (Toffoli x qubits)   : {SCORE_VAL:,}")
-print("  NOTE: this circuit = ONE elliptic-curve point addition; no depth/T-depth")
-print("        is tracked by the harness, so runtimes below are sequential upper bounds.")
+print("  NOTE: this circuit = ONE elliptic-curve point addition.")
+if TOFFOLI_DEPTH is not None:
+    print(f"  Toffoli-depth (measured, depth.json) : {TOFFOLI_DEPTH:,}")
+    print(f"  Gate depth   (measured, depth.json)  : {GATE_DEPTH:,}")
+    print(f"  Toffoli parallelism (gates/depth)    : {TOFFOLI/TOFFOLI_DEPTH:.2f}x")
+else:
+    print("  (no depth.json found; run `cargo run --release --bin depth_report`")
+    print("   after build_circuit to get measured depth. Runtimes are sequential UBs.)")
 
 section("ASSUMPTIONS (edit + re-run)")
 for k, v in A.items():
@@ -90,13 +106,24 @@ for d in A["distances"]:
     phys = int(QUBITS * per_patch * A["factory_routing_overhead"])
     print(f"  {d:>3} | {pl:>10.2e} | {per_patch:>10,} | {phys:>38,}")
 
-section("RUNTIME (reaction-limited, sequential Toffolis = UPPER BOUND)")
-# One Toffoli/CCZ consumes one magic state; reaction-limited => ~t_react per layer.
-# With no depth data, treat all Toffolis as sequential (worst case).
+section("RUNTIME (reaction-limited: one t_react per non-Clifford LAYER)")
+# One Toffoli/CCZ consumes one magic state; with enough factories the wall-clock
+# is set by the non-Clifford critical path (toffoli-depth), not the total count.
 t_seq_s = TOFFOLI * A["t_react_us"] * 1e-6
-print(f"  fully-sequential upper bound : {t_seq_s:,.1f} s  ({t_seq_s/60:.2f} min)")
-print(f"  (true wall-clock needs T-DEPTH, which the harness does not record;")
-print(f"   with parallel magic-state factories this drops toward the circuit depth.)")
+print(f"  sequential upper bound (all Toffolis) : {t_seq_s:,.1f} s   [count x t_react]")
+d_hi = A["distances"][-1]
+phys_hi = int(QUBITS * A["phys_per_patch"](d_hi) * A["factory_routing_overhead"])
+if TOFFOLI_DEPTH is not None:
+    t_meas_s = TOFFOLI_DEPTH * A["t_react_us"] * 1e-6
+    print(f"  MEASURED (toffoli-depth x t_react)    : {t_meas_s:,.2f} s   [depth.json]")
+    # spacetime volume = physical qubits held x wall-clock, in qubit-seconds.
+    vol = phys_hi * t_meas_s
+    print(f"  spacetime volume @ d={d_hi}             : {vol:,.3e} physical-qubit-seconds")
+    print(f"  (= {phys_hi:,} physical qubits x {t_meas_s:.2f} s)")
+else:
+    print("  MEASURED runtime unavailable (no depth.json).")
+print("  NOTE: depth is the reaction-limited critical path; true wall-clock also")
+print("        depends on having enough magic-state factories to feed each layer.")
 
 section("EXTRAPOLATION TO A FULL secp256k1 ECDLP BREAK (order-of-magnitude)")
 mult = A["ecdlp_point_additions"]
@@ -104,12 +131,14 @@ tof_full = TOFFOLI * mult
 print(f"  ASSUMED point additions in the full Shor-ECDLP ladder : ~{mult:,}  (O(n), n=256)")
 print(f"  => full-attack Toffoli count : ~{tof_full:,.0f}  (~{tof_full:.1e})")
 print(f"  => full-attack T-count @4    : ~{tof_full*4:.1e}")
-d = A["distances"][-1]
-phys = int(QUBITS * A["phys_per_patch"](d) * A["factory_routing_overhead"])
-print(f"  physical qubits @ d={d}        : ~{phys:,}  (single-addition width; the full")
+print(f"  physical qubits @ d={d_hi}        : ~{phys_hi:,}  (single-addition width; the full")
 print(f"     algorithm needs a wider register file -> not derivable from this repo)")
-print(f"  reaction-limited runtime UB  : ~{tof_full*A['t_react_us']*1e-6/3600:,.1f} h")
+if TOFFOLI_DEPTH is not None:
+    full_rt_h = TOFFOLI_DEPTH * mult * A["t_react_us"] * 1e-6 / 3600
+    print(f"  reaction-limited runtime     : ~{full_rt_h:,.1f} h  (depth-based, if additions are serial)")
+else:
+    print(f"  reaction-limited runtime UB  : ~{tof_full*A['t_react_us']*1e-6/3600:,.1f} h  (count-based)")
 print("\n  Caveat: the multiplier and full-algorithm width are ASSUMPTIONS pending a")
-print("  full-circuit build; only the per-point-addition Toffoli/qubit figures are")
-print("  measured. See Roetteler et al. 2017 for the exact ladder structure.")
+print("  full-circuit build; only the per-point-addition figures are measured.")
+print("  See Roetteler et al. 2017 for the exact ladder structure.")
 print("=" * 68)
