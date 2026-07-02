@@ -15,6 +15,7 @@ pub(crate) fn sub_nbit_qq_fast(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     b.free(c_in);
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn add_nbit_qq_fast_borrowed_carries(
     b: &mut B,
     a: &[QubitId],
@@ -27,6 +28,7 @@ pub(crate) fn add_nbit_qq_fast_borrowed_carries(
     b.free(c_in);
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn sub_nbit_qq_fast_borrowed_carries(
     b: &mut B,
     a: &[QubitId],

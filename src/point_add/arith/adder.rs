@@ -340,6 +340,7 @@ pub(crate) fn cuccaro_sub_fast(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: 
 
 /// Fast Cuccaro add into an extended accumulator where the source high bit is
 /// known zero: `acc_ext += a + c_in (mod 2^(n+1))`.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn cuccaro_add_fast_low_to_ext(b: &mut B, a: &[QubitId], acc_ext: &[QubitId], c_in: QubitId) {
     let n = a.len();
     assert_eq!(acc_ext.len(), n + 1);
@@ -384,6 +385,7 @@ pub(crate) fn cuccaro_add_fast_low_to_ext(b: &mut B, a: &[QubitId], acc_ext: &[Q
 /// Borrowed-carry form of [`cuccaro_add_fast_low_to_ext`].  The source has no
 /// materialized high-zero pad lane: `acc_ext` is one bit wider than `a`, and
 /// the caller supplies `a.len()` clean, pairwise-disjoint carry lanes.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn cuccaro_add_fast_low_to_ext_borrowed_carries(
     b: &mut B,
     a: &[QubitId],
@@ -597,6 +599,7 @@ pub(crate) fn inv_uma(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
 }
 
 /// Fredkin (controlled swap): swap (a, t) if ctrl. Decomposed as CX/CCX/CX.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn cswap(b: &mut B, ctrl: QubitId, a: QubitId, t: QubitId) {
     if a == t {
         return;

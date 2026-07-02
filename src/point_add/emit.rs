@@ -18,6 +18,7 @@ use super::*;
 //  parent scope reuse those qubit IDs, seeing them at |0⟩ (as zeroed by
 //  the reverse gate sequence).
 // ═══════════════════════════════════════════════════════════════════════════
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn emit_inverse<F: FnOnce(&mut B)>(b: &mut B, f: F) {
     if b.count_only {
         let snap = b.count_snapshot();
@@ -36,6 +37,7 @@ pub(crate) fn emit_inverse<F: FnOnce(&mut B)>(b: &mut B, f: F) {
     emit_inverse_ops_allowing_clean_resets(b, &fwd, "emit_inverse");
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn add_inverse_count_delta(b: &mut B, delta: &[usize; 18]) {
     for kind in [
         OperationType::X,
@@ -50,6 +52,7 @@ pub(crate) fn add_inverse_count_delta(b: &mut B, delta: &[usize; 18]) {
     }
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn emit_inverse_ops_allowing_clean_resets(b: &mut B, fwd: &[Op], context: &'static str) {
     for op in fwd.iter().rev().copied() {
         match op.kind {

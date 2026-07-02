@@ -989,6 +989,7 @@ pub(crate) fn csub_per_position_controls_trunc(
 /// (the two overflow holders `e,d` remain, plus the caller's two `ovf` qubits),
 /// i.e. the fold floor falls by 4 qubits, value/phase-EXACT (identical arithmetic
 /// and identical truncation `last`; only the ancilla lifetime is tightened).
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn fold_freed_tail_enabled() -> bool {
     std::env::var("DIALOG_GCD_FOLD_FREED_TAIL").ok().as_deref() == Some("1")
 }
@@ -1300,6 +1301,7 @@ pub(crate) fn secp_fold_controls(
 /// owns `h,xed,eord,n10` allocation/free — this routine consumes them via `free`
 /// and the caller must NOT free them again (it re-derives `xed,eord,n10` from a
 /// fresh alloc on return is NOT needed: this fn fully owns their lifetime).
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn fold_ripple_freed_tail(
     b: &mut B,
     acc: &[QubitId],

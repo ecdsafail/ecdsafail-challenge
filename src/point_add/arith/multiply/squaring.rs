@@ -1,257 +1,6 @@
-//! Multiplication and squaring: schoolbook + Karatsuba multiply, symmetric
-//! squaring (incl. self-hosted / hosted variants), the controlled add/subtract
-//! used by the schoolbook walk, and the `squaring_sub_from_acc_*` reducers.
+//! Symmetric squaring: schoolbook symmetric square (+ low-peak and
+//! self-hosted variants) and the windowed square-row machinery.
 use super::*;
-
-/// Low-peak variant of `mod_mul_write_into_zero_acc_schoolbook`: uses
-/// `schoolbook_mul_into_addsub_lowq` + `_inverse_lowq` instead of the fast
-/// variants, saving ~n qubits at peak at the cost of ~n extra Toffolis per
-/// row.
-///
-/// NOTE: microbench (n=256) shows this DOES NOT reduce the local peak
-/// (schoolbook_fast 1797 = schoolbook_lowq 1797); the Solinas reduction +
-/// acc lifetimes already dominate, and the lowq carry saving is hidden
-/// underneath. We also observed a deterministic phase-garbage batch when
-/// wiring this in at pair1_mul1 (1/20480 shots, ALT_SEED tag=5, across
-/// two runs), so this helper is currently DEAD CODE kept only as a paper
-/// trail for the negative result. See `autoresearch.ideas.md`.
-#[allow(dead_code)]
-pub(crate) fn mod_mul_write_into_zero_acc_schoolbook_lowq(
-    b: &mut B,
-    acc: &[QubitId],
-    x: &[QubitId],
-    y: &[QubitId],
-    p: U256,
-) {
-    let n = acc.len();
-    debug_assert_eq!(n, 256);
-
-    let tmp_ext = b.alloc_qubits(2 * n);
-    schoolbook_mul_into_addsub_lowq(b, x, y, &tmp_ext);
-
-    let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
-    let hi: Vec<QubitId> = tmp_ext[n..2 * n].to_vec();
-    mod_add_qq_fast_from_zero(b, acc, &lo, p);
-    mod_add_qq_fast(b, acc, &hi, p);
-    for _ in 0..4 {
-        mod_double_inplace_fast(b, &hi, p);
-    }
-    mod_add_qq_fast(b, acc, &hi, p);
-    for _ in 0..2 {
-        mod_double_inplace_fast(b, &hi, p);
-    }
-    mod_sub_qq_fast(b, acc, &hi, p);
-    for _ in 0..4 {
-        mod_double_inplace_fast(b, &hi, p);
-    }
-    mod_add_qq_fast(b, acc, &hi, p);
-    let (spill, flag_inv, ovf) = mod_shift_left_by_k(b, &hi, p, 22);
-    mod_add_qq(b, acc, &hi, p);
-    mod_shift_right_by_k(b, &hi, p, 22, spill, flag_inv, ovf);
-    for _ in 0..10 {
-        mod_halve_inplace_fast(b, &hi, p);
-    }
-
-    schoolbook_mul_into_addsub_lowq_inverse(b, x, y, &tmp_ext);
-    b.free_vec(&tmp_ext);
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Litinski add-subtract (arXiv:2410.00899) primitives
-// ─────────────────────────────────────────────────────────────────────────────────────
-
-/// Low-peak variant of `controlled_add_subtract_fast` using non-fast
-/// Cuccaro (no carry ancillae). Saves ~n qubits of transient peak at the
-/// cost of ~n extra Toffolis per call. Useful when called inside the
-/// Kaliski-body mul sites where peak is tight.
-pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
-    let n = x.len();
-    debug_assert_eq!(acc.len(), n + 1);
-
-    let pad = b.alloc_qubit();
-    let mut x_ext = x.to_vec();
-    x_ext.push(pad);
-
-    let c_in = b.alloc_qubit();
-
-    b.x(ctrl);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.cx(ctrl, c_in);
-
-    cuccaro_add(b, &x_ext, acc, c_in);
-
-    b.cx(ctrl, c_in);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.x(ctrl);
-
-    b.free(c_in);
-    b.free(pad);
-}
-
-/// Inverse of `controlled_add_subtract_lowq`.
-pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
-    let n = x.len();
-    debug_assert_eq!(acc.len(), n + 1);
-
-    let pad = b.alloc_qubit();
-    let mut x_ext = x.to_vec();
-    x_ext.push(pad);
-
-    let c_in = b.alloc_qubit();
-
-    b.x(ctrl);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.cx(ctrl, c_in);
-
-    cuccaro_sub(b, &x_ext, acc, c_in);
-
-    b.cx(ctrl, c_in);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.x(ctrl);
-
-    b.free(c_in);
-    b.free(pad);
-}
-
-/// Low-peak variant of `schoolbook_mul_into_addsub`: uses non-fast Cuccaro
-/// (`cuccaro_add`) inside the `controlled_add_subtract` core and in the
-/// correction adders. Saves roughly `n` transient qubits at peak vs. the
-/// `_fast` variant at the cost of ~n extra Toffolis per row. Top-level
-/// semantics identical to `schoolbook_mul_into_addsub`.
-pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: &[QubitId]) {
-    let n = x.len();
-    debug_assert_eq!(y.len(), n);
-    debug_assert_eq!(tmp_ext.len(), 2 * n);
-
-    let low = b.alloc_qubit();
-    let mut wide: Vec<QubitId> = Vec::with_capacity(2 * n + 1);
-    wide.push(low);
-    wide.extend_from_slice(tmp_ext);
-
-    for k in 0..n {
-        let slice: Vec<QubitId> = wide[k..k + n + 1].to_vec();
-        controlled_add_subtract_lowq(b, x, &slice, y[k]);
-    }
-
-    // +2^n * (y + 1)
-    {
-        let pad = b.alloc_qubit();
-        let mut y_ext = y.to_vec();
-        y_ext.push(pad);
-        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
-        let c_in = b.alloc_qubit();
-        b.x(c_in);
-        cuccaro_add(b, &y_ext, &slice, c_in);
-        b.x(c_in);
-        b.free(c_in);
-        b.free(pad);
-    }
-
-    // -2^{2n}
-    b.x(wide[2 * n]);
-
-    // -x full (2n+1)-bit sub
-    {
-        let mut x_ext: Vec<QubitId> = x.to_vec();
-        while x_ext.len() < 2 * n + 1 {
-            x_ext.push(b.alloc_qubit());
-        }
-        let c_in = b.alloc_qubit();
-        cuccaro_sub(b, &x_ext, &wide, c_in);
-        b.free(c_in);
-        for _ in n..2 * n + 1 {
-            let q = x_ext.pop().unwrap();
-            b.free(q);
-        }
-    }
-
-    // +2^n * x
-    {
-        let pad = b.alloc_qubit();
-        let mut x_ext = x.to_vec();
-        x_ext.push(pad);
-        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
-        let c_in = b.alloc_qubit();
-        cuccaro_add(b, &x_ext, &slice, c_in);
-        b.free(c_in);
-        b.free(pad);
-    }
-
-    b.free(low);
-}
-
-/// Exact gate-level inverse of `schoolbook_mul_into_addsub_lowq`.
-pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
-    b: &mut B,
-    x: &[QubitId],
-    y: &[QubitId],
-    tmp_ext: &[QubitId],
-) {
-    let n = x.len();
-    debug_assert_eq!(y.len(), n);
-    debug_assert_eq!(tmp_ext.len(), 2 * n);
-
-    let low = b.alloc_qubit();
-    let mut wide: Vec<QubitId> = Vec::with_capacity(2 * n + 1);
-    wide.push(low);
-    wide.extend_from_slice(tmp_ext);
-
-    // Reverse correction 4: sub x at bit n.
-    {
-        let pad = b.alloc_qubit();
-        let mut x_ext = x.to_vec();
-        x_ext.push(pad);
-        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
-        let c_in = b.alloc_qubit();
-        cuccaro_sub(b, &x_ext, &slice, c_in);
-        b.free(c_in);
-        b.free(pad);
-    }
-    // Reverse correction 3.
-    {
-        let mut x_ext: Vec<QubitId> = x.to_vec();
-        while x_ext.len() < 2 * n + 1 {
-            x_ext.push(b.alloc_qubit());
-        }
-        let c_in = b.alloc_qubit();
-        cuccaro_add(b, &x_ext, &wide, c_in);
-        b.free(c_in);
-        for _ in n..2 * n + 1 {
-            let q = x_ext.pop().unwrap();
-            b.free(q);
-        }
-    }
-    // Reverse correction 2.
-    b.x(wide[2 * n]);
-    // Reverse correction 1.
-    {
-        let pad = b.alloc_qubit();
-        let mut y_ext = y.to_vec();
-        y_ext.push(pad);
-        let slice: Vec<QubitId> = wide[n..2 * n + 1].to_vec();
-        let c_in = b.alloc_qubit();
-        b.x(c_in);
-        cuccaro_sub(b, &y_ext, &slice, c_in);
-        b.x(c_in);
-        b.free(c_in);
-        b.free(pad);
-    }
-    for k in (0..n).rev() {
-        let slice: Vec<QubitId> = wide[k..k + n + 1].to_vec();
-        controlled_add_subtract_lowq_inverse(b, x, &slice, y[k]);
-    }
-
-    b.free(low);
-}
 
 // ─── 2-level Karatsuba variants (recursive on inner half-mults) ───
 // Costs 2 extra z1_inner registers of ~2*(n/4+1) qubits each (~260 total for n=256).
@@ -263,6 +12,7 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
 ///
 /// Row i layout (width n-i): bit 0 = diagonal x[i] at position 2i, bit 1 = 0
 /// (gap), bit k+2 = cross-product (x[i] AND x[i+1+k]) at position i+(i+1+k)+1.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn schoolbook_square_symmetric(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
     let n = x.len();
     debug_assert_eq!(tmp_ext.len(), 2 * n);
@@ -296,6 +46,7 @@ pub(crate) fn schoolbook_square_symmetric(b: &mut B, x: &[QubitId], tmp_ext: &[Q
     }
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn schoolbook_square_symmetric_lowq(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
     let n = x.len();
     debug_assert_eq!(tmp_ext.len(), 2 * n);
@@ -330,6 +81,7 @@ pub(crate) fn schoolbook_square_symmetric_lowq(b: &mut B, x: &[QubitId], tmp_ext
 /// (returned clean) instead of a fresh allocation. Toffoli-identical to the
 /// fast square, peak-identical to the lowq square — used for the z0 lobe of the
 /// round84 Karatsuba square, where the not-yet-written z2 slice is clean scratch.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn schoolbook_square_symmetric_hosted(
     b: &mut B,
     x: &[QubitId],
@@ -632,7 +384,7 @@ fn square_row_windowed_apply(
     // allocated carry array. The interior carry-out cleanup uses the *slow*
     // (carry-array-free) comparator, so cleanup is peak-flat (+0 beyond seg).
     let row_top = base + width + 1; // first clean tmp_ext cell above the row.
-    let borrow_lane = |b: &mut B, _need: usize| -> Vec<QubitId> {
+    let borrow_lane = |_b: &mut B, _need: usize| -> Vec<QubitId> {
         // Always available: tmp_ext beyond row_top is clean and >= seg_w wide
         // for every window (seg_w <= width and the high tail is wide enough).
         tmp_ext[row_top..row_top + _need].to_vec()
@@ -645,7 +397,6 @@ fn square_row_windowed_apply(
     for (wi, &(lo, hi)) in bounds.iter().enumerate() {
         let last = wi == nwin - 1;
         let seg = build_seg(b, lo, hi);
-        let seg_w = hi - lo;
         // Build a_block = seg ++ 0pad, acc_block = tmp[lo..hi] ++ high, n = seg_w+1.
         let pad = b.alloc_qubit();
         let mut a_block = seg.clone();
@@ -987,16 +738,76 @@ pub(crate) fn schoolbook_square_symmetric_lowq_selfhosted_inverse_with_clean_sup
     }
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 struct Round84FoldStep {
     shift: usize,
     add: bool,
     wrap: QubitId,
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 struct Round84AggregateFold {
     steps: Vec<Round84FoldStep>,
     quotient: Vec<QubitId>,
     correction_wrap: QubitId,
     correction_wrap_owned: bool,
     product: Option<Vec<QubitId>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::Simulator;
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake128,
+    };
+
+    fn get<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
+        let mut v = 0u64;
+        for (i, &q) in qs.iter().enumerate() {
+            v |= ((sim.qubit(q) >> shot) & 1) << i;
+        }
+        v
+    }
+
+    /// `schoolbook_square_symmetric` writes `x²` (2n-bit) into a zero `tmp_ext`,
+    /// leaving `x` unchanged and every internal ancilla back at |0>. Exhaustive
+    /// over all n=4 inputs (x ∈ [0,16)).
+    #[test]
+    fn schoolbook_square_symmetric_computes_x_squared() {
+        const N: usize = 4;
+        let mut b = B::new();
+        let x = b.alloc_qubits(N);
+        let tmp = b.alloc_qubits(2 * N);
+        schoolbook_square_symmetric(&mut b, &x, &tmp);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        let inputs: std::collections::HashSet<u64> =
+            x.iter().chain(tmp.iter()).map(|q| q.0).collect();
+
+        let mut seed = Shake128::default();
+        seed.update(b"sqsym-n4");
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        for shot in 0..(1 << N) {
+            for (i, &q) in x.iter().enumerate() {
+                if (shot >> i) & 1 != 0 {
+                    *sim.qubit_mut(q) |= 1u64 << shot;
+                }
+            }
+        }
+        sim.apply_iter(b.ops.iter());
+        assert_eq!(sim.phase, 0, "phase garbage");
+        for shot in 0..(1 << N) {
+            let xv = shot as u64;
+            assert_eq!(get(&sim, &tmp, shot), xv * xv, "x={xv}: tmp != x^2");
+            assert_eq!(get(&sim, &x, shot), xv, "x={xv} changed");
+        }
+        for q in 0..nq as u64 {
+            if !inputs.contains(&q) {
+                assert_eq!(sim.qubit(QubitId(q)), 0, "ancilla q{q} not clean");
+            }
+        }
+    }
 }
