@@ -1795,7 +1795,7 @@ fn build_fold_at(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], dirty: &
     }
     // prop_from = top set bit of the +f fold addend (33) + 1 = 34.
     const PROP_FROM: usize = 34;
-    if nv >= 1 && nv >= PROP_FROM {
+    if nv >= PROP_FROM {
         add_mf_fold_clean_tail(circ, e, d, y, Some(nv));
         return;
     }
