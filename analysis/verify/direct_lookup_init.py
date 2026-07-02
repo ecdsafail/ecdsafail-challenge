@@ -59,7 +59,11 @@ def run_init_lookup(a, coord_bits, table_points, mode, rng, ctrl=1):
     """Build `acc ^= T[addr]` and run it for every window value on a |0⟩
     accumulator. `ctrl=1` is the direct-lookup init (the first window always
     writes); `ctrl=0` is the negative control (no write). Returns per-window
-    (written_value, ancilla_clean, phase_ok)."""
+    (written_value, ancilla_clean, phase_ok, regs_preserved), where
+    regs_preserved asserts the address (r1), table (r2), and ctrl (r3) registers
+    are left untouched — the same invariant the upstream controlled_lookup.py
+    validator enforces, so a lookup that silently corrupts an input register
+    cannot pass here."""
     d = 2 * coord_bits
     circ = Circuit.parse(build_kmx(a, d, mode))
     scratch = {d + a + 1 + t for t in range(a)}
@@ -81,7 +85,12 @@ def run_init_lookup(a, coord_bits, table_points, mode, rng, ctrl=1):
         simulate(circ, st, rng)
         out = circ.read_register(st, 0)
         anc_clean = all(st.qubits.get(s, 0) == 0 for s in scratch)
-        results.append((out, anc_clean, st.phase == 1))
+        regs_preserved = (
+            circ.read_register(st, 1) == addr
+            and circ.read_register(st, 2) == tval
+            and circ.read_register(st, 3) == ctrl
+        )
+        results.append((out, anc_clean, st.phase == 1, regs_preserved))
     return results
 
 
@@ -97,22 +106,29 @@ def check_curve(label, c, gen, order, a, coord_bits, rng):
 
     for mode in ("reversible", "mbuc"):
         res = run_init_lookup(a, coord_bits, table, mode, rng)
-        for w, (out, anc, ph) in enumerate(res):
+        for w, (out, anc, ph, regs) in enumerate(res):
             if out != expect[w]:
                 return False, f"{label}/{mode} w={w}: wrote {out}, expected {expect[w]}"
             if not anc:
                 return False, f"{label}/{mode} w={w}: selector ancilla not cleared"
             if not ph:
                 return False, f"{label}/{mode} w={w}: phase -1"
+            if not regs:
+                return False, f"{label}/{mode} w={w}: address/table/ctrl register corrupted"
             # The load-bearing property: register == ∞ sentinel iff w == 0.
             if (out == 0) != (w == 0):
                 return False, f"{label}/{mode} w={w}: ∞-sentinel/window mismatch"
         # Negative control: with no write (ctrl=0) the accumulator stays ∞ (all
         # zero) for every window — so it is the lookup WRITE, not an artifact,
-        # that turns the ∞ start into a real point.
+        # that turns the ∞ start into a real point. The ancilla, phase, and input
+        # registers must be preserved on this no-op path too.
         neg = run_init_lookup(a, coord_bits, table, mode, rng, ctrl=0)
-        if any(out != 0 for out, _, _ in neg):
-            return False, f"{label}/{mode}: ctrl=0 did not leave the accumulator at ∞"
+        for w, (out, anc, ph, regs) in enumerate(neg):
+            if out != 0:
+                return False, f"{label}/{mode}: ctrl=0 did not leave the accumulator at ∞"
+            if not (anc and ph and regs):
+                return False, (f"{label}/{mode} w={w}: ctrl=0 no-op corrupted "
+                               "ancilla/phase/registers")
     return True, f"{label}: [w]P written for all {1<<a} windows; ∞ iff w=0; ctrl=0 stays ∞"
 
 
@@ -157,7 +173,8 @@ def main():
     table = [cs.mul(w, gs) for w in range(1 << aa)]
     expect = [encode_point(pt, scb) for pt in table]
     res = run_init_lookup(aa, scb, table, "mbuc", rng)
-    good2 = all(res[w][0] == expect[w] and res[w][1] and res[w][2] for w in range(1 << aa)) \
+    good2 = all(res[w][0] == expect[w] and res[w][1] and res[w][2] and res[w][3]
+                for w in range(1 << aa)) \
         and [w for w in range(1 << aa) if res[w][0] == 0] == [0]
     ok &= good2
     print("secp256k1 spot-check (real 256-bit coords, MBUC, 4-entry table)")
