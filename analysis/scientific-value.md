@@ -244,18 +244,24 @@ circuit (one point addition):
   on measured composition laws; only the `3·2^w` QROM lookup and the (Clifford)
   QFT remain derived — refining them needs the quantum-addend build, deferred in
   #4.
-- **The full ladder is now stream-emitted end-to-end (issue #4, ADR 0011).**
-  `src/point_add/ladder_full.rs` (`#[cfg(test)]`) streams the point-add op stream
-  at the *true* ladder length `n_add = 28` (no materialization — the full ladder
-  is ~290 GB) and composes it with the measured QROM lookup (ADR 0010) and the
-  Clifford QFT. Measured composition (static op-stream basis, w=16): **Toffoli
-  ≈ 46.0M** (`28·PA` addition `40.5M` + lookup `5.50M`), **peak qubits 1168**
-  (`= PA_qubits + w`), **toffoli-depth 30.16M** (`= 28·PA_depth`, serial additions
-  dominate). It matches the derived `(PA+3·2^w)·n_add` headline to within the MBUC
-  lookup saving (`6·n_add`), cross-validating `ecdlp_estimate.py` by construction.
-  The single remaining assumption is the **quantum-addend point-add** (this repo's
-  PA folds a classical compile-time addend; the windowed ladder loads `P[k]` from
-  a quantum table) — the genuine remaining Tier B build, and where #5's mid-ladder
+- **The full ladder is now stream-emitted and counted end-to-end (issue #4,
+  ADR 0011).** `src/point_add/ladder_full.rs` (`#[cfg(test)]`) chains, per window,
+  an **emitted** unary-iteration QROM-read op stream with the built point-add op
+  stream and another read — `[read, add, read]` × `n_add = 28` — and counts the
+  whole thing through `analyze_ops`/`analyze_depth`, with no materialization (the
+  full ladder is ~290 GB; only the Toffoli-bearing QROM *selector* is emitted, as
+  a lookup's `2^w·d` data-writes are Clifford). The Rust QROM emission reproduces
+  `ladder_lookup_cost.py`'s `2^(w+1)−4 = 131,068` Toffoli/read. Emitted totals
+  (static op-stream basis, w=16): **Toffoli `47.8M` reversible / `46.0M` MBUC**
+  (addition `40.5M` + lookup; QFT 0), **toffoli-depth `30.16M`** (measured,
+  add-dominated). **Peak qubits** are reported as `PA_qubits + w = 1168` per A2
+  (register reuse) — *not* the naive disjoint-emit peak (`1184`), which over-counts.
+  It matches the derived `(PA+3·2^w)·n_add` headline to within the MBUC saving
+  (`6·n_add`), cross-validating `ecdlp_estimate.py`. The single remaining
+  assumption is the **quantum-addend point-add** (this repo's PA folds a classical
+  compile-time addend; the ladder loads `P[k]` from a quantum table the addition
+  consumes) — the genuine remaining Tier B build that would fix the exact
+  register overlap (A2) and read→add depth dependency, and where #5's mid-ladder
   residual also lands.
 
 **Key limitations this surfaces** (all real, all worth fixing):

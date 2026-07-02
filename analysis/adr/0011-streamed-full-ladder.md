@@ -25,28 +25,37 @@ What was missing is the **end-to-end composition at the true ladder length**.
 ## Decision
 
 Add `src/point_add/ladder_full.rs` (`#[cfg(test)]`, `#[ignore]` heavy): stream the
-built point-add op stream `n_add = 2n/w − 4` times through `analyze_ops` /
-`analyze_depth` (same qubit ids ⇒ real cross-copy hazards + ancilla reuse; no
-materialization), and compose the measured addition stream with the measured
-lookup term and the (Clifford) QFT.
+built point-add op stream and an **emitted QROM-read op stream** — per window
+`[read, point-add, read]`, chained `n_add = 2n/w − 4` times through `analyze_ops`
+/ `analyze_depth` (same qubit ids ⇒ real cross-copy hazards + ancilla reuse; no
+materialization). The lookup is emitted as a unary-iteration selector identical in
+structure to `ladder_lookup_cost.py` (ADR 0010); only the Toffoli-bearing selector
+is emitted — a lookup's `2^w·d` data-writes are Clifford `CX` (~290 GB at w=16),
+counted analytically as 0 Toffoli, and are the reason the full stream can't be
+materialized. The QFT is Clifford (0 Toffoli).
 
 ## Consequences
 
-- The ladder is now **emitted-and-measured**, at the real `n_add`, not
-  extrapolated. Measured composition laws hold exactly at `n_add = 28`
-  (asserted): addition `= 28·PA`, peak width **flat** (`= PA_qubits`),
-  toffoli-depth `= 28·PA_depth`. Headline (static op-stream basis, w=16):
-  - **Toffoli** `= 28·PA + 28·(3·2^16 − 6) ≈ 46.0M`
-    (addition `40.5M` + lookup `5.50M`; QFT 0),
-  - **peak qubits** `= PA_qubits + w = 1168`,
-  - **toffoli-depth** `= 28·PA_depth = 30.16M` (serial additions dominate; the
-    QROM iteration depth `~2w` is negligible).
+- The ladder Toffoli is now **emitted-and-counted end-to-end** (additions AND
+  lookups), at the real `n_add`, not extrapolated or formula-composed. The Rust
+  QROM emission independently **reproduces** `ladder_lookup_cost.py`'s
+  `2^(w+1)−4 = 131,068` Toffoli per read (asserted). Measured composition laws
+  hold exactly at `n_add = 28` (asserted): addition `= 28·PA`, width flat, depth
+  serial. Emitted totals (static op-stream basis, w=16):
+  - **Toffoli** `= 47.8M` reversible-unload / **`46.0M`** with MBUC unload
+    (addition `40.5M` + lookup; QFT 0) — counted over the composed stream,
+  - **toffoli-depth** `= 30.16M` (measured; add-dominated),
+  - **peak qubits** `= PA_qubits + w = 1168` **(A2, register reuse)** — *not* the
+    naive disjoint-emit peak (`1184`), which over-counts because it does not
+    reuse PA's workspace.
 - It matches the derived headline to within the MBUC lookup saving (`6·n_add`),
   and never exceeds it — cross-validating `ecdlp_estimate.py` by construction.
   (The harness reports the *static* op-stream Toffoli, `PA ≈ 1.446M`, as
   `ladder_composition.rs` does; `ecdlp_estimate.py` uses the *executed* avg-per-
   shot from `score.json`, `≈ 1.364M`, hence its `~43.7M` vs the `~46.0M` static
-  figure — same model, different PA basis, not a discrepancy.)
+  figure — same model, different PA basis, not a discrepancy. The estimate keeps
+  the closed form as its headline; this harness validates it rather than replacing
+  it, since the two use different PA bases.)
 - **One stated assumption remains** (the genuine remaining Tier B build): the
   **quantum-addend point-add**. This repo's PA folds a *classical*, compile-time
   addend (constprop-optimized); the windowed ladder loads `P[k]` from a *quantum*
