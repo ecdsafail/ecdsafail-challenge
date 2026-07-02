@@ -256,3 +256,87 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
 
 mod squaring;
 pub(crate) use squaring::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::Simulator;
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake128,
+    };
+
+    fn set<R: XofReader>(sim: &mut Simulator<'_, R>, qs: &[QubitId], val: u64, shot: usize) {
+        for (i, &q) in qs.iter().enumerate() {
+            if (val >> i) & 1 != 0 {
+                *sim.qubit_mut(q) |= 1u64 << shot;
+            } else {
+                *sim.qubit_mut(q) &= !(1u64 << shot);
+            }
+        }
+    }
+    fn get<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
+        let mut v = 0u64;
+        for (i, &q) in qs.iter().enumerate() {
+            v |= ((sim.qubit(q) >> shot) & 1) << i;
+        }
+        v
+    }
+
+    /// `controlled_add_subtract_lowq` on an (n+1)-bit `acc` (mod 2^(n+1)):
+    /// `ctrl=1 ⇒ acc += x`; `ctrl=0 ⇒ acc += (2^n − x)` (adds the n-bit two's
+    /// complement, i.e. subtract with the sign landing in the high bit). `x`/`ctrl`
+    /// are preserved and every internal ancilla returns to |0>. Exhaustive over the
+    /// 12-bit (acc,x,ctrl) input space at n=5.
+    #[test]
+    fn controlled_add_subtract_lowq_is_plus_or_minus_x() {
+        const N: usize = 5;
+        const ACC_MOD: u64 = 1 << (N + 1);
+        let mut b = B::new();
+        let x = b.alloc_qubits(N);
+        let acc = b.alloc_qubits(N + 1);
+        let ctrl = b.alloc_qubit();
+        controlled_add_subtract_lowq(&mut b, &x, &acc, ctrl);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        let inputs: std::collections::HashSet<u64> =
+            x.iter().chain(acc.iter()).map(|q| q.0).chain([ctrl.0]).collect();
+
+        for batch in 0..64usize {
+            let mut seed = Shake128::default();
+            seed.update(b"cas-lowq");
+            seed.update(&(batch as u64).to_le_bytes());
+            let mut xof = seed.finalize_xof();
+            let mut sim = Simulator::new(nq, nb, &mut xof);
+            for shot in 0..64usize {
+                let case = (batch * 64 + shot) as u64;
+                set(&mut sim, &acc, case & (ACC_MOD - 1), shot);
+                set(&mut sim, &x, (case >> (N + 1)) & ((1 << N) - 1), shot);
+                if (case >> (2 * N + 1)) & 1 != 0 {
+                    *sim.qubit_mut(ctrl) |= 1u64 << shot;
+                }
+            }
+            sim.apply_iter(b.ops.iter());
+            assert_eq!(sim.phase, 0, "phase garbage (batch {batch})");
+            for shot in 0..64usize {
+                let case = (batch * 64 + shot) as u64;
+                let a0 = case & (ACC_MOD - 1);
+                let xv = (case >> (N + 1)) & ((1 << N) - 1);
+                let c = (case >> (2 * N + 1)) & 1;
+                let exp = if c == 1 {
+                    (a0 + xv) % ACC_MOD
+                } else {
+                    (a0 + ((1u64 << N) - xv)) % ACC_MOD
+                };
+                assert_eq!(get(&sim, &acc, shot), exp, "acc wrong, case {case}");
+                assert_eq!(get(&sim, &x, shot), xv, "x changed, case {case}");
+                assert_eq!((sim.qubit(ctrl) >> shot) & 1, c, "ctrl changed, case {case}");
+            }
+            for q in 0..nq as u64 {
+                if !inputs.contains(&q) {
+                    assert_eq!(sim.qubit(QubitId(q)), 0, "ancilla q{q} not clean (batch {batch})");
+                }
+            }
+        }
+    }
+}

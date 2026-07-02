@@ -753,3 +753,61 @@ struct Round84AggregateFold {
     correction_wrap_owned: bool,
     product: Option<Vec<QubitId>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::Simulator;
+    use sha3::{
+        digest::{ExtendableOutput, Update, XofReader},
+        Shake128,
+    };
+
+    fn get<R: XofReader>(sim: &Simulator<'_, R>, qs: &[QubitId], shot: usize) -> u64 {
+        let mut v = 0u64;
+        for (i, &q) in qs.iter().enumerate() {
+            v |= ((sim.qubit(q) >> shot) & 1) << i;
+        }
+        v
+    }
+
+    /// `schoolbook_square_symmetric` writes `x²` (2n-bit) into a zero `tmp_ext`,
+    /// leaving `x` unchanged and every internal ancilla back at |0>. Exhaustive
+    /// over all n=4 inputs (x ∈ [0,16)).
+    #[test]
+    fn schoolbook_square_symmetric_computes_x_squared() {
+        const N: usize = 4;
+        let mut b = B::new();
+        let x = b.alloc_qubits(N);
+        let tmp = b.alloc_qubits(2 * N);
+        schoolbook_square_symmetric(&mut b, &x, &tmp);
+        let nq = b.next_qubit as usize;
+        let nb = b.next_bit as usize;
+        let inputs: std::collections::HashSet<u64> =
+            x.iter().chain(tmp.iter()).map(|q| q.0).collect();
+
+        let mut seed = Shake128::default();
+        seed.update(b"sqsym-n4");
+        let mut xof = seed.finalize_xof();
+        let mut sim = Simulator::new(nq, nb, &mut xof);
+        for shot in 0..(1 << N) {
+            for (i, &q) in x.iter().enumerate() {
+                if (shot >> i) & 1 != 0 {
+                    *sim.qubit_mut(q) |= 1u64 << shot;
+                }
+            }
+        }
+        sim.apply_iter(b.ops.iter());
+        assert_eq!(sim.phase, 0, "phase garbage");
+        for shot in 0..(1 << N) {
+            let xv = shot as u64;
+            assert_eq!(get(&sim, &tmp, shot), xv * xv, "x={xv}: tmp != x^2");
+            assert_eq!(get(&sim, &x, shot), xv, "x={xv} changed");
+        }
+        for q in 0..nq as u64 {
+            if !inputs.contains(&q) {
+                assert_eq!(sim.qubit(QubitId(q)), 0, "ancilla q{q} not clean");
+            }
+        }
+    }
+}
