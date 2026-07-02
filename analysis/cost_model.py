@@ -19,10 +19,12 @@ Physical model references (assumptions, not repo facts):
   - Gidney 2018 (arXiv:1805.03662) -- Toffoli via measurement = 4 T (repo uses
     measurement-based uncompute, so 4 T/Toffoli is the apt convention; 7 T is the
     Clifford+T textbook upper bound).
-  - Roetteler, Naehrig, Svore, Lauter 2017 (arXiv:1706.06752) -- full n-bit ECDLP
-    is O(n) point additions; the extrapolation below derives the ladder factor as
-    2(n+1) (basic double-and-add). See analysis/ecdlp_estimate.py for the full
-    derived cost (windowed rows, peak width, completeness caveats).
+  - Babbush, Zalcman, Gidney, Broughton, Khattar, Neven, Bergamaschi, Drake,
+    Boneh 2026 (arXiv:2603.28846v2, docs/) -- THIS challenge's source paper. Its
+    Appendix A gives the exact windowed-ladder cost ECDLP_Toff =
+    (PA_Toff + 3*2^w)(2n/w - 4), optimal w=16 -> 28 windowed point additions. The
+    extrapolation below uses that closed form; see analysis/ecdlp_estimate.py for
+    the full derived cost and the comparison to the paper's ZK-proven bounds.
 """
 import json
 import math
@@ -58,7 +60,8 @@ A = {
     "phys_per_patch": lambda d: 2 * d * d,   # physical qubits per logical patch
     "factory_routing_overhead": 2.0,         # x logical patches for factories+routing
     "distances": [21, 25, 27],
-    "ecdlp_field_bits": 256,        # secp256k1 n; ladder factor DERIVED as 2(n+1)
+    "ecdlp_field_bits": 256,        # secp256k1 n
+    "ecdlp_window": 16,             # paper's optimal window w (Appendix A, eq. A3)
     "target_fail_prob": 0.01,
 }
 
@@ -127,22 +130,25 @@ else:
 print("  NOTE: depth is the reaction-limited critical path; true wall-clock also")
 print("        depends on having enough magic-state factories to feed each layer.")
 
-section("EXTRAPOLATION TO A FULL secp256k1 ECDLP BREAK (order-of-magnitude)")
+section("EXTRAPOLATION TO A FULL secp256k1 ECDLP BREAK (paper's closed form)")
 n = A["ecdlp_field_bits"]
-mult = 2 * (n + 1)              # DERIVED: basic double-and-add, 2 scalars x (n+1) bits
-tof_full = TOFFOLI * mult
-print(f"  DERIVED point additions in the full Shor-ECDLP ladder : {mult:,}  (2(n+1), n={n})")
+w = A["ecdlp_window"]
+adds = 2 * n // w - 4                     # (A1)/(A3): windowed point additions
+lookup = 3 * (1 << w)                     # (A1): table lookup 3*2^w Toffoli/addition
+tof_full = (TOFFOLI + lookup) * adds      # (A1): full ECDLP Toffoli
+q_full = QUBITS + w                       # (A2): full ECDLP qubits
+print(f"  paper formula ECDLP_Toff=(PA+3*2^w)(2n/w-4), w={w} -> {adds} windowed additions")
 print(f"  => full-attack Toffoli count : ~{tof_full:,.0f}  (~{tof_full:.1e})")
 print(f"  => full-attack T-count @4    : ~{tof_full*4:.1e}")
-print(f"  physical qubits @ d={d_hi}        : ~{phys_hi:,}  (single-addition width; the full")
-print(f"     algorithm needs a wider register file -> not derivable from this repo)")
+print(f"  => full-attack qubits (A2)   : {q_full:,}  (PA qubits + w; width does NOT grow")
+print(f"     with additions -- registers are reused across the ladder)")
 if TOFFOLI_DEPTH is not None:
-    full_rt_h = TOFFOLI_DEPTH * mult * A["t_react_us"] * 1e-6 / 3600
-    print(f"  reaction-limited runtime     : ~{full_rt_h:,.1f} h  (depth-based, if additions are serial)")
+    full_rt_min = TOFFOLI_DEPTH * adds * A["t_react_us"] * 1e-6 / 60
+    print(f"  reaction-limited runtime     : ~{full_rt_min:,.1f} min  (depth-based, additions serial)")
 else:
-    print(f"  reaction-limited runtime UB  : ~{tof_full*A['t_react_us']*1e-6/3600:,.1f} h  (count-based)")
-print("\n  The ladder factor 2(n+1) is the basic (window w=1) double-and-add count;")
-print("  windowing lowers it (see analysis/ecdlp_estimate.py for the full derived")
-print("  breakdown incl. windowed rows, peak width, and completeness caveats).")
-print("  Full-algorithm width and adder completeness remain unbuilt (Tier B).")
+    print(f"  reaction-limited runtime UB  : ~{tof_full*A['t_react_us']*1e-6/60:,.1f} min  (count-based)")
+print(f"\n  vs paper published bounds: <= 90M Tof / 1200 q (low-qubit), <= 70M Tof /")
+print(f"  1450 q (low-gate). This repo's measured PA ({TOFFOLI:,} Tof) beats both PA")
+print(f"  bounds, so the composed ECDLP (~{tof_full/1e6:.0f}M Tof) undercuts both. See")
+print(f"  analysis/ecdlp_estimate.py for the side-by-side and the completeness caveat.")
 print("=" * 68)

@@ -1,7 +1,13 @@
 # ADR 0002 — Derive the full-ECDLP ladder factor instead of hand-picking it
 
-**Status:** Accepted
+**Status:** Accepted — ladder model superseded by [ADR 0003](0003-ground-ecdlp-estimate-in-source-paper.md)
 **Date:** 2026-07-02
+
+> **Superseded (2026-07-02):** the source paper (arXiv:2603.28846v2, `docs/`) was
+> located and gives the exact closed-form ladder cost. The decision to *derive*
+> rather than hand-pick the factor still stands; the specific `2(n+1)` model and
+> `~2^w` lookup here are replaced by the paper's `(PA+3·2^w)(2n/w−4)`, w=16. See
+> ADR 0003.
 
 ## Context
 

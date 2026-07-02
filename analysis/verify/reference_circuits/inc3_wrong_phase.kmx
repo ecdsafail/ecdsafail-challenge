@@ -1,0 +1,10 @@
+# Incorrectly performs r0 += 1 (mod 8)
+APPEND_TO_REGISTER q0 r0
+APPEND_TO_REGISTER q1 r0
+APPEND_TO_REGISTER q2 r0
+CX q0 q3
+CCX q0 q1 q2
+CX q0 q1
+X q0
+HMR q3 b0
+Z q0 if b0
