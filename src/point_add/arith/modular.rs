@@ -106,7 +106,11 @@ pub(crate) fn mod_sub_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
     // Negate a in place, compare, un-negate.
     b.x(flag);
     mod_neg_inplace_fast(b, &a_ext[..n], p);
-    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY").ok().as_deref() == Some("1") {
+    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
         let phase = b.alloc_bit();
         b.hmr(flag, phase);
         cmp_lt_phase_conditioned(b, &acc_ext[..n], &a_ext[..n], phase);
@@ -709,7 +713,11 @@ pub(crate) fn mod_add_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
     }
     b.x(flag);
     b.cx(flag, acc_ovf);
-    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY").ok().as_deref() == Some("1") {
+    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
         let phase = b.alloc_bit();
         b.hmr(flag, phase);
         cmp_lt_phase_conditioned(b, &acc_ext[..n], &a_ext[..n], phase);
@@ -797,7 +805,11 @@ pub(crate) fn mod_add_qq_fast_from_zero(b: &mut B, acc: &[QubitId], a: &[QubitId
     }
     b.x(flag);
     b.cx(flag, acc_ovf);
-    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY").ok().as_deref() == Some("1") {
+    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
         let phase = b.alloc_bit();
         b.hmr(flag, phase);
         cmp_lt_phase_conditioned(b, &acc_ext[..n], &a_ext[..n], phase);

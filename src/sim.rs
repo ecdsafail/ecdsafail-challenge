@@ -1,6 +1,4 @@
 /// This file contains code for simulating kickmix circuits.
-
-
 use crate::circuit::{BitId, Op, OperationType, QubitId, NO_BIT};
 use ruint::aliases::U256;
 
@@ -9,8 +7,6 @@ pub struct SimStats {
     pub clifford_gates: u64,
     pub toffoli_gates: u64,
 }
-
-
 
 pub struct Simulator<'a, R: sha3::digest::XofReader> {
     pub phase: u64,
@@ -69,7 +65,6 @@ impl<'a, R: sha3::digest::XofReader> Simulator<'a, R> {
     }
 
     pub fn apply_iter<'b>(&mut self, ops: impl Iterator<Item = &'b Op>) {
-
         let mut condition_stack = Vec::new();
         let mut current_base_condition = u64::MAX;
 
@@ -176,7 +171,6 @@ impl<'a, R: sha3::digest::XofReader> Simulator<'a, R> {
                 }
             }
         }
-
     }
 
     /// Writes an integer into the qubits/bits of a register.
@@ -189,12 +183,7 @@ impl<'a, R: sha3::digest::XofReader> Simulator<'a, R> {
     ///             significant bit position will overwrite prior writes.
     ///     val: The value to write into the bits/qubits.
     ///     shot_idx: The simulator tracks 64 shots in parallel. This is which shot to write to.
-    pub fn set_register(
-        &mut self,
-        reg: &[crate::circuit::QubitOrBit],
-        val: U256,
-        shot_idx: usize,
-    ) {
+    pub fn set_register(&mut self, reg: &[crate::circuit::QubitOrBit], val: U256, shot_idx: usize) {
         for (i, item) in reg.iter().enumerate() {
             let bit_val = val.bit(i);
             match item {
@@ -226,11 +215,7 @@ impl<'a, R: sha3::digest::XofReader> Simulator<'a, R> {
     ///
     /// Returns:
     ///     The requested integer.
-    pub fn get_register(
-        &self,
-        reg: &[crate::circuit::QubitOrBit],
-        shot_idx: usize,
-    ) -> U256 {
+    pub fn get_register(&self, reg: &[crate::circuit::QubitOrBit], shot_idx: usize) -> U256 {
         let mut v = U256::ZERO;
         for (i, item) in reg.iter().enumerate() {
             let bit_val = match item {

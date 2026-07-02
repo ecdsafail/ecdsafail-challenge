@@ -237,7 +237,6 @@ pub(crate) fn cuccaro_add_low_to_ext_clean(
     uma(b, c_in, acc_ext[0], a[0]);
 }
 
-
 pub(crate) fn load_const(b: &mut B, n: usize, c: U256) -> Vec<QubitId> {
     let qs = b.alloc_qubits(n);
     for i in 0..n {
@@ -341,7 +340,12 @@ pub(crate) fn cuccaro_sub_fast(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: 
 /// Fast Cuccaro add into an extended accumulator where the source high bit is
 /// known zero: `acc_ext += a + c_in (mod 2^(n+1))`.
 #[allow(dead_code)] // retained reference/alternative impl; not on active build path
-pub(crate) fn cuccaro_add_fast_low_to_ext(b: &mut B, a: &[QubitId], acc_ext: &[QubitId], c_in: QubitId) {
+pub(crate) fn cuccaro_add_fast_low_to_ext(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+) {
     let n = a.len();
     assert_eq!(acc_ext.len(), n + 1);
     if n == 0 {
@@ -531,7 +535,6 @@ pub(crate) fn cuccaro_sub_fast_low_to_ext_borrowed_carries_no_cin(
     b.cx(a[0], acc_ext[0]);
 }
 
-
 pub(crate) fn cuccaro_sub_fast_borrowed_carries(
     b: &mut B,
     a: &[QubitId],
@@ -581,7 +584,6 @@ pub(crate) fn cuccaro_sub_fast_borrowed_carries(
     b.cx(a[0], acc[0]);
 }
 
-
 pub(crate) fn inv_maj(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
     // maj = CX(w,y); CX(w,x); CCX(x,y,w)
     // inv = CCX(x,y,w); CX(w,x); CX(w,y)
@@ -613,7 +615,6 @@ pub(crate) fn cswap(b: &mut B, ctrl: QubitId, a: QubitId, t: QubitId) {
     b.cx(t, a);
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 //  Kaliski binary almost-inverse (qrisp-style, standard form)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -634,4 +635,3 @@ pub(crate) fn cswap(b: &mut B, ctrl: QubitId, a: QubitId, t: QubitId) {
 //
 // Assumption: v_in is a nonzero element of (Z/p)*. The test harness
 // filters out the v_orig = 0 case before calling `build`, so we skip the
-

@@ -230,11 +230,7 @@ fn square_cleanup_direction(raw: &str) -> Option<bool> {
     }
 }
 
-fn square_row_window_clean_compare_bits(
-    row: usize,
-    window: usize,
-    reverse: bool,
-) -> usize {
+fn square_row_window_clean_compare_bits(row: usize, window: usize, reverse: bool) -> usize {
     let default_bits = std::env::var("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
@@ -433,8 +429,7 @@ fn square_row_windowed_apply(
     let slow_cmp = std::env::var("SQUARE_ROW_WINDOW_SLOW_CMP").ok().as_deref() == Some("1");
     let measured_clear = square_row_window_measured_carry_clear_enabled();
     for &(cout, lo, hi, cin, window) in couts.iter().rev() {
-        let clean_cmp_bits =
-            square_row_window_clean_compare_bits(i, window, !forward);
+        let clean_cmp_bits = square_row_window_clean_compare_bits(i, window, !forward);
         let seg_w = hi - lo;
         let trunc_w = if clean_cmp_bits == 0 {
             seg_w
@@ -519,7 +514,12 @@ fn square_row_windowed_apply(
                     cmp_lt_into_with_cin_slow(b, &tmp_ext[base + lo..base + hi], &seg, cin, cout);
                 } else {
                     cmp_lt_into_fast_with_cin_borrowed_carries(
-                        b, &tmp_ext[base + lo..base + hi], &seg, cin, cout, &carries,
+                        b,
+                        &tmp_ext[base + lo..base + hi],
+                        &seg,
+                        cin,
+                        cout,
+                        &carries,
                     );
                 }
             } else {
@@ -542,7 +542,12 @@ fn square_row_windowed_apply(
                     cmp_lt_into_with_cin_slow(b, &seg, &tmp_ext[base + lo..base + hi], cin, cout);
                 } else {
                     cmp_lt_into_fast_with_cin_borrowed_carries(
-                        b, &seg, &tmp_ext[base + lo..base + hi], cin, cout, &carries,
+                        b,
+                        &seg,
+                        &tmp_ext[base + lo..base + hi],
+                        cin,
+                        cout,
+                        &carries,
                     );
                 }
                 for k in 0..seg_w {
@@ -556,7 +561,11 @@ fn square_row_windowed_apply(
     b.free(first_carry);
 }
 
-pub(crate) fn schoolbook_square_symmetric_lowq_selfhosted(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
+pub(crate) fn schoolbook_square_symmetric_lowq_selfhosted(
+    b: &mut B,
+    x: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
     schoolbook_square_symmetric_lowq_selfhosted_with_clean_supplement(b, x, tmp_ext, &[]);
 }
 

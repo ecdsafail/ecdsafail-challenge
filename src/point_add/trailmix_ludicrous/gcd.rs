@@ -37,8 +37,8 @@
 
 use super::arith::{self, F_SECP256K1};
 use super::schedule::{GAP_J2, ITERS, JUMP, SCHED_J2};
-use super::{B, BExt};
-use crate::circuit::{QubitId};
+use super::{BExt, B};
+use crate::circuit::QubitId;
 use std::cell::Cell;
 
 thread_local! {
@@ -201,9 +201,11 @@ fn loan_gcd_y0_enabled() -> bool {
 }
 
 fn apply_fwd_cswap_skip(i: usize) -> bool {
-    let legacy_first_skip =
-        std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP").ok().as_deref() == Some("1")
-            && i + 1 == ITERS;
+    let legacy_first_skip = std::env::var("TLM_APPLY_FWD_FIRST_CSWAP_SKIP")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && i + 1 == ITERS;
     let last_n = std::env::var("TLM_APPLY_FWD_CSWAP_SKIP_LAST")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -460,27 +462,24 @@ const GCD_REVERSE_CSWAP_DEAD_RANGES: &[(usize, usize, usize)] = &[
 ];
 
 const GCD_FORWARD_CSWAP_REMAINDER_KEYS: &[u32] = &[
-    3325, 4345, 8935, 9955, 17860, 24236, 26021, 26531, 26786, 27551, 28316, 28571,
-    29846, 31631, 31886, 32906, 33161, 33416, 33671, 33926, 34181, 34436, 35710,
-    36221, 36476, 36985, 37241, 38260, 40810, 41575, 41830, 43360, 44380, 45145,
-    46165, 46675, 47185, 47950, 48205, 48715, 49225, 50755, 51010, 51520, 51775,
-    52030, 52285, 52540, 53305, 53560, 54070, 54580, 54835, 55090, 55600, 56110,
-    56620, 56875, 57130, 57385, 57895, 58149, 58405, 58660, 58915, 59170, 59425,
-    59680, 59935, 60190, 60444, 60445, 60700, 62484, 62995, 63250, 63505, 63759,
-    63760, 64014, 64015, 64016, 64270, 64271, 64524, 64525, 64526, 64527, 64779,
-    64780, 64781, 64782, 64783, 65035, 65036, 65037, 65290, 65291, 65292, 65293,
-    65545, 65546, 65547, 65800, 65801, 65802,
+    3325, 4345, 8935, 9955, 17860, 24236, 26021, 26531, 26786, 27551, 28316, 28571, 29846, 31631,
+    31886, 32906, 33161, 33416, 33671, 33926, 34181, 34436, 35710, 36221, 36476, 36985, 37241,
+    38260, 40810, 41575, 41830, 43360, 44380, 45145, 46165, 46675, 47185, 47950, 48205, 48715,
+    49225, 50755, 51010, 51520, 51775, 52030, 52285, 52540, 53305, 53560, 54070, 54580, 54835,
+    55090, 55600, 56110, 56620, 56875, 57130, 57385, 57895, 58149, 58405, 58660, 58915, 59170,
+    59425, 59680, 59935, 60190, 60444, 60445, 60700, 62484, 62995, 63250, 63505, 63759, 63760,
+    64014, 64015, 64016, 64270, 64271, 64524, 64525, 64526, 64527, 64779, 64780, 64781, 64782,
+    64783, 65035, 65036, 65037, 65290, 65291, 65292, 65293, 65545, 65546, 65547, 65800, 65801,
+    65802,
 ];
 
 const GCD_REVERSE_CSWAP_REMAINDER_KEYS: &[u32] = &[
-    3580, 3835, 4090, 4345, 4600, 4855, 5365, 5875, 6130, 6640, 6895, 7150,
-    7405, 7660, 8425, 8935, 9955, 10720, 11740, 13525, 14290, 15055, 15310,
-    15565, 15820, 16075, 16585, 16840, 17095, 17350, 18370, 18625, 18880,
-    19135, 19900, 20155, 21175, 21685, 22195, 22705, 22960, 23215, 23470,
-    23725, 24745, 25255, 25510, 26786, 31376, 34690, 34945, 35200, 35455,
-    38515, 38770, 39025, 39790, 40045, 40555, 41065, 42340, 42595, 44125,
-    44635, 44890, 45145, 45400, 45655, 45910, 46420, 47185, 47440, 48970,
-    50245, 51265, 53560,
+    3580, 3835, 4090, 4345, 4600, 4855, 5365, 5875, 6130, 6640, 6895, 7150, 7405, 7660, 8425, 8935,
+    9955, 10720, 11740, 13525, 14290, 15055, 15310, 15565, 15820, 16075, 16585, 16840, 17095,
+    17350, 18370, 18625, 18880, 19135, 19900, 20155, 21175, 21685, 22195, 22705, 22960, 23215,
+    23470, 23725, 24745, 25255, 25510, 26786, 31376, 34690, 34945, 35200, 35455, 38515, 38770,
+    39025, 39790, 40045, 40555, 41065, 42340, 42595, 44125, 44635, 44890, 45145, 45400, 45655,
+    45910, 46420, 47185, 47440, 48970, 50245, 51265, 53560,
 ];
 
 fn gcd_reverse_cswap_has_structurally_dead_gate(step: usize, bit: usize) -> bool {
@@ -606,38 +605,35 @@ const GCD_SHIFT_DEAD_RANGES: &[(u8, usize, usize, usize)] = &[
 ];
 
 const GCD_RIGHT_SHIFT_REMAINDER_KEYS: &[u32] = &[
-    510, 766, 1022, 1278, 1534, 1790, 2046, 2302, 2558, 2814, 3070, 3325,
-    3580, 3835, 4090, 4345, 4600, 4855, 5110, 5365, 5620, 5875, 6130, 6385,
-    6640, 6895, 7150, 7405, 7660, 7915, 8170, 8425, 8680, 8935, 9190, 9445,
-    9700, 9955, 10210, 10465, 10720, 10975, 11230, 11485, 11740, 11995, 12250, 12505,
-    12760, 13015, 13270, 13525, 13780, 14035, 14290, 14545, 14800, 15055, 15310, 15565,
-    15820, 16075, 16330, 16585, 16840, 17095, 17350, 17605, 17860, 18115, 18370, 18625,
-    18880, 19135, 19390, 19645, 19900, 20155, 20410, 20665, 20920, 21175, 21430, 21685,
-    21940, 22195, 22450, 22705, 22960, 23215, 23470, 23725, 23980, 24235, 24491, 24746,
-    25000, 25255, 25510, 25765, 26020, 26276, 26530, 26786, 27041, 27296, 27550, 27806,
-    28061, 28315, 28571, 28826, 29081, 29336, 29591, 29846, 30101, 30355, 30610, 30865,
-    31120, 31375, 31631, 31886, 32141, 32395, 32651, 32906, 33161, 33416, 33671, 33926,
-    34181, 34436, 34691, 34945, 35200, 35455, 35710, 35965, 36220, 36476, 36731, 36986,
-    37240, 37496, 37750, 38005, 38260, 38515, 38770, 39025, 39280, 39535, 39790, 40045,
-    40300, 40555, 40810, 41065, 41320, 41575, 41830, 42085, 42340, 42595, 42850, 43105,
-    43360, 43615, 43870, 44125, 44380, 44635, 44890, 45145, 45400, 45655, 45910, 46165,
-    46420, 46675, 46930, 47185, 47440, 47695, 47950, 48205, 48460, 48715, 48970, 49225,
-    49480, 49735, 49990, 50245, 50500, 50755, 51010, 51265, 51520, 51775, 52030, 52285,
-    52540, 52795, 53050, 53305, 53560, 53815, 54070, 54325, 54580, 54835, 55090, 55345,
-    55600, 55855, 56110, 56365, 56620, 56875, 57130, 57385, 57640, 57895, 58150, 58405,
-    58660, 58915, 59170, 59425, 59680, 59935, 60190, 60445, 60700, 60955, 61208, 61463,
-    61718, 61973, 62228, 62483, 62739, 62994, 63250, 63505, 63760, 66814, 67070, 67326,
-    67582, 67838, 68094, 68350, 68606, 68862, 69118, 69374, 69629, 69884, 70139, 70394,
-    70649, 70904, 71159, 71414, 71669, 71924, 72179, 72434, 72689, 72944, 73199, 73454,
-    73709, 73964, 74219, 74474, 74729, 74984, 75239, 75494, 75749, 76004, 76259, 76514,
-    76769, 77024, 77279, 77534, 77789, 78044, 78299, 78554, 78809, 79064, 79319, 79574,
-    79829, 80084, 80339, 80594, 80849, 81104, 81359, 81614, 81869, 82124, 82379, 82634,
-    82889, 83144, 83399, 83654, 83909, 84164, 84419, 84674, 84929, 85184, 85439, 85694,
-    85949, 86204, 86459, 86714, 86969, 87224, 87479, 87734, 87989, 88244, 88499, 88754,
-    89009, 89264, 89519, 89774, 90029, 90284, 90539, 90795, 91050, 91304, 91559, 91814,
-    92069, 92324, 92580, 92834, 93090, 93345, 93600, 93854, 94110, 94365, 94619, 94875,
-    95130, 95385, 95640, 95895, 96150, 96405, 96659, 96914, 97169, 97424, 97679, 97935,
-    98190, 98445, 98699, 98955, 99210, 99465, 99720, 99975, 100485, 100740, 100995, 101249,
+    510, 766, 1022, 1278, 1534, 1790, 2046, 2302, 2558, 2814, 3070, 3325, 3580, 3835, 4090, 4345,
+    4600, 4855, 5110, 5365, 5620, 5875, 6130, 6385, 6640, 6895, 7150, 7405, 7660, 7915, 8170, 8425,
+    8680, 8935, 9190, 9445, 9700, 9955, 10210, 10465, 10720, 10975, 11230, 11485, 11740, 11995,
+    12250, 12505, 12760, 13015, 13270, 13525, 13780, 14035, 14290, 14545, 14800, 15055, 15310,
+    15565, 15820, 16075, 16330, 16585, 16840, 17095, 17350, 17605, 17860, 18115, 18370, 18625,
+    18880, 19135, 19390, 19645, 19900, 20155, 20410, 20665, 20920, 21175, 21430, 21685, 21940,
+    22195, 22450, 22705, 22960, 23215, 23470, 23725, 23980, 24235, 24491, 24746, 25000, 25255,
+    25510, 25765, 26020, 26276, 26530, 26786, 27041, 27296, 27550, 27806, 28061, 28315, 28571,
+    28826, 29081, 29336, 29591, 29846, 30101, 30355, 30610, 30865, 31120, 31375, 31631, 31886,
+    32141, 32395, 32651, 32906, 33161, 33416, 33671, 33926, 34181, 34436, 34691, 34945, 35200,
+    35455, 35710, 35965, 36220, 36476, 36731, 36986, 37240, 37496, 37750, 38005, 38260, 38515,
+    38770, 39025, 39280, 39535, 39790, 40045, 40300, 40555, 40810, 41065, 41320, 41575, 41830,
+    42085, 42340, 42595, 42850, 43105, 43360, 43615, 43870, 44125, 44380, 44635, 44890, 45145,
+    45400, 45655, 45910, 46165, 46420, 46675, 46930, 47185, 47440, 47695, 47950, 48205, 48460,
+    48715, 48970, 49225, 49480, 49735, 49990, 50245, 50500, 50755, 51010, 51265, 51520, 51775,
+    52030, 52285, 52540, 52795, 53050, 53305, 53560, 53815, 54070, 54325, 54580, 54835, 55090,
+    55345, 55600, 55855, 56110, 56365, 56620, 56875, 57130, 57385, 57640, 57895, 58150, 58405,
+    58660, 58915, 59170, 59425, 59680, 59935, 60190, 60445, 60700, 60955, 61208, 61463, 61718,
+    61973, 62228, 62483, 62739, 62994, 63250, 63505, 63760, 66814, 67070, 67326, 67582, 67838,
+    68094, 68350, 68606, 68862, 69118, 69374, 69629, 69884, 70139, 70394, 70649, 70904, 71159,
+    71414, 71669, 71924, 72179, 72434, 72689, 72944, 73199, 73454, 73709, 73964, 74219, 74474,
+    74729, 74984, 75239, 75494, 75749, 76004, 76259, 76514, 76769, 77024, 77279, 77534, 77789,
+    78044, 78299, 78554, 78809, 79064, 79319, 79574, 79829, 80084, 80339, 80594, 80849, 81104,
+    81359, 81614, 81869, 82124, 82379, 82634, 82889, 83144, 83399, 83654, 83909, 84164, 84419,
+    84674, 84929, 85184, 85439, 85694, 85949, 86204, 86459, 86714, 86969, 87224, 87479, 87734,
+    87989, 88244, 88499, 88754, 89009, 89264, 89519, 89774, 90029, 90284, 90539, 90795, 91050,
+    91304, 91559, 91814, 92069, 92324, 92580, 92834, 93090, 93345, 93600, 93854, 94110, 94365,
+    94619, 94875, 95130, 95385, 95640, 95895, 96150, 96405, 96659, 96914, 97169, 97424, 97679,
+    97935, 98190, 98445, 98699, 98955, 99210, 99465, 99720, 99975, 100485, 100740, 100995, 101249,
     101504, 101759, 102014, 102269, 102524, 102780, 103035, 103290, 103544, 104054, 104309, 104564,
     104819, 105074, 105329, 105584, 105839, 106094, 106349, 106604, 106859, 107114, 107369, 107624,
     107879, 108134, 108389, 108644, 108899, 109154, 109409, 109664, 109919, 110174, 110429, 110684,
@@ -651,12 +647,11 @@ const GCD_RIGHT_SHIFT_REMAINDER_KEYS: &[u32] = &[
 ];
 
 const GCD_LEFT_SHIFT_REMAINDER_KEYS: &[u32] = &[
-    3603, 3860, 4117, 4374, 4631, 4888, 7460, 7717, 9516, 9773, 12086, 12600,
-    13114, 15427, 17740, 25707, 28792, 29306, 29820, 30847, 31361, 31619, 32903, 34189,
-    36245, 37273, 41642, 47038, 53463, 62715, 69651, 69907, 70164, 70421, 70678, 70935,
-    71192, 72222, 72736, 72993, 74535, 74792, 75820, 76077, 80446, 87385, 89441, 95096,
-    95610, 95867, 96124, 99979, 100493, 102549, 103320, 104605, 105376, 105890, 107946, 110772,
-    119510, 126963, 128248,
+    3603, 3860, 4117, 4374, 4631, 4888, 7460, 7717, 9516, 9773, 12086, 12600, 13114, 15427, 17740,
+    25707, 28792, 29306, 29820, 30847, 31361, 31619, 32903, 34189, 36245, 37273, 41642, 47038,
+    53463, 62715, 69651, 69907, 70164, 70421, 70678, 70935, 71192, 72222, 72736, 72993, 74535,
+    74792, 75820, 76077, 80446, 87385, 89441, 95096, 95610, 95867, 96124, 99979, 100493, 102549,
+    103320, 104605, 105376, 105890, 107946, 110772, 119510, 126963, 128248,
 ];
 
 fn gcd_shift_has_structurally_dead_gate(tag: u8, call_index: usize, bit: usize) -> bool {
@@ -669,9 +664,11 @@ fn gcd_shift_has_structurally_dead_gate(tag: u8, call_index: usize, bit: usize) 
         }
     }
     std::env::var_os("TLM_GCD_SKIP_STRUCTURAL_DEAD_SHIFTS").is_some()
-        && GCD_SHIFT_DEAD_RANGES.iter().any(|&(range_tag, call, lo, hi)| {
-            range_tag == tag && call == call_index && (lo..=hi).contains(&bit)
-        })
+        && GCD_SHIFT_DEAD_RANGES
+            .iter()
+            .any(|&(range_tag, call, lo, hi)| {
+                range_tag == tag && call == call_index && (lo..=hi).contains(&bit)
+            })
 }
 
 fn skip_top_zero_controlled_shift_edge() -> bool {
@@ -794,7 +791,11 @@ fn controlled_mod_double_reverse(circ: &mut B, ctrl: &QubitId, a: &[QubitId]) {
 /// (applied to the coordinate pair each iter before the symbol is taped);
 /// otherwise the coordinate registers are untouched.
 #[must_use]
-pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&[QubitId], &[QubitId])>) -> Vec<QubitId> {
+pub fn forward_gcd_jump(
+    circ: &mut B,
+    v: &mut Vec<QubitId>,
+    apply_inv: Option<(&[QubitId], &[QubitId])>,
+) -> Vec<QubitId> {
     let n = 256usize;
     assert_eq!(JUMP, 2, "ludicrous apply/codec are jump=2 specific");
     assert!(v.len() >= n, "v must be at least n=256 bits");
@@ -953,17 +954,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
             None
         };
         if let Some((xr, yr)) = apply_inv {
-            apply_step_reverse(
-                circ,
-                i,
-                &subtracted,
-                &swp,
-                &s2,
-                &t1,
-                xr,
-                yr,
-                &u[1..4],
-            );
+            apply_step_reverse(circ, i, &subtracted, &swp, &s2, &t1, xr, yr, &u[1..4]);
         }
         if let Some(q) = parked_v0 {
             v[0] = restore_known_zero(circ, q);
@@ -1067,7 +1058,12 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
 /// step by step. Decompresses one codec window at a time (in reverse iter order),
 /// consumes its symbols, and frees the raw slots -- so the resident tape stays
 /// compressed.
-pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<QubitId>, apply_fwd: Option<(&[QubitId], &[QubitId])>) {
+pub fn reverse_gcd_jump(
+    circ: &mut B,
+    v: &mut Vec<QubitId>,
+    tape: &mut Vec<QubitId>,
+    apply_fwd: Option<(&[QubitId], &[QubitId])>,
+) {
     let n = 256usize;
     let iters = ITERS;
     let n3 = n3_for_iters(iters);
@@ -1085,8 +1081,8 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         }
     }
     let mut win_idx = window_plan.len(); // next window to decompress (from the end)
-    // `pending` holds the raw symbol slots of the currently-decompressed window,
-    // consumed symbol-by-symbol from the end (reverse symbol order).
+                                         // `pending` holds the raw symbol slots of the currently-decompressed window,
+                                         // consumed symbol-by-symbol from the end (reverse symbol order).
     let mut pending: Vec<QubitId> = Vec::new();
     let mut pending_tail4 = false;
     let mut tail4_prefix_encoded = false;
@@ -1201,17 +1197,7 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         };
         if let Some((xr, yr)) = apply_fwd {
             let t1 = step0_t1.unwrap_or(subtracted);
-            apply_step_forward(
-                circ,
-                i,
-                &subtracted,
-                &swp,
-                &s2,
-                &t1,
-                xr,
-                yr,
-                &u[1..4],
-            );
+            apply_step_forward(circ, i, &subtracted, &swp, &s2, &t1, xr, yr, &u[1..4]);
         }
         if let Some(q) = parked_v0 {
             v[0] = restore_known_zero(circ, q);
@@ -1443,14 +1429,7 @@ fn apply_step_forward(
     let ffg = super::next_ffg();
     if !apply_add_skip(i, true) {
         super::gidney::with_dirty_vent_pool(dirty_vents, || {
-            arith::controlled_mod_add_k(
-                circ,
-                sub,
-                &x_reg[..n],
-                &y_reg[..n],
-                Some(k),
-                Some(ffg),
-            );
+            arith::controlled_mod_add_k(circ, sub, &x_reg[..n], &y_reg[..n], Some(k), Some(ffg));
         });
     }
     // 2) if swap: swap(x, y).
@@ -1525,7 +1504,13 @@ fn apply_step_reverse(
 /// `zero_and_free`. Tolerates pseudo-Mersenne representation drift (operands in
 /// `[0, 2^256)` not strictly `< q`), which the apply pipeline produces. A gated
 /// add over the full width with an MSBs phase-correction borrow clean.
-fn controlled_mod_sub_vented(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[QubitId], sched_k: Option<usize>) {
+fn controlled_mod_sub_vented(
+    circ: &mut B,
+    ctrl: &QubitId,
+    x: &[QubitId],
+    y: &[QubitId],
+    sched_k: Option<usize>,
+) {
     let n = x.len();
     assert_eq!(y.len(), n, "x,y equal width");
     let f_bytes = F_SECP256K1.to_le_bytes();
@@ -1577,9 +1562,16 @@ fn controlled_mod_sub_vented(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Q
     // comparator builds the [>=] carry with an implicit +1 carry-in, so no separate
     // `zcin` is needed (this also drops a qubit vs the explicit carry-in form).
     let flag = circ.alloc_qubit();
-    super::comparator::compare_geq_chunked_middle(circ, &yt, &xt, &flag, |c, fl| {
-        c.cz(ctrl, *fl);
-    }, k);
+    super::comparator::compare_geq_chunked_middle(
+        circ,
+        &yt,
+        &xt,
+        &flag,
+        |c, fl| {
+            c.cz(ctrl, *fl);
+        },
+        k,
+    );
     circ.zero_and_free(flag);
     for q in &xt {
         circ.x(*q);
@@ -1591,7 +1583,14 @@ fn controlled_mod_sub_vented(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[Q
 /// overflow). Measurement-vented chunked-gated adder (~2.5 Toffoli/bit, bounded
 /// peak) -- the inverse apply's mod-sub register add, on the peak-bound hot path.
 /// `cout` is |0> on entry; `x` restored.
-fn controlled_add_active_cout(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[QubitId], cout: &QubitId, sched_k: Option<usize>) {
+fn controlled_add_active_cout(
+    circ: &mut B,
+    ctrl: &QubitId,
+    x: &[QubitId],
+    y: &[QubitId],
+    cout: &QubitId,
+    sched_k: Option<usize>,
+) {
     match sched_k {
         Some(k) => {
             // cout adder at the schedule's k (a = target = y, b = addend = x).
@@ -1599,10 +1598,16 @@ fn controlled_add_active_cout(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[
             let xr: Vec<&QubitId> = x.iter().collect();
             super::gidney::controlled_hybrid_add_cout_refs(circ, ctrl, &yr, &xr, cout, k);
         }
-        None => arith::controlled_add_vented_chunked_cout(circ, ctrl, x, y, arith::APPLY_CHUNK, Some(cout)),
+        None => arith::controlled_add_vented_chunked_cout(
+            circ,
+            ctrl,
+            x,
+            y,
+            arith::APPLY_CHUNK,
+            Some(cout),
+        ),
     }
 }
-
 
 /// Jump-GCD in-place modular inversion / multiply: `(xv, y) -> (xv, y*x^{±1})`.
 /// `Direction::Inverse` => `y := y * xv^-1 mod q`; `Direction::Forward` => `y := y * xv mod q`.

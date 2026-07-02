@@ -169,10 +169,7 @@ fn validate_protected_tail(ops: &[Op], protected: usize) -> Result<Vec<Op>, Stri
     }
     let tail = &ops[ops.len() - protected..];
     for (pair_index, pair) in tail.chunks_exact(2).enumerate() {
-        if pair[0] != pair[1]
-            || pair[0].kind != OperationType::X
-            || pair[0].c_condition != NO_BIT
-        {
+        if pair[0] != pair[1] || pair[0].kind != OperationType::X || pair[0].c_condition != NO_BIT {
             return Err(format!(
                 "protected nonce pair {pair_index} is not unconditional X/X"
             ));

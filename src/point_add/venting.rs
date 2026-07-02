@@ -1261,7 +1261,6 @@ pub(crate) fn cisub_dirty_2clean_classical(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2247,7 +2246,4 @@ mod tests {
             assert_eq!(bad, 0, "n={n}: {ok}/{} passed", ok + bad);
         }
     }
-
-
-
 }

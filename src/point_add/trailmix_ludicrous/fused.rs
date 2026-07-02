@@ -5,7 +5,7 @@
 //! variants (lower nv).
 
 use super::arith::{F_SECP256K1, LSBS};
-use super::{B, BExt};
+use super::{BExt, B};
 use crate::circuit::{BitId, QubitId};
 use std::cell::Cell;
 
@@ -104,18 +104,16 @@ fn next_fused_cdouble_rev_shift_call_index() -> usize {
 }
 
 fn env_index_value(name: &str, index: usize) -> Option<usize> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| {
-            value
-                .split(',')
-                .filter_map(|item| item.trim().split_once(':'))
-                .find_map(|(call, value)| {
-                    (call.parse::<usize>().ok()? == index)
-                        .then(|| value.parse::<usize>().ok())
-                        .flatten()
-                })
-        })
+    std::env::var(name).ok().and_then(|value| {
+        value
+            .split(',')
+            .filter_map(|item| item.trim().split_once(':'))
+            .find_map(|(call, value)| {
+                (call.parse::<usize>().ok()? == index)
+                    .then(|| value.parse::<usize>().ok())
+                    .flatten()
+            })
+    })
 }
 
 fn skip_structural_dead_fused_carries() -> bool {
@@ -794,58 +792,50 @@ const FUSED_CLEAN_WINDOW_DEAD_RANGES: &[(usize, usize, usize)] = &[
 ];
 
 const FUSED_CLEAN_FOLD_REMAINDER_KEYS: &[u32] = &[
-    257, 258, 259, 769, 770, 771, 1281, 1282, 1283, 2049, 2050, 2051, 2817, 2818,
-    2819, 4097, 4098, 4099, 4353, 4354, 4355, 4865, 4866, 4867, 5121, 5122, 5123,
-    5377, 5378, 5379, 5633, 5634, 5635, 6401, 6402, 6403, 6913, 6914, 6915, 7169,
-    7170, 7171, 7681, 7682, 7683, 8193, 8194, 8195, 8449, 8450, 8451, 8705, 8706,
-    8707, 8961, 8962, 8963, 9217, 9218, 9219, 9985, 9986, 9987, 10497, 10498,
-    10499, 10753, 10754, 10755, 12033, 12034, 12035, 12289, 12290, 12291, 12545,
-    12546, 12547, 12801, 12802, 12803, 13313, 13314, 13315, 14081, 14082, 14083,
-    14849, 14850, 14851, 15361, 15362, 15363, 15873, 15874, 15875, 16129, 16130,
-    16131, 16897, 16898, 16899, 17409, 17410, 17411, 17665, 17666, 17667, 17921,
-    17922, 17923, 18433, 18434, 18435, 18689, 18690, 18691, 19457, 19458, 19459,
-    19713, 19714, 19715, 20481, 20482, 20483, 20737, 20738, 20739, 20993, 20994,
-    20995, 21249, 21250, 21251, 21505, 21506, 21507, 23553, 23554, 23555, 23809,
-    23810, 23811, 24833, 24834, 24835, 26113, 26114, 26115, 26369, 26370, 26371,
-    27137, 27138, 27139, 27905, 27906, 27907, 28161, 28162, 28163, 28929, 28930,
-    28931, 29185, 29186, 29187, 30209, 30210, 30211, 30465, 30466, 30467, 30721,
-    30722, 30723, 31233, 31234, 31235, 31489, 31490, 31491, 33025, 33026, 33027,
-    33281, 33282, 33283, 34049, 34050, 34051, 34817, 34818, 34819, 35329, 35330,
-    35331, 35585, 35586, 35587, 35841, 35842, 35843, 36097, 36098, 36099, 36609,
-    36610, 36611, 37121, 37122, 37123, 37377, 37378, 37379, 37633, 37634, 37635,
-    38145, 38146, 38147, 38401, 38402, 38403, 38657, 38658, 38659, 38913, 38914,
-    38915, 39169, 39170, 39171, 39681, 39682, 39683, 40705, 40706, 40707, 41729,
-    41730, 41731, 42241, 42242, 42243, 43009, 43010, 43011, 43521, 43522, 43523,
-    44289, 44290, 44291, 45057, 45058, 45059, 45313, 45314, 45315, 46849, 46850,
-    46851, 47105, 47106, 47107, 47361, 47362, 47363, 47617, 47618, 47619, 47873,
-    47874, 47875, 48129, 48130, 48131, 48641, 48642, 48643, 49409, 49410, 49411,
+    257, 258, 259, 769, 770, 771, 1281, 1282, 1283, 2049, 2050, 2051, 2817, 2818, 2819, 4097, 4098,
+    4099, 4353, 4354, 4355, 4865, 4866, 4867, 5121, 5122, 5123, 5377, 5378, 5379, 5633, 5634, 5635,
+    6401, 6402, 6403, 6913, 6914, 6915, 7169, 7170, 7171, 7681, 7682, 7683, 8193, 8194, 8195, 8449,
+    8450, 8451, 8705, 8706, 8707, 8961, 8962, 8963, 9217, 9218, 9219, 9985, 9986, 9987, 10497,
+    10498, 10499, 10753, 10754, 10755, 12033, 12034, 12035, 12289, 12290, 12291, 12545, 12546,
+    12547, 12801, 12802, 12803, 13313, 13314, 13315, 14081, 14082, 14083, 14849, 14850, 14851,
+    15361, 15362, 15363, 15873, 15874, 15875, 16129, 16130, 16131, 16897, 16898, 16899, 17409,
+    17410, 17411, 17665, 17666, 17667, 17921, 17922, 17923, 18433, 18434, 18435, 18689, 18690,
+    18691, 19457, 19458, 19459, 19713, 19714, 19715, 20481, 20482, 20483, 20737, 20738, 20739,
+    20993, 20994, 20995, 21249, 21250, 21251, 21505, 21506, 21507, 23553, 23554, 23555, 23809,
+    23810, 23811, 24833, 24834, 24835, 26113, 26114, 26115, 26369, 26370, 26371, 27137, 27138,
+    27139, 27905, 27906, 27907, 28161, 28162, 28163, 28929, 28930, 28931, 29185, 29186, 29187,
+    30209, 30210, 30211, 30465, 30466, 30467, 30721, 30722, 30723, 31233, 31234, 31235, 31489,
+    31490, 31491, 33025, 33026, 33027, 33281, 33282, 33283, 34049, 34050, 34051, 34817, 34818,
+    34819, 35329, 35330, 35331, 35585, 35586, 35587, 35841, 35842, 35843, 36097, 36098, 36099,
+    36609, 36610, 36611, 37121, 37122, 37123, 37377, 37378, 37379, 37633, 37634, 37635, 38145,
+    38146, 38147, 38401, 38402, 38403, 38657, 38658, 38659, 38913, 38914, 38915, 39169, 39170,
+    39171, 39681, 39682, 39683, 40705, 40706, 40707, 41729, 41730, 41731, 42241, 42242, 42243,
+    43009, 43010, 43011, 43521, 43522, 43523, 44289, 44290, 44291, 45057, 45058, 45059, 45313,
+    45314, 45315, 46849, 46850, 46851, 47105, 47106, 47107, 47361, 47362, 47363, 47617, 47618,
+    47619, 47873, 47874, 47875, 48129, 48130, 48131, 48641, 48642, 48643, 49409, 49410, 49411,
     49921, 49922, 49923,
 ];
 
 const FUSED_CHUNK_FOLD_REMAINDER_KEYS: &[u32] = &[
-    1, 2, 3, 1795, 3585, 3586, 3587, 5378, 7169, 7170, 7171, 8962, 10753, 10754,
-    10755, 12547, 14337, 14338, 14339, 17921, 17922, 17923, 23299, 30466, 34051,
-    37635, 41219, 44801, 44803, 48387, 55555, 62723, 66306, 77059, 84227, 87810,
-    87811, 89344, 92928, 112899, 116482, 116483, 120066, 123651, 134403, 141571,
-    145155, 148737, 148739, 150529, 150530, 150531, 152322, 154113, 154114, 154115,
-    155907, 157697, 157698, 157699, 159489, 159490, 159491, 161024, 161281, 161282,
-    161283, 163075, 164608, 164865, 164866, 164867, 166658, 166659, 167939, 168449,
-    168450, 168451, 170240, 170242, 170243, 171523, 171776, 172033, 172034, 172035,
-    173571, 173825, 173827, 175360, 175617, 175618, 175619, 177409, 177410, 177411,
-    178691, 178944, 179201, 179202, 179203, 180993, 180994, 180995, 182275, 182528,
-    182785, 182786, 182787, 184578, 184579, 185859, 186112, 186369, 186370, 186371,
-    187907, 188161, 188162, 188163, 189441, 189443, 189696, 189953, 189954, 189955,
-    191491, 191744, 191746, 191747, 193025, 193027, 193537, 193538, 193539, 195075,
-    195328, 196609, 196610, 196611, 196864, 197121, 197122, 197123, 198657, 198658,
-    198659, 198912, 200192, 200194, 200195, 200448, 202241, 202243, 202496, 203776,
-    204032, 205826, 206080, 207361, 207362, 207363, 207616, 209410, 209411, 209664,
-    210946, 210947, 213248, 214529, 214530, 214531, 214784, 216832, 218115, 218368,
-    220419, 221699, 221952, 224001, 224002, 225283, 225536, 227586, 227587, 231170,
-    231171, 232704, 234754, 236288, 238339, 239872, 241922, 245506, 245507, 247040,
-    263426, 263427, 264960, 267011, 277762, 288515, 290048, 292098, 295683, 299267,
-    304384, 306435, 313603, 320771, 322304, 324354, 324355, 329472, 331522, 345859,
-    349442, 349443, 353027, 356611, 367362, 367363, 378115, 379648, 381699, 386816,
-    392450, 396035, 399619,
+    1, 2, 3, 1795, 3585, 3586, 3587, 5378, 7169, 7170, 7171, 8962, 10753, 10754, 10755, 12547,
+    14337, 14338, 14339, 17921, 17922, 17923, 23299, 30466, 34051, 37635, 41219, 44801, 44803,
+    48387, 55555, 62723, 66306, 77059, 84227, 87810, 87811, 89344, 92928, 112899, 116482, 116483,
+    120066, 123651, 134403, 141571, 145155, 148737, 148739, 150529, 150530, 150531, 152322, 154113,
+    154114, 154115, 155907, 157697, 157698, 157699, 159489, 159490, 159491, 161024, 161281, 161282,
+    161283, 163075, 164608, 164865, 164866, 164867, 166658, 166659, 167939, 168449, 168450, 168451,
+    170240, 170242, 170243, 171523, 171776, 172033, 172034, 172035, 173571, 173825, 173827, 175360,
+    175617, 175618, 175619, 177409, 177410, 177411, 178691, 178944, 179201, 179202, 179203, 180993,
+    180994, 180995, 182275, 182528, 182785, 182786, 182787, 184578, 184579, 185859, 186112, 186369,
+    186370, 186371, 187907, 188161, 188162, 188163, 189441, 189443, 189696, 189953, 189954, 189955,
+    191491, 191744, 191746, 191747, 193025, 193027, 193537, 193538, 193539, 195075, 195328, 196609,
+    196610, 196611, 196864, 197121, 197122, 197123, 198657, 198658, 198659, 198912, 200192, 200194,
+    200195, 200448, 202241, 202243, 202496, 203776, 204032, 205826, 206080, 207361, 207362, 207363,
+    207616, 209410, 209411, 209664, 210946, 210947, 213248, 214529, 214530, 214531, 214784, 216832,
+    218115, 218368, 220419, 221699, 221952, 224001, 224002, 225283, 225536, 227586, 227587, 231170,
+    231171, 232704, 234754, 236288, 238339, 239872, 241922, 245506, 245507, 247040, 263426, 263427,
+    264960, 267011, 277762, 288515, 290048, 292098, 295683, 299267, 304384, 306435, 313603, 320771,
+    322304, 324354, 324355, 329472, 331522, 345859, 349442, 349443, 353027, 356611, 367362, 367363,
+    378115, 379648, 381699, 386816, 392450, 396035, 399619,
 ];
 
 fn fused_range_contains(ranges: &[(usize, usize, usize)], call_index: usize, bit: usize) -> bool {
@@ -861,23 +851,19 @@ fn fused_key_contains(keys: &[u32], call_index: usize, bit: usize) -> bool {
 }
 
 const FUSED_BOUNDARY_ZERO_REMAINDER_KEYS: &[u32] = &[
-    1282, 3842, 6402, 8962, 14082, 16642, 21762, 24322, 32001, 39682, 42242,
-    47361, 47362, 49922, 51458, 52482, 55040, 55042, 57601, 62722, 70402,
-    75521, 83202, 85761, 85762, 90882, 93442, 96002, 106241, 108802, 111362,
-    113921, 113922, 116482, 118018, 119041, 119042, 121600, 121602, 124161,
-    126721, 126722, 128256, 128258, 129281, 129282, 130818, 131840, 131841,
-    131842, 132098, 133376, 133377, 133378, 134400, 134401, 134402, 135937,
-    135938, 136960, 136962, 138497, 138498, 139520, 139521, 139522, 139777,
-    141056, 141058, 141314, 142080, 142081, 142082, 142337, 142338, 143616,
-    143617, 143618, 144640, 144641, 144642, 144897, 146177, 146178, 147200,
-    147201, 147202, 147458, 148738, 149760, 149761, 149762, 150016, 150017,
-    150018, 151297, 151298, 152320, 152321, 152322, 152578, 153857, 154880,
-    154881, 154882, 156418, 158976, 158978, 160001, 160002, 160258, 162560,
-    162561, 164096, 164098, 165122, 167682, 170241, 172801, 172802, 175362,
-    177922, 180482, 183041, 183042, 185602, 188162, 190722, 193281, 193282,
-    198402, 203521, 206082, 208641, 208642, 211201, 211202, 216322, 218882,
-    226561, 229122, 231682, 234241, 236802, 244481, 249601, 249602, 252161,
-    253698, 259842, 262402, 267521, 270082, 275202, 277762, 280322, 285442,
+    1282, 3842, 6402, 8962, 14082, 16642, 21762, 24322, 32001, 39682, 42242, 47361, 47362, 49922,
+    51458, 52482, 55040, 55042, 57601, 62722, 70402, 75521, 83202, 85761, 85762, 90882, 93442,
+    96002, 106241, 108802, 111362, 113921, 113922, 116482, 118018, 119041, 119042, 121600, 121602,
+    124161, 126721, 126722, 128256, 128258, 129281, 129282, 130818, 131840, 131841, 131842, 132098,
+    133376, 133377, 133378, 134400, 134401, 134402, 135937, 135938, 136960, 136962, 138497, 138498,
+    139520, 139521, 139522, 139777, 141056, 141058, 141314, 142080, 142081, 142082, 142337, 142338,
+    143616, 143617, 143618, 144640, 144641, 144642, 144897, 146177, 146178, 147200, 147201, 147202,
+    147458, 148738, 149760, 149761, 149762, 150016, 150017, 150018, 151297, 151298, 152320, 152321,
+    152322, 152578, 153857, 154880, 154881, 154882, 156418, 158976, 158978, 160001, 160002, 160258,
+    162560, 162561, 164096, 164098, 165122, 167682, 170241, 172801, 172802, 175362, 177922, 180482,
+    183041, 183042, 185602, 188162, 190722, 193281, 193282, 198402, 203521, 206082, 208641, 208642,
+    211201, 211202, 216322, 218882, 226561, 229122, 231682, 234241, 236802, 244481, 249601, 249602,
+    252161, 253698, 259842, 262402, 267521, 270082, 275202, 277762, 280322, 285442,
 ];
 
 fn fused_boundary_zero_has_structurally_dead_carry(call_index: usize, bit: usize) -> bool {
@@ -941,12 +927,7 @@ fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
 /// Toggle `d AND NOT e` into `dne`, given the live intersection `cc = e AND d`.
 /// The Boolean identity `d & !e = d ^ (e & d)` replaces one CCX with two CX.
 /// This is an involution, so the same sequence clears `dne` after use.
-fn toggle_dnot_e_from_intersection(
-    circ: &mut B,
-    d: &QubitId,
-    cc: &QubitId,
-    dne: &QubitId,
-) {
+fn toggle_dnot_e_from_intersection(circ: &mut B, d: &QubitId, cc: &QubitId, dne: &QubitId) {
     circ.cx(*d, *dne);
     circ.cx(*cc, *dne);
 }
@@ -979,7 +960,13 @@ fn add_mf_fold_clean(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId]) {
     add_mf_fold_clean_tail(circ, e, d, y, None);
 }
 
-fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], tail_from: Option<usize>) {
+fn add_mf_fold_clean_tail(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    y: &[QubitId],
+    tail_from: Option<usize>,
+) {
     let l = y.len();
     assert!(l >= 2, "fold needs L >= 2");
     let loop_end = tail_from.unwrap_or(l - 1);
@@ -990,12 +977,7 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     let mut cc = Some(circ.alloc_qubit());
     circ.ccx(*e, *d, *cc.as_ref().unwrap());
     let mut dne = Some(circ.alloc_qubit());
-    toggle_dnot_e_from_intersection(
-        circ,
-        d,
-        cc.as_ref().unwrap(),
-        dne.as_ref().unwrap(),
-    );
+    toggle_dnot_e_from_intersection(circ, d, cc.as_ref().unwrap(), dne.as_ref().unwrap());
     let mut sxor = Some(circ.alloc_qubit());
     circ.cx(*e, *sxor.as_ref().unwrap());
     circ.cx(*d, *sxor.as_ref().unwrap());
@@ -1004,7 +986,15 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     circ.cx(*cc.as_ref().unwrap(), *sor.as_ref().unwrap());
 
     // Resolve position -> addend control qubit (None when A[p]==0).
-    fn fc<'a>(p: usize, e: &'a QubitId, d: &'a QubitId, cc: Option<&'a QubitId>, dne: Option<&'a QubitId>, sx: Option<&'a QubitId>, so: Option<&'a QubitId>) -> Option<&'a QubitId> {
+    fn fc<'a>(
+        p: usize,
+        e: &'a QubitId,
+        d: &'a QubitId,
+        cc: Option<&'a QubitId>,
+        dne: Option<&'a QubitId>,
+        sx: Option<&'a QubitId>,
+        so: Option<&'a QubitId>,
+    ) -> Option<&'a QubitId> {
         match fold_ctl(p) {
             1 => Some(e),
             2 => Some(d),
@@ -1019,7 +1009,15 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     // Forward Gidney-clean carry chain with inline addend sums.
     let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(l - 1);
     let c1 = circ.alloc_qubit();
-    if let Some(a0) = fc(0, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+    if let Some(a0) = fc(
+        0,
+        e,
+        d,
+        cc.as_ref(),
+        dne.as_ref(),
+        sxor.as_ref(),
+        sor.as_ref(),
+    ) {
         if !skip_structural_dead_fused_carries() {
             let old_context = crate::point_add::set_op_trace_context(
                 0x0d00_0000 | (((active_fold_call_index() as u32) & 0xffff) << 8),
@@ -1035,21 +1033,47 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
         {
             let ci = cy[i - 1].as_ref().unwrap();
             circ.cx(*ci, y[i]); // y[i] ^= carry_i
-            if let Some(ai) = fc(i, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+            if let Some(ai) = fc(
+                i,
+                e,
+                d,
+                cc.as_ref(),
+                dne.as_ref(),
+                sxor.as_ref(),
+                sor.as_ref(),
+            ) {
                 circ.cx(*ai, *ci); // carry_i ^= addend_i
             }
             if !fused_clean_fold_has_structurally_dead_carry(active_fold_call_index(), i) {
                 let old_context = crate::point_add::set_op_trace_context(
-                    0x0d00_0000 | (((active_fold_call_index() as u32) & 0xffff) << 8) | (i as u32 & 0xff),
+                    0x0d00_0000
+                        | (((active_fold_call_index() as u32) & 0xffff) << 8)
+                        | (i as u32 & 0xff),
                 );
                 circ.ccx(y[i], *ci, next);
                 crate::point_add::restore_op_trace_context(old_context);
             }
-            if let Some(ai) = fc(i, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+            if let Some(ai) = fc(
+                i,
+                e,
+                d,
+                cc.as_ref(),
+                dne.as_ref(),
+                sxor.as_ref(),
+                sor.as_ref(),
+            ) {
                 circ.cx(*ai, *ci);
             }
             circ.cx(*ci, next); // carry_{i+1}
-            if let Some(ai) = fc(i, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+            if let Some(ai) = fc(
+                i,
+                e,
+                d,
+                cc.as_ref(),
+                dne.as_ref(),
+                sxor.as_ref(),
+                sor.as_ref(),
+            ) {
                 circ.cx(*ai, y[i]); // inline sum
             }
         }
@@ -1076,7 +1100,15 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     match tail_from {
         None => {
             // Top bit: y[L-1] += addend_{L-1} + cy_{L-1}.
-            if let Some(at) = fc(l - 1, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+            if let Some(at) = fc(
+                l - 1,
+                e,
+                d,
+                cc.as_ref(),
+                dne.as_ref(),
+                sxor.as_ref(),
+                sor.as_ref(),
+            ) {
                 circ.cx(*at, y[l - 1]);
             }
             circ.cx(*cy[l - 2].as_ref().unwrap(), y[l - 1]);
@@ -1109,13 +1141,29 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
             sxor = Some(sx);
             sor = Some(so);
         }
-        if let Some(ai) = fc(i, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+        if let Some(ai) = fc(
+            i,
+            e,
+            d,
+            cc.as_ref(),
+            dne.as_ref(),
+            sxor.as_ref(),
+            sor.as_ref(),
+        ) {
             circ.cx(*ai, y[i]);
         }
         let next = cy[i].take().unwrap();
         let ci = cy[i - 1].take().unwrap();
         circ.cx(ci, next);
-        if let Some(ai) = fc(i, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+        if let Some(ai) = fc(
+            i,
+            e,
+            d,
+            cc.as_ref(),
+            dne.as_ref(),
+            sxor.as_ref(),
+            sor.as_ref(),
+        ) {
             circ.cx(*ai, ci);
         }
         // erase next: hmr + cz_if_bit(y[i], ci).
@@ -1123,7 +1171,15 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
         circ.hmr(next, bit);
         circ.zero_and_free(next);
         circ.cz_if_bit(y[i], ci, bit);
-        if let Some(ai) = fc(i, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+        if let Some(ai) = fc(
+            i,
+            e,
+            d,
+            cc.as_ref(),
+            dne.as_ref(),
+            sxor.as_ref(),
+            sor.as_ref(),
+        ) {
             circ.cx(*ai, ci);
             circ.cx(*ai, y[i]);
         }
@@ -1131,7 +1187,15 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
     }
     // Reverse bit 0.
     let cy1 = cy[0].take().unwrap();
-    if let Some(a0) = fc(0, e, d, cc.as_ref(), dne.as_ref(), sxor.as_ref(), sor.as_ref()) {
+    if let Some(a0) = fc(
+        0,
+        e,
+        d,
+        cc.as_ref(),
+        dne.as_ref(),
+        sxor.as_ref(),
+        sor.as_ref(),
+    ) {
         circ.cx(*a0, y[0]);
         let bit = circ.alloc_bit();
         circ.hmr(cy1, bit);
@@ -1165,7 +1229,11 @@ fn add_mf_fold_clean_tail(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId],
 // ============================================================================
 
 /// Build the 4 derived controls (e&d, e^d, e|d, d&~e).
-fn build_fold_controls(circ: &mut B, e: &QubitId, d: &QubitId) -> (QubitId, QubitId, QubitId, QubitId) {
+fn build_fold_controls(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+) -> (QubitId, QubitId, QubitId, QubitId) {
     let cc = circ.alloc_qubit();
     circ.ccx(*e, *d, cc);
     let sxor = circ.alloc_qubit();
@@ -1179,7 +1247,15 @@ fn build_fold_controls(circ: &mut B, e: &QubitId, d: &QubitId) -> (QubitId, Qubi
     (cc, sxor, sor, dne)
 }
 
-fn uncompute_fold_controls(circ: &mut B, e: &QubitId, d: &QubitId, cc: QubitId, sxor: QubitId, sor: QubitId, dne: QubitId) {
+fn uncompute_fold_controls(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    cc: QubitId,
+    sxor: QubitId,
+    sor: QubitId,
+    dne: QubitId,
+) {
     toggle_dnot_e_from_intersection(circ, d, &cc, &dne);
     circ.zero_and_free(dne);
     circ.cx(sxor, sor);
@@ -1193,33 +1269,67 @@ fn uncompute_fold_controls(circ: &mut B, e: &QubitId, d: &QubitId, cc: QubitId, 
 }
 
 /// Position -> addend control qubit map.
-fn fold_ctl_map(e: QubitId, d: QubitId, cc: QubitId, sxor: QubitId, sor: QubitId, dne: QubitId, l: usize) -> Vec<Option<QubitId>> {
-    (0..l).map(|p| match fold_ctl(p) { 1 => Some(e), 2 => Some(d), 3 => Some(sxor), 4 => Some(sor), 5 => Some(dne), 6 => Some(cc), _ => None }).collect()
+fn fold_ctl_map(
+    e: QubitId,
+    d: QubitId,
+    cc: QubitId,
+    sxor: QubitId,
+    sor: QubitId,
+    dne: QubitId,
+    l: usize,
+) -> Vec<Option<QubitId>> {
+    (0..l)
+        .map(|p| match fold_ctl(p) {
+            1 => Some(e),
+            2 => Some(d),
+            3 => Some(sxor),
+            4 => Some(sor),
+            5 => Some(dne),
+            6 => Some(cc),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One chunk's clean add of the fold addend (ctl) into y, threaded cin/cout.
-fn fold_chunk_clean(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: Option<&QubitId>, cout: &QubitId) {
+fn fold_chunk_clean(
+    circ: &mut B,
+    ctl: &[Option<QubitId>],
+    y: &[QubitId],
+    cin: Option<&QubitId>,
+    cout: &QubitId,
+) {
     let chunk_call_index = next_fold_chunk_call_index();
     let s = y.len();
     if s == 0 {
-        if let Some(c) = cin { circ.cx(*c, *cout); }
+        if let Some(c) = cin {
+            circ.cx(*c, *cout);
+        }
         return;
     }
     let mut cy: Vec<Option<QubitId>> = (0..s - 1).map(|_| Some(circ.alloc_qubit())).collect();
     for i in 0..s {
         let on = ctl[i].as_ref();
         if i == 0 {
-            let dst: QubitId = if s == 1 { *cout } else { *cy[0].as_ref().unwrap() };
+            let dst: QubitId = if s == 1 {
+                *cout
+            } else {
+                *cy[0].as_ref().unwrap()
+            };
             match cin {
                 Some(c) => {
                     circ.cx(*c, y[0]);
-                    if let Some(a) = on { circ.cx(*a, *c); }
+                    if let Some(a) = on {
+                        circ.cx(*a, *c);
+                    }
                     let old_context = crate::point_add::set_op_trace_context(
                         0x0e00_0000 | (((chunk_call_index as u32) & 0xffff) << 8),
                     );
                     circ.ccx(y[0], *c, dst);
                     crate::point_add::restore_op_trace_context(old_context);
-                    if let Some(a) = on { circ.cx(*a, *c); }
+                    if let Some(a) = on {
+                        circ.cx(*a, *c);
+                    }
                     circ.cx(*c, dst);
                 }
                 None => {
@@ -1236,9 +1346,15 @@ fn fold_chunk_clean(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: O
             }
         } else {
             let ci: QubitId = *cy[i - 1].as_ref().unwrap();
-            let dst: QubitId = if i == s - 1 { *cout } else { *cy[i].as_ref().unwrap() };
+            let dst: QubitId = if i == s - 1 {
+                *cout
+            } else {
+                *cy[i].as_ref().unwrap()
+            };
             circ.cx(ci, y[i]);
-            if let Some(a) = on { circ.cx(*a, ci); }
+            if let Some(a) = on {
+                circ.cx(*a, ci);
+            }
             if !fused_chunk_fold_has_structurally_dead_carry(chunk_call_index, i) {
                 let old_context = crate::point_add::set_op_trace_context(
                     0x0e00_0000 | (((chunk_call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
@@ -1246,49 +1362,78 @@ fn fold_chunk_clean(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: O
                 circ.ccx(y[i], ci, dst);
                 crate::point_add::restore_op_trace_context(old_context);
             }
-            if let Some(a) = on { circ.cx(*a, ci); }
+            if let Some(a) = on {
+                circ.cx(*a, ci);
+            }
             circ.cx(ci, dst);
         }
     }
     for i in 0..s {
-        if let Some(a) = ctl[i].as_ref() { circ.cx(*a, y[i]); }
+        if let Some(a) = ctl[i].as_ref() {
+            circ.cx(*a, y[i]);
+        }
     }
     for i in (0..s - 1).rev() {
         let on = ctl[i].as_ref();
-        if let Some(a) = on { circ.cx(*a, y[i]); }
+        if let Some(a) = on {
+            circ.cx(*a, y[i]);
+        }
         let next = cy[i].take().unwrap();
         if i == 0 {
             match cin {
                 Some(c) => {
                     circ.cx(*c, next);
-                    if let Some(a) = on { circ.cx(*a, *c); }
+                    if let Some(a) = on {
+                        circ.cx(*a, *c);
+                    }
                     let bit = circ.alloc_bit();
-                    circ.hmr(next, bit); circ.zero_and_free(next);
+                    circ.hmr(next, bit);
+                    circ.zero_and_free(next);
                     circ.cz_if_bit(y[0], *c, bit);
-                    if let Some(a) = on { circ.cx(*a, *c); circ.cx(*a, y[0]); }
+                    if let Some(a) = on {
+                        circ.cx(*a, *c);
+                        circ.cx(*a, y[0]);
+                    }
                 }
                 None => {
                     let bit = circ.alloc_bit();
-                    circ.hmr(next, bit); circ.zero_and_free(next);
-                    if let Some(a) = on { circ.cz_if_bit(y[0], *a, bit); }
-                    if let Some(a) = on { circ.cx(*a, y[0]); }
+                    circ.hmr(next, bit);
+                    circ.zero_and_free(next);
+                    if let Some(a) = on {
+                        circ.cz_if_bit(y[0], *a, bit);
+                    }
+                    if let Some(a) = on {
+                        circ.cx(*a, y[0]);
+                    }
                 }
             }
         } else {
             let ci: QubitId = *cy[i - 1].as_ref().unwrap();
             circ.cx(ci, next);
-            if let Some(a) = on { circ.cx(*a, ci); }
+            if let Some(a) = on {
+                circ.cx(*a, ci);
+            }
             let bit = circ.alloc_bit();
-            circ.hmr(next, bit); circ.zero_and_free(next);
+            circ.hmr(next, bit);
+            circ.zero_and_free(next);
             circ.cz_if_bit(y[i], ci, bit);
-            if let Some(a) = on { circ.cx(*a, ci); circ.cx(*a, y[i]); }
+            if let Some(a) = on {
+                circ.cx(*a, ci);
+                circ.cx(*a, y[i]);
+            }
         }
     }
 }
 
 /// Gated-erase a boundary carry: materialize the addend into a temp, run the
 /// uncontrolled gated erase on (y, temp), un-materialize.
-fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin: Option<&QubitId>, carry: QubitId) {
+fn fold_boundary_erase(
+    circ: &mut B,
+    ctl: &[Option<QubitId>],
+    y: &[QubitId],
+    cin: Option<&QubitId>,
+    carry: QubitId,
+) {
     if std::env::var("TLM_FOLD_BOUNDARY_ZERO_DIRECT")
         .ok()
         .as_deref()
@@ -1302,7 +1447,9 @@ fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin
     let s = y.len();
     let temp: Vec<QubitId> = (0..s).map(|_| circ.alloc_qubit()).collect();
     for (i, c) in ctl.iter().enumerate() {
-        if let Some(a) = c { circ.cx(*a, temp[i]); }
+        if let Some(a) = c {
+            circ.cx(*a, temp[i]);
+        }
     }
     match cin {
         Some(cin) => super::arith::erase_carry_gated_opt(circ, None, y, &temp, cin, &carry, None),
@@ -1312,9 +1459,13 @@ fn fold_boundary_erase(circ: &mut B, ctl: &[Option<QubitId>], y: &[QubitId], cin
         }
     }
     for (i, c) in ctl.iter().enumerate() {
-        if let Some(a) = c { circ.cx(*a, temp[i]); }
+        if let Some(a) = c {
+            circ.cx(*a, temp[i]);
+        }
     }
-    for q in temp { circ.zero_and_free(q); }
+    for q in temp {
+        circ.zero_and_free(q);
+    }
 }
 
 fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, carry: QubitId) {
@@ -1379,14 +1530,8 @@ fn fold_boundary_erase_zero_direct(circ: &mut B, y: &[QubitId], cin: &QubitId, c
 
 fn add_mf_fold_chunked(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], s_chunk: usize) {
     let l = y.len();
-    let release_controls = std::env::var("TLM_FOLD_RELEASE_CONTROLS")
-        .ok()
-        .as_deref()
-        == Some("1");
-    let zero_cin = std::env::var("TLM_FOLD_CHUNK_ZERO_CIN")
-        .ok()
-        .as_deref()
-        == Some("1");
+    let release_controls = std::env::var("TLM_FOLD_RELEASE_CONTROLS").ok().as_deref() == Some("1");
+    let zero_cin = std::env::var("TLM_FOLD_CHUNK_ZERO_CIN").ok().as_deref() == Some("1");
     let mut controls = Some(build_fold_controls(circ, e, d));
     let (cc, sxor, sor, dne) = controls.expect("fold controls present");
     let mut ctl = fold_ctl_map(*e, *d, cc, sxor, sor, dne, l);
@@ -1505,13 +1650,7 @@ fn on_ctl_ref(c: &OnCtl, e: &QubitId, d: &QubitId) -> Option<QubitId> {
 ///   e & d      = e*d
 ///
 /// over GF(2), so it contributes the same phase and cancels HMR exactly.
-fn on_ctl_clear_nonlinear_hmr(
-    circ: &mut B,
-    e: &QubitId,
-    d: &QubitId,
-    k: u8,
-    q: &QubitId,
-) {
+fn on_ctl_clear_nonlinear_hmr(circ: &mut B, e: &QubitId, d: &QubitId, k: u8, q: &QubitId) {
     let bit = circ.alloc_bit();
     circ.hmr(*q, bit);
     match k {
@@ -1548,9 +1687,25 @@ fn on_ctl_free(circ: &mut B, e: &QubitId, d: &QubitId, p: usize, c: OnCtl) {
 
 /// Recompute the L-1 carries of `y + A` and XOR them into `out` (the borrowed dirty
 /// bits), restoring them. Per-position controls built on-demand.
-fn xor_carries_perpos(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId], out: &[QubitId], carry_in: Option<&QubitId>) {
+fn xor_carries_perpos(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    base: usize,
+    y: &[QubitId],
+    out: &[QubitId],
+    carry_in: Option<&QubitId>,
+) {
     let n = y.len();
-    fn ccx_cond(circ: &mut B, aq: Option<&QubitId>, c1: &QubitId, c2: &QubitId, t: &QubitId, g0: bool, g1: bool) {
+    fn ccx_cond(
+        circ: &mut B,
+        aq: Option<&QubitId>,
+        c1: &QubitId,
+        c2: &QubitId,
+        t: &QubitId,
+        g0: bool,
+        g1: bool,
+    ) {
         if let Some(a) = aq {
             if g0 {
                 circ.cx(*a, *c1);
@@ -1609,12 +1764,24 @@ fn xor_carries_perpos(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[
 /// Borrowed-dirty carry-chain body. `carry_in` read-only (caller owns); `None` =>
 /// carry-in 0. `dirty` (>= l-1 bits) are borrowed real-data bits used as transient
 /// carry storage and restored.
-fn dirty_body(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId], dirty: &[QubitId], carry_in: Option<&QubitId>) {
+fn dirty_body(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    base: usize,
+    y: &[QubitId],
+    dirty: &[QubitId],
+    carry_in: Option<&QubitId>,
+) {
     let dirty_call_index = next_fold_dirty_call_index();
     let l = y.len();
     assert!(l >= 2);
     assert!(dirty.len() >= l - 1, "need L-1 borrowed dirty bits");
-    let mut cin_owned = if carry_in.is_none() { Some(circ.alloc_qubit()) } else { None };
+    let mut cin_owned = if carry_in.is_none() {
+        Some(circ.alloc_qubit())
+    } else {
+        None
+    };
     let mut bits: Vec<BitId> = Vec::with_capacity(l - 1); // bits[i] = measured cy_{i+1}
     let mut prev_new: Option<QubitId> = None;
     for i in 0..l - 1 {
@@ -1623,7 +1790,9 @@ fn dirty_body(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId]
         let ctlh = on_ctl(circ, e, d, base + i);
         {
             let cyi: QubitId = if i == 0 {
-                carry_in.copied().unwrap_or_else(|| *cin_owned.as_ref().unwrap())
+                carry_in
+                    .copied()
+                    .unwrap_or_else(|| *cin_owned.as_ref().unwrap())
             } else {
                 *prev_new.as_ref().unwrap()
             };
@@ -1694,7 +1863,14 @@ fn dirty_body(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId]
 
 /// Clean carry-chain forward over a window, holding all b carries (carries[b-1] =
 /// carry handed into the next dirty window).
-fn clean_window_fwd(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId], carries: &[QubitId]) {
+fn clean_window_fwd(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    base: usize,
+    y: &[QubitId],
+    carries: &[QubitId],
+) {
     let clean_window_call_index = next_fold_clean_window_call_index();
     let b = y.len();
     assert_eq!(carries.len(), b);
@@ -1742,7 +1918,14 @@ fn clean_window_fwd(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[Qu
 
 /// Reverse of [`clean_window_fwd`]: erase all b held carries (single-term erase =
 /// hmr + cz_if_bit).
-fn clean_window_rev(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[QubitId], carries: Vec<QubitId>) {
+fn clean_window_rev(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    base: usize,
+    y: &[QubitId],
+    carries: Vec<QubitId>,
+) {
     let b = y.len();
     let mut cy: Vec<Option<QubitId>> = carries.into_iter().map(Some).collect();
     for i in (1..b).rev() {
@@ -1785,7 +1968,14 @@ fn clean_window_rev(circ: &mut B, e: &QubitId, d: &QubitId, base: usize, y: &[Qu
 
 /// Build the fused fold at exactly `nv` clean vents:
 /// nv==L-1 => full-clean; nv>=prop_from => clean prefix-tail; else dirty gradual.
-fn build_fold_at(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], dirty: &[QubitId], nv: usize) {
+fn build_fold_at(
+    circ: &mut B,
+    e: &QubitId,
+    d: &QubitId,
+    y: &[QubitId],
+    dirty: &[QubitId],
+    nv: usize,
+) {
     let l = y.len();
     if nv >= l - 1 {
         // nv == L-1 is full-clean; nv > L-1 only happens for the unset-schedule
@@ -1832,10 +2022,9 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(4);
         let reserve = fold_call_reserve(call_index, default_reserve);
-        let nv = super::target_qubit_headroom(circ)
-            .map_or(code as usize, |headroom| {
-                (code as usize).min(headroom.saturating_sub(reserve))
-            });
+        let nv = super::target_qubit_headroom(circ).map_or(code as usize, |headroom| {
+            (code as usize).min(headroom.saturating_sub(reserve))
+        });
         selected_nv = Some(nv);
         build_fold_at(circ, e, d, ylow, dirty, nv);
     }
@@ -1918,7 +2107,11 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     let shift_call_index = next_fused_cdouble_fwd_shift_call_index();
     maybe_run_gradual_fold_nonlinear_control_hmr_selftest();
     let n = 256usize;
-    assert_eq!(y.len(), n, "fused double expects 256-bit y (transient overflow)");
+    assert_eq!(
+        y.len(),
+        n,
+        "fused double expects 256-bit y (transient overflow)"
+    );
     let _ = F_SECP256K1;
     trace_fold_alloc(circ, "fwd_cdouble", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
@@ -1977,7 +2170,11 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     let shift_call_index = next_fused_cdouble_rev_shift_call_index();
     maybe_run_gradual_fold_nonlinear_control_hmr_selftest();
     let n = 256usize;
-    assert_eq!(y.len(), n, "fused halve expects 256-bit y (transient overflow)");
+    assert_eq!(
+        y.len(),
+        n,
+        "fused halve expects 256-bit y (transient overflow)"
+    );
     trace_fold_alloc(circ, "rev_cdouble", "entry", usize::MAX);
     let hi = circ.alloc_qubit();
     trace_fold_alloc(circ, "rev_cdouble", "after_hi", usize::MAX);
@@ -1989,7 +2186,7 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     // reversed carry-clear: compute e=y[0]->hi, d=(s2&y[1])->hi2.
     circ.ccx(*s2, y[1], w[n + 1]); // d
     circ.cx(y[0], w[n]); // e
-    // subtract m*f from the low window: X-sandwich the forward fold.
+                         // subtract m*f from the low window: X-sandwich the forward fold.
     let borrow: Vec<QubitId> = y[LSBS..2 * LSBS - 1].to_vec();
     for q in &y[..LSBS] {
         circ.x(*q);
@@ -2094,19 +2291,22 @@ fn gradual_fold_nonlinear_control_hmr_selftest() {
         seed.update(b"gradual-fold-derived-control-hmr");
         seed.update(&[kind]);
         let mut xof = seed.finalize_xof();
-        let mut sim = Simulator::new(
-            circ.next_qubit as usize,
-            circ.next_bit as usize,
-            &mut xof,
-        );
+        let mut sim = Simulator::new(circ.next_qubit as usize, circ.next_bit as usize, &mut xof);
         *sim.qubit_mut(e) = e_mask;
         *sim.qubit_mut(d) = d_mask;
         sim.apply_iter(circ.ops.iter());
 
         assert_eq!(sim.qubit(e), e_mask, "e changed for control kind {kind}");
         assert_eq!(sim.qubit(d), d_mask, "d changed for control kind {kind}");
-        assert_eq!(sim.qubit(q), 0, "owned control remained dirty for kind {kind}");
-        assert_eq!(sim.phase, 0, "phase feedback failed for control kind {kind}");
+        assert_eq!(
+            sim.qubit(q),
+            0,
+            "owned control remained dirty for kind {kind}"
+        );
+        assert_eq!(
+            sim.phase, 0,
+            "phase feedback failed for control kind {kind}"
+        );
 
         let measured = sim.bits[0];
         for state in 0..4usize {

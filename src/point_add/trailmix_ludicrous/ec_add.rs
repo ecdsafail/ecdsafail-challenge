@@ -40,9 +40,9 @@ use super::arith::{
 };
 use super::gcd::{mod_mul_inverse_in_place, Direction};
 use super::square::mod_square_sub_pm_secp256k1_symmetric;
-use super::{B, BExt};
-use crate::point_add::{arith::mod_const_minus_reg_qb, SECP256K1_P};
+use super::{BExt, B};
 use crate::circuit::{BitId, QubitId};
+use crate::point_add::{arith::mod_const_minus_reg_qb, SECP256K1_P};
 
 const N: usize = 256;
 
@@ -177,8 +177,8 @@ fn classical_times3_mod_q(circ: &mut B, coord: &[BitId]) -> Vec<BitId> {
         circ.bit_copy(r[i], s[i]); // r[0..256] = lo
     }
     circ.bit_store0(r[N]); // overflow slot
-    // Build addend register av = C*s256 + 2C*s257 (a small classical value), then
-    // ripple-add av into r. av fits in 35 bits.
+                           // Build addend register av = C*s256 + 2C*s257 (a small classical value), then
+                           // ripple-add av into r. av fits in 35 bits.
     let av_bits = 35usize;
     let av: Vec<BitId> = circ.alloc_bits(av_bits);
     classical_set_const_times_bit(circ, &av, C, s[N], false); // av  = C   if s256
@@ -253,7 +253,13 @@ fn classical_set_const(circ: &mut B, dst: &[BitId], k: u128) {
 
 /// `dst := k AND gate` per bit, i.e. dst = (gate ? k : 0). If `accumulate` is
 /// false this overwrites dst; the helper here always overwrites.
-fn classical_set_const_times_bit(circ: &mut B, dst: &[BitId], k: u128, gate: BitId, _accumulate: bool) {
+fn classical_set_const_times_bit(
+    circ: &mut B,
+    dst: &[BitId],
+    k: u128,
+    gate: BitId,
+    _accumulate: bool,
+) {
     for (i, &b) in dst.iter().enumerate() {
         circ.bit_store0(b);
         let bit = i < 128 && ((k >> i) & 1) == 1;
@@ -360,11 +366,7 @@ fn coord_rsub(circ: &mut B, x: &[QubitId], coord: &[BitId]) {
         }
         return;
     }
-    if std::env::var("TLM_FUSE_X_RESTORE")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("TLM_FUSE_X_RESTORE").ok().as_deref() == Some("1") {
         mod_const_minus_reg_qb(circ, x, coord, SECP256K1_P);
         return;
     }
@@ -395,13 +397,7 @@ fn coord_rsub(circ: &mut B, x: &[QubitId], coord: &[BitId]) {
 /// `x2` (= the inversion's GCD input `dx = P.x - Q.x`) must be a schedule
 /// FITTING input -- a width-truncating `dx` makes the forward GCD's
 /// register-shrink `zero_and_free` panic.
-pub fn ec_add(
-    circ: &mut B,
-    x2: &mut Vec<QubitId>,
-    y2: &[QubitId],
-    ox: &[BitId],
-    oy: &[BitId],
-) {
+pub fn ec_add(circ: &mut B, x2: &mut Vec<QubitId>, y2: &[QubitId], ox: &[BitId], oy: &[BitId]) {
     assert_eq!(x2.len(), N, "x2 is 256 bits");
     assert_eq!(y2.len(), N, "y2 is 256 bits");
     assert_eq!(ox.len(), N, "ox is 256 classical bits");
@@ -441,7 +437,6 @@ pub fn ec_add(
     circ.set_phase("tlm_coord_rsub_final");
     coord_rsub(circ, x2, ox);
 }
-
 
 /// TEST-ONLY: build a tiny circuit that loads classical ox into reg0 (256 bits),
 /// computes t = 3*ox mod q classically, and writes t into reg1 (256 classical

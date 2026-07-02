@@ -78,7 +78,12 @@ fn run_case(
             }
         }
     }
-    let mut agg = Agg { seeds, phase_clean: 0, ancilla_clean: 0, out_matches_ref: 0 };
+    let mut agg = Agg {
+        seeds,
+        phase_clean: 0,
+        ancilla_clean: 0,
+        out_matches_ref: 0,
+    };
     for s in 0..seeds {
         let mut hasher = Shake128::default();
         hasher.update(b"completeness-probe-v2");
@@ -125,9 +130,8 @@ fn completeness_probe_exceptional_inputs() {
     let ops = build();
     let (tq, nb, _n, regs) = analyze_ops(ops.iter());
     assert_eq!(regs.len(), 4);
-    let run = |seeds, px, py, qx, qy, exp| {
-        run_case(&ops, &regs, tq, nb, seeds, px, py, qx, qy, exp)
-    };
+    let run =
+        |seeds, px, py, qx, qy, exp| run_case(&ops, &regs, tq, nb, seeds, px, py, qx, qy, exp);
 
     const K: usize = 16;
     let gen = run(1, g.0, g.1, q.0, q.1, gen_exp); // generic control
@@ -149,9 +153,15 @@ fn completeness_probe_exceptional_inputs() {
 
     // Control: the generic case must be correct + clean on every seed (matches
     // the scored fuzzer). If not, the probe is bogus.
-    assert_eq!(gen.out_matches_ref, gen.seeds, "generic control wrong output");
+    assert_eq!(
+        gen.out_matches_ref, gen.seeds,
+        "generic control wrong output"
+    );
     assert_eq!(gen.phase_clean, gen.seeds, "generic control phase dirty");
-    assert_eq!(gen.ancilla_clean, gen.seeds, "generic control ancilla dirty");
+    assert_eq!(
+        gen.ancilla_clean, gen.seeds,
+        "generic control ancilla dirty"
+    );
 
     // FINDINGS (locked as a regression). All three exceptional inputs share the
     // SAME signature: the ancilla always return to |0> (no register-basis leak),
@@ -162,7 +172,10 @@ fn completeness_probe_exceptional_inputs() {
     // bound the exceptional AMPLITUDE (Path A) and structurally remove the
     // ∞-accumulator (which starts at amplitude 1), not rely on output-only args.
     for (name, a) in [("doubling", &dbl), ("P=-Q", &inv), ("inf", &inf)] {
-        assert_eq!(a.ancilla_clean, a.seeds, "{name}: ancilla leaked (expected clean)");
+        assert_eq!(
+            a.ancilla_clean, a.seeds,
+            "{name}: ancilla leaked (expected clean)"
+        );
         assert_eq!(a.out_matches_ref, 0, "{name}: output unexpectedly correct");
         assert!(
             a.phase_clean < a.seeds,
