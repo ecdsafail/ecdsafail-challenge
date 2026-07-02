@@ -42,6 +42,7 @@ Unary iteration recursion (reused single-ancilla-per-level "spine", w ancilla):
 Analysis-only, deterministic, pure-Python (reuses `kickmix_sim.py`). Never touches
 the scored circuit.
 """
+import io
 import os
 import random
 import sys
@@ -123,10 +124,17 @@ def validate(w, d, rng, table_shots=24):
     return True, ""
 
 
-def measure(w, d=2):
-    """Count Toffoli (CCX), the compute-only subset, and ancilla width."""
-    text, scratch = build_qrom_kmx(w, d)
-    ccx = sum(1 for ln in text.splitlines() if ln.startswith("CCX "))
+def measure(w):
+    """Count Toffoli (CCX), the compute-only subset, and ancilla width.
+
+    The Toffoli count and ancilla width depend only on `w` (the unary-iteration
+    spine), not on the data width `d` or the table contents. So build the spine
+    with `d=0`: that omits the O(2^w * d) table/output lines entirely — avoiding a
+    large transient for big `w` (e.g. w=16) — while leaving the CCX spine and the
+    `w` scratch ancilla identical. Scan the text line-by-line via a StringIO
+    iterator rather than `splitlines()`, so no list of all lines is materialized."""
+    text, scratch = build_qrom_kmx(w, 0)
+    ccx = sum(1 for ln in io.StringIO(text) if ln.startswith("CCX "))
     return {"w": w, "toffoli": ccx, "compute_only": ccx // 2, "ancilla": len(scratch)}
 
 
@@ -185,7 +193,7 @@ def main():
     print("-" * 74)
     for ln in notes:
         print("  " + ln)
-    m16 = measure(16)
+    m16 = next(m for m, _ in rows if m["w"] == 16)  # reuse the row already measured
     print(f"\n  At the optimal window w=16: measured read = {m16['toffoli']:,} Toffoli "
           f"({m16['ancilla']} ancilla),")
     print(f"  vs the paper's 3*2^16 = {3*(1<<16):,}. A windowed addition needs a read")
