@@ -175,6 +175,18 @@ reference extract itself remains a diagram, tracked in
 the lookup is only relevant to the ECDLP *extrapolation*, not the scored
 point-addition circuit.
 
+Beyond correctness, the lookup's **cost** is now measured, not derived (issue #4,
+[ADR 0010](adr/0010-measured-windowed-lookup-cost.md)):
+`verify/ladder_lookup_cost.py` builds the read as an optimized **unary-iteration**
+QROM (`out ^= T[addr]`, single-ancilla-per-level spine), validates it exhaustively
+(correct read, registers unchanged, all `w` ancilla cleared, phase `+1`), and
+measures **`2^(w+1)−4` Toffoli / `w` ancilla per read** — e.g. `131,068` Toffoli at
+`w=16` vs the paper's `3·2^16 = 196,608`. So the estimate's `3·2^w` lookup term is
+a **conservative** headline with a validated construction behind it, and the `w`
+ancilla matches `ECDLP_Qubits = PA_Qubits + w`. What is still derived is only the
+end-to-end *composition* of that lookup with the quantum-addend point-add and the
+QFT into the real 28-window ladder (deferred in #4).
+
 ### Scope / honesty
 
 This verifies the **algebraic lemmas each optimization class depends on** and

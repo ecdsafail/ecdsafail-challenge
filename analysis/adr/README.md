@@ -16,3 +16,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0006](0006-adder-completeness-approach.md) | Approach to adder completeness (cost estimate → verified attack) | Accepted (Path A viable per gating experiment) |
 | [0007](0007-tier-b-measured-ladder.md) | Tier B: measuring the full-ECDLP ladder | Accepted (first increment; QROM/QFT deferred) |
 | [0008](0008-empirical-completeness-collision-rate.md) | Empirically validate (and sharpen) the completeness collision rate | Accepted (equidistribution validated; zero-window ∞ term dominant) |
+| [0010](0010-measured-windowed-lookup-cost.md) | Measure the windowed-lookup (QROM) cost (Tier B, issue #4) | Accepted (lookup term grounded; end-to-end ladder deferred) |

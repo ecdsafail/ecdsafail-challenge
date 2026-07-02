@@ -90,8 +90,15 @@ def n_windowed_additions(w):
 
 def lookup_toffoli(w):
     # (A1): each windowed addition merges w additions at the cost of 3*2^w Toffoli
-    # for the table lookup of P[k].
+    # for the table lookup of P[k]. Kept as the (conservative) headline term.
     return 3 * (1 << w)
+
+
+def lookup_toffoli_measured(w):
+    # MEASURED: verify/ladder_lookup_cost.py builds + validates an optimized
+    # unary-iteration QROM read and measures 2^(w+1)-4 Toffoli (w ancilla) —
+    # below the paper's 3*2^w. Grounds the lookup term (issue #4, ADR 0010).
+    return (1 << (w + 1)) - 4
 
 
 def ecdlp_toffoli(pa_tof, w, co=1.0):
@@ -151,6 +158,14 @@ for w in A["windows"]:
     rows[w] = (adds, tof, q)
     tag = "  <- paper's optimal w" if w == W_OPT else ""
     print(f"  {w:>6} | {adds:>6} | {lookup_toffoli(w):>12,} | {tof:>14,} | {q:>12,}{tag}")
+
+print("  lookup term is now MEASURED, not just cited (issue #4, ADR 0010):")
+for w in A["windows"]:
+    meas = lookup_toffoli_measured(w)
+    paper = lookup_toffoli(w)
+    print(f"    w={w:<2}: verify/ladder_lookup_cost.py validates a unary-iteration QROM "
+          f"read at {meas:,} Toffoli ({w} ancilla) = {meas/paper:.2f}x the 3*2^w headline "
+          f"-> headline is conservative on the lookup term.")
 
 adds, tof_full, q_full = rows[W_OPT]
 section("HEADLINE (w=16, this repo's measured PA in the paper's algorithm)")
