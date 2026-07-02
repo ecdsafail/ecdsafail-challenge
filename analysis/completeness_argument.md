@@ -53,6 +53,19 @@ partial scalars accumulated so far; it is ∞ only when that partial scalar is
 handled: amplitude-1 start removed by construction, residual occurrences
 negligible.
 
+> **This is now circuit-demonstrated, not only assumed** (issue #5 part (a),
+> [ADR 0009](adr/0009-direct-lookup-init.md)). `verify/direct_lookup_init.py`
+> builds the direct-lookup init as an actual reversible circuit — the validated
+> controlled-lookup QROM (§1e / issue #3) writing `acc ^= T[w]` with
+> `T[w] = [w]·P` into a `|0⟩` accumulator — and verifies, exhaustively on a toy
+> prime-order curve and at secp256k1's 256-bit width, that the accumulator holds
+> a real affine point for every window and is the `(0,0)` ∞ sentinel **iff
+> `w = 0`** (ancilla clean, phase `+1`; a `ctrl=0` negative control leaves it at
+> ∞). So the adder is never fed the amplitude-1 ∞ start; the only residual is the
+> `w=0` zero-window term (§4 / issue #5 part (b)), already negligible. A full
+> end-to-end check of the *mid-ladder* residual over the real 28-window
+> two-scalar superposition still needs the Tier B ladder ([issue #4](https://github.com/CaptainEmpower/ecdsafail-challenge/issues/4)).
+
 ## 4. The `dx=0` collisions are negligible
 
 An addition adds a *fixed* precomputed classical multiple `M = P[k]`. It hits the
