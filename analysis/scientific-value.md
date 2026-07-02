@@ -143,11 +143,20 @@ catches bugs.
 **Not yet covered:** the reference `table_lookup_3x3.kmx` (a measurement-based
 *unary-iteration* QROM, Gidney 2018 §III.C — the `3·2^w` lookup primitive of the
 windowed ladder, [ADR 0003](adr/0003-ground-ecdlp-estimate-in-source-paper.md)).
-Under the current classical-trajectory simulator its decode accumulator stays
-`|0⟩` (the standalone extract lacks the outer control the full circuit would
-drive), so it reduces to a no-op and is **not** claimed as validated. Modelling
-unary iteration's accumulator re-priming across the address walk is future work;
-the adder primitives above are validated, the QROM is not.
+This is **not** a simulator gap: `verify/kickmix_sim.py` was verified equivalent,
+instruction for instruction, to the reference simulator
+(`original/zkp_ecc_zenodo_v2/lib/src/sim.rs`). Rather, the lookup ships **only**
+as `.kmx` + `.svg` — no test-case / fuzzer / proof artifacts, unlike every iadd
+circuit — i.e. it is an *illustrative extract*. Its selector accumulator is
+`R`-reset to `|0⟩` and driven by an outer control absent from the standalone
+snippet; a systematic probe (accumulator ∈ {0, 1, q2, ¬q2} × address/target
+register roles × table layouts) recovers < 4/8, so it cannot be validated as-is.
+Validating the lookup would require building a self-contained *controlled*
+lookup with its own vectors — tracked in
+[issue #3](https://github.com/CaptainEmpower/ecdsafail-challenge/issues/3). The
+five adder primitives above are validated and the three negative controls
+rejected; the QROM is not, and it is only relevant to the ECDLP *extrapolation*
+(the `3·2^w` term), not the scored point-addition circuit.
 
 ### Scope / honesty
 
