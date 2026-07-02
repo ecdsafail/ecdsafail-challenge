@@ -64,6 +64,9 @@ use crate::sim::Simulator;
 
 pub mod venting;
 
+#[cfg(test)]
+mod completeness_probe;
+
 mod emit;
 pub(crate) use emit::*;
 
