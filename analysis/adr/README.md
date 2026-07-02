@@ -15,3 +15,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0005](0005-validate-lookup-by-construction.md) | Validate the ladder lookup primitive by construction | Accepted |
 | [0006](0006-adder-completeness-approach.md) | Approach to adder completeness (cost estimate → verified attack) | Accepted (Path A viable per gating experiment) |
 | [0007](0007-tier-b-measured-ladder.md) | Tier B: measuring the full-ECDLP ladder | Accepted (first increment; QROM/QFT deferred) |
+| [0008](0008-empirical-completeness-collision-rate.md) | Empirically validate (and sharpen) the completeness collision rate | Accepted (equidistribution validated; zero-window ∞ term dominant) |

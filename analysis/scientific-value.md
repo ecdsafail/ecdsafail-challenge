@@ -255,6 +255,18 @@ circuit (one point addition):
   Tier B ladder). The classical-vs-quantum-addend gap remains, but its cost
   correction is small (only the coordinate steps change; the dominant
   inversion/square are addend-independent).
+- **Adder completeness is now partly measured, not only argued (issue #5,
+  ADR 0008).** `verify/completeness_collision_rate.py` computes the *exact*
+  exceptional-input rate of the affine adder across a faithful windowed ladder
+  (scalar model validated against a real prime-order curve). It confirms the
+  `dx=0` collision rate the completeness argument relies on tracks `2/n` within a
+  small constant (`0.47–0.81×`), and — crucially — that this holds even when the
+  accumulator is far from uniform, because the addend sweeps the group. It also
+  sharpens the bound: the *dominant* exceptional term is the **zero-window ∞**
+  case at `~1/2^w` per addition (`≈2⁻¹¹` total at `w=16`), not the `dx=0` term
+  (`≈2⁻²⁵⁰`). Both sit far below Shor's `~1%` tolerance, so `completeness_overhead
+  = 1.0` holds — but the `2⁻¹¹` figure is conditional on the lookup encoding never
+  emitting the `∞` table entry, a condition the negligibility argument must state.
 
 ---
 
