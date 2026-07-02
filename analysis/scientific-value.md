@@ -106,6 +106,40 @@ BMC cannot unwind. Division-based modular arithmetic is not BMC-tractable, which
 is precisely the argument for the division-free Solinas design; that path stays
 covered by the z3 layer (§1a).
 
+### 1d. Cross-validation against the source paper's reference circuits
+
+The source paper (Babbush et al. 2026, arXiv:2603.28846v2) publishes reference
+`iadd` circuits in the kickmix format — and `iadd8.kmx`/`iadd64.kmx` are
+explicitly "a variant of the adder from quant-ph/0410184" (Cuccaro et al.), the
+**same primitive** this repo's arithmetic core uses.
+`analysis/verify/validate_reference_adders.py` runs them through an independent,
+spec-faithful kickmix simulator (`verify/kickmix_sim.py`, a Python re-derivation
+of the semantics `src/sim.rs` implements) and fuzz-checks, deterministically
+(seeded), that:
+
+- **positive controls** compute `r0 += r1` (and `r0 += r1 + carry` for the
+  classical-offset variant) with the addend unchanged, all clean workspace
+  ancilla returned to `|0⟩`, all **dirty borrowed** ancilla restored to their
+  random input, and global phase `+1`;
+- **negative controls** — the paper's `inc3_wrong_{order,phase,garbage}.kmx` —
+  are **rejected** (wrong output, uncorrected phase kickback, and un-restored
+  ancilla respectively).
+
+```
+POSITIVE: inc3, iadd8, iadd8_with_ancillae, iadd64,
+          iadd8_with_classical_offset_and_dirty_ancillae   -> all PASS
+NEGATIVE: inc3_wrong_order / _phase / _garbage              -> all REJECTED
+```
+
+The `classical_offset_and_dirty_ancillae` case matters most: it is a *classical*
+addend with *dirty* borrowed ancilla and measurement-based-uncomputation phase
+correction — structurally the same shape as this repo's "quantum point +=
+classical point" primitive. Passing it (and rejecting the negatives) confirms the
+kickmix semantics this whole repo relies on reproduce the paper's own artifacts,
+and that the phase-/ancilla-aware fuzz methodology (the paper's Appendix A.5
+correctness argument, mirrored by `eval_circuit`'s garbage checks) actually
+catches bugs.
+
 ### Scope / honesty
 
 This verifies the **algebraic lemmas each optimization class depends on** and
