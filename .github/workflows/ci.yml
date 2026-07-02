@@ -45,23 +45,29 @@ jobs:
     name: score + analysis suite
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # This job COMPILES AND RUNS build_circuit, which contains the (potentially
+    # untrusted) contestant code from src/point_add. Only run it when that code
+    # is trusted: pushes to this repo and same-repo PRs (collaborators). Fork
+    # PRs skip it entirely, so untrusted code never executes on the runner —
+    # a stronger guarantee than a sandbox. benchmark.sh's own bubblewrap
+    # confinement is for the scoring platform; it can't traverse GitHub's
+    # non-world-readable runner home, so here benchmark.sh runs build_circuit
+    # via its documented unconfined fallback, which is safe under this gate.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned toolchain
         run: rustup toolchain install 1.93.0 --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - name: Install sandbox + z3 bindings (bubblewrap, python3-z3)
-        # bubblewrap lets benchmark.sh confine the UNTRUSTED build_circuit
-        # (compiled from src/point_add) exactly as the scoring platform does —
-        # read-only FS, no network, dropped caps, unprivileged uid — instead of
-        # falling back to an unconfined run. z3 is for the analysis proofs.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap libcap2-bin python3-z3
+      - name: Install z3 Python bindings (for the analysis proofs)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-z3
       - name: Fetch crates (so the offline benchmark build succeeds)
         run: cargo fetch --locked
       - name: Build + score the circuit (benchmark.sh -> ops.bin, score.json)
-        # benchmark.sh sandboxes build_circuit under bubblewrap (installed
-        # above) and scores the emitted op stream with the trusted eval_circuit
-        # (which never imports contestant code).
+        # Scoring is done by the trusted eval_circuit (never imports contestant
+        # code). The build_circuit run is gated to trusted events above.
         env:
           RUSTUP_TOOLCHAIN: "1.93.0"
         run: bash benchmark.sh
