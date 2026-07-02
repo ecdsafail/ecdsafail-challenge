@@ -140,23 +140,40 @@ and that the phase-/ancilla-aware fuzz methodology (the paper's Appendix A.5
 correctness argument, mirrored by `eval_circuit`'s garbage checks) actually
 catches bugs.
 
-**Not yet covered:** the reference `table_lookup_3x3.kmx` (a measurement-based
-*unary-iteration* QROM, Gidney 2018 §III.C — the `3·2^w` lookup primitive of the
-windowed ladder, [ADR 0003](adr/0003-ground-ecdlp-estimate-in-source-paper.md)).
-This is **not** a simulator gap: `verify/kickmix_sim.py` was verified equivalent,
-instruction for instruction, to the reference simulator
-(`original/zkp_ecc_zenodo_v2/lib/src/sim.rs`). Rather, the lookup ships **only**
-as `.kmx` + `.svg` — no test-case / fuzzer / proof artifacts, unlike every iadd
-circuit — i.e. it is an *illustrative extract*. Its selector accumulator is
-`R`-reset to `|0⟩` and driven by an outer control absent from the standalone
-snippet; a systematic probe (accumulator ∈ {0, 1, q2, ¬q2} × address/target
-register roles × table layouts) recovers < 4/8, so it cannot be validated as-is.
-Validating the lookup would require building a self-contained *controlled*
-lookup with its own vectors — tracked in
-[issue #3](https://github.com/CaptainEmpower/ecdsafail-challenge/issues/3). The
-five adder primitives above are validated and the three negative controls
-rejected; the QROM is not, and it is only relevant to the ECDLP *extrapolation*
-(the `3·2^w` term), not the scored point-addition circuit.
+### 1e. The windowed-ladder lookup primitive (constructed + validated)
+
+The other ECDLP-ladder primitive is the windowed table lookup (the `3·2^w` term,
+[ADR 0003](adr/0003-ground-ecdlp-estimate-in-source-paper.md)). The source paper
+ships `table_lookup_3x3.kmx`, a measurement-based *unary-iteration* QROM
+(Gidney 2018 §III.C) — but it is an **illustrative extract, not a runnable
+circuit**: it ships only as `.kmx` + `.svg` (no test-case / fuzzer / proof, unlike
+every iadd), and its selector accumulator is `R`-reset to `|0⟩` and driven by an
+outer control absent from the standalone snippet (a systematic probe over
+accumulator ∈ {0, 1, q2, ¬q2} × register roles × table layouts recovers < 4/8).
+This is **not** a simulator gap — `verify/kickmix_sim.py` was verified equivalent
+instruction-for-instruction to the reference simulator
+(`original/zkp_ecc_zenodo_v2/lib/src/sim.rs`).
+
+So the primitive is instead validated by **construction**:
+`verify/controlled_lookup.py` builds a self-contained controlled lookup
+`r0 ^= (ctrl ? r2[r1] : 0)` (a-bit address, d-bit data, `2^a` classical table
+entries, one control qubit) and fuzz-checks it — exhaustively over addresses ×
+both control values × random tables — for correct output, a genuine no-op when
+`ctrl = 0`, all selector ancilla returned to `|0⟩`, and global phase `+1`. Both
+uncomputation strategies pass:
+
+```
+reversible (replay CCX ladder) : a=3/d=3, a=2/d=4, a=4/d=2  -> all PASS
+mbuc (HMR + CZ phase fixup)    : a=3/d=3, a=2/d=4, a=4/d=2  -> all PASS
+```
+
+The MBUC form exercises the same measurement-based-uncomputation + phase-kickback
+machinery as the adders, now in a lookup; deleting its `CZ` phase corrections
+makes the phase check fail loudly (63/64), confirming the test has teeth. The
+reference extract itself remains a diagram, tracked in
+[issue #3](https://github.com/CaptainEmpower/ecdsafail-challenge/issues/3); note
+the lookup is only relevant to the ECDLP *extrapolation*, not the scored
+point-addition circuit.
 
 ### Scope / honesty
 
