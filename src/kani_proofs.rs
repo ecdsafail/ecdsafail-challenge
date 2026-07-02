@@ -14,8 +14,8 @@
 //!       cargo kani --harness solinas_add_u256
 #![cfg(kani)]
 
-use alloy_primitives::U256;
 use crate::point_add::SECP256K1_P;
+use alloy_primitives::U256;
 
 /// Solinas reduction, exactly mirroring `mod_add_qq`'s extended-register logic
 /// but on plain integers instead of emitted gates. Division-free by design
@@ -41,7 +41,11 @@ fn solinas_add_small(a: u64, b: u64, p: u64) -> u64 {
     let (s_lo, s_hi) = a.overflowing_add(b);
     let (t_lo, c_carry) = s_lo.overflowing_add(c);
     let flag = s_hi | c_carry;
-    if flag { t_lo } else { t_lo.overflowing_sub(c).0 }
+    if flag {
+        t_lo
+    } else {
+        t_lo.overflowing_sub(c).0
+    }
 }
 
 #[kani::proof]
@@ -78,7 +82,11 @@ fn solinas_add_u256() {
     let (s_lo, s_hi) = a.overflowing_add(b);
     let ge = s_hi || s_lo >= p;
     let expect = if ge {
-        if s_hi { s_lo.wrapping_add(c) } else { s_lo - p }
+        if s_hi {
+            s_lo.wrapping_add(c)
+        } else {
+            s_lo - p
+        }
     } else {
         s_lo
     };

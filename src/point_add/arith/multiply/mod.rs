@@ -56,7 +56,6 @@ pub(crate) fn mod_mul_write_into_zero_acc_schoolbook_lowq(
     b.free_vec(&tmp_ext);
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────────────
 // Litinski add-subtract (arXiv:2410.00899) primitives
 // ─────────────────────────────────────────────────────────────────────────────────────
@@ -65,7 +64,12 @@ pub(crate) fn mod_mul_write_into_zero_acc_schoolbook_lowq(
 /// Cuccaro (no carry ancillae). Saves ~n qubits of transient peak at the
 /// cost of ~n extra Toffolis per call. Useful when called inside the
 /// Kaliski-body mul sites where peak is tight.
-pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
+pub(crate) fn controlled_add_subtract_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+) {
     let n = x.len();
     debug_assert_eq!(acc.len(), n + 1);
 
@@ -94,7 +98,12 @@ pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[Qubi
 }
 
 /// Inverse of `controlled_add_subtract_lowq`.
-pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
+pub(crate) fn controlled_add_subtract_lowq_inverse(
+    b: &mut B,
+    x: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+) {
     let n = x.len();
     debug_assert_eq!(acc.len(), n + 1);
 
@@ -127,7 +136,12 @@ pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc
 /// correction adders. Saves roughly `n` transient qubits at peak vs. the
 /// `_fast` variant at the cost of ~n extra Toffolis per row. Top-level
 /// semantics identical to `schoolbook_mul_into_addsub`.
-pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: &[QubitId]) {
+pub(crate) fn schoolbook_mul_into_addsub_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
     let n = x.len();
     debug_assert_eq!(y.len(), n);
     debug_assert_eq!(tmp_ext.len(), 2 * n);
@@ -253,7 +267,6 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
     b.free(low);
 }
 
-
 mod squaring;
 pub(crate) use squaring::*;
 
@@ -299,8 +312,12 @@ mod tests {
         controlled_add_subtract_lowq(&mut b, &x, &acc, ctrl);
         let nq = b.next_qubit as usize;
         let nb = b.next_bit as usize;
-        let inputs: std::collections::HashSet<u64> =
-            x.iter().chain(acc.iter()).map(|q| q.0).chain([ctrl.0]).collect();
+        let inputs: std::collections::HashSet<u64> = x
+            .iter()
+            .chain(acc.iter())
+            .map(|q| q.0)
+            .chain([ctrl.0])
+            .collect();
 
         for batch in 0..64usize {
             let mut seed = Shake128::default();
@@ -330,11 +347,19 @@ mod tests {
                 };
                 assert_eq!(get(&sim, &acc, shot), exp, "acc wrong, case {case}");
                 assert_eq!(get(&sim, &x, shot), xv, "x changed, case {case}");
-                assert_eq!((sim.qubit(ctrl) >> shot) & 1, c, "ctrl changed, case {case}");
+                assert_eq!(
+                    (sim.qubit(ctrl) >> shot) & 1,
+                    c,
+                    "ctrl changed, case {case}"
+                );
             }
             for q in 0..nq as u64 {
                 if !inputs.contains(&q) {
-                    assert_eq!(sim.qubit(QubitId(q)), 0, "ancilla q{q} not clean (batch {batch})");
+                    assert_eq!(
+                        sim.qubit(QubitId(q)),
+                        0,
+                        "ancilla q{q} not clean (batch {batch})"
+                    );
                 }
             }
         }

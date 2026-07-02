@@ -124,8 +124,8 @@ fn load_ops(path: &str) -> Result<Vec<Op>, String> {
         dec.read_exact(&mut rec)
             .map_err(|e| format!("op {i}: short read from compressed body: {e}"))?;
         let kind_raw = u32::from_le_bytes(rec[0..4].try_into().unwrap());
-        let kind = op_kind_from_u32(kind_raw)
-            .ok_or_else(|| format!("op {i}: unknown kind {kind_raw}"))?;
+        let kind =
+            op_kind_from_u32(kind_raw).ok_or_else(|| format!("op {i}: unknown kind {kind_raw}"))?;
         // rec[4..8] are reserved padding for 8-byte alignment.
         let q_control2 = QubitId(read_u64(&rec, 8));
         let q_control1 = QubitId(read_u64(&rec, 16));
@@ -518,7 +518,10 @@ fn main() {
     println!("  phase-garbage batches   : {}", r.phase_garbage_batches);
     println!("  ancilla-garbage batches : {}", r.ancilla_garbage_batches);
     if !r.ok {
-        let reason = r.fail_reason.clone().unwrap_or_else(|| "(no detail)".into());
+        let reason = r
+            .fail_reason
+            .clone()
+            .unwrap_or_else(|| "(no detail)".into());
         println!("\n!! correctness FAILED: {reason}");
         let fail_note = format!("{note} | {reason}");
         append_results_row(

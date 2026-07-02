@@ -14,8 +14,8 @@
 //! AND-uncompute is a measurement-vented `clear_and` (HMR + conditional-Z,
 //! zero Toffoli).
 
-use super::{B, BExt};
-use crate::circuit::{QubitId};
+use super::{BExt, B};
+use crate::circuit::QubitId;
 
 // ===================================================================
 // clear_and: measurement-vented AND-uncompute (HMR + conditional-Z).
@@ -109,12 +109,7 @@ fn tail4_top32_enabled() -> bool {
     std::env::var("TLM_TAIL4_TOP32").ok().as_deref() == Some("1")
 }
 
-fn toggle_mcx_with_dirty(
-    circ: &mut B,
-    controls: &[QubitId],
-    dirty: &[QubitId],
-    target: QubitId,
-) {
+fn toggle_mcx_with_dirty(circ: &mut B, controls: &[QubitId], dirty: &[QubitId], target: QubitId) {
     debug_assert!(!controls.contains(&target));
     match controls.len() {
         0 => circ.x(target),
@@ -157,8 +152,8 @@ fn toggle_anf_with_dirty(
 fn tail4_reordered_raw(raw: &[QubitId]) -> [QubitId; 12] {
     assert_eq!(raw.len(), 12, "tail4 raw window must contain four symbols");
     [
-        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10],
-        raw[2], raw[5], raw[8], raw[11],
+        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10], raw[2], raw[5], raw[8],
+        raw[11],
     ]
 }
 
@@ -211,7 +206,11 @@ fn decompress_tail4_top32_payload(circ: &mut B, code: &[QubitId]) -> Vec<QubitId
 }
 
 fn compress_tail4_top32(circ: &mut B, raw: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw.len(), 15, "tail4 hybrid window must contain five symbols");
+    assert_eq!(
+        raw.len(),
+        15,
+        "tail4 hybrid window must contain five symbols"
+    );
     let mut data = raw[..3].to_vec();
     data.extend(compress_tail4_top32_payload(circ, &raw[3..]));
     data
@@ -277,7 +276,11 @@ fn apply_op_off(circ: &mut B, w: &[&QubitId], op: (u8, u8, u8, u8), off: u8) {
 /// Apply [`MERGE25_OPS`] (forward or reversed) with the AND-uncompute targets
 /// vented via [`clear_and`]. `off` selects the wire layout.
 fn apply_merge25(circ: &mut B, w: &[&QubitId], off: u8, reverse: bool) {
-    let clear: &[usize] = if reverse { &MERGE25_CLEAR_REV } else { &MERGE25_CLEAR_FWD };
+    let clear: &[usize] = if reverse {
+        &MERGE25_CLEAR_REV
+    } else {
+        &MERGE25_CLEAR_FWD
+    };
     let n = MERGE25_OPS.len();
     for step in 0..n {
         let i = if reverse { n - 1 - step } else { step };

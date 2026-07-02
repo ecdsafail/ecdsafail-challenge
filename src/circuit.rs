@@ -1,9 +1,8 @@
 /// This file contains code for working with kickmix circuit files.
-
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
 use std::num::ParseIntError;
+use std::path::Path;
 
 fn parse_u64_below_max(s: &str) -> Result<u64, ParseIntError> {
     let result: u64 = s.parse().unwrap();
@@ -45,7 +44,7 @@ pub enum OperationType {
     CCX = 13,
     /// Phase-flips states where three qubits are all 1.
     CCZ = 14,
-   /// Pushes a bit onto the condition stack.
+    /// Pushes a bit onto the condition stack.
     /// (Operations other than PUSH_CONDITION/POP_CONDITION do not
     /// occur unless all values on the condition stack are True.)
     PushCondition = 15,
@@ -128,13 +127,22 @@ impl Op {
     pub fn validate(&self) {
         // Check for qubit aliasing.
         if self.q_target == self.q_control1 && self.q_target != NO_QUBIT {
-            panic!("kind={:?} and q_target==q_control1==q{}", self.kind, self.q_target.0);
+            panic!(
+                "kind={:?} and q_target==q_control1==q{}",
+                self.kind, self.q_target.0
+            );
         }
         if self.q_target == self.q_control2 && self.q_target != NO_QUBIT {
-            panic!("kind={:?} and q_target==q_control2==q{}", self.kind, self.q_target.0);
+            panic!(
+                "kind={:?} and q_target==q_control2==q{}",
+                self.kind, self.q_target.0
+            );
         }
         if self.q_control1 == self.q_control2 && self.q_control1 != NO_QUBIT {
-            panic!("kind={:?} and q_control1==q_control2==q{}", self.kind, self.q_control1.0);
+            panic!(
+                "kind={:?} and q_control1==q_control2==q{}",
+                self.kind, self.q_control1.0
+            );
         }
 
         const BANNED: u8 = 0;
@@ -155,7 +163,10 @@ impl Op {
             }
             OperationType::AppendToRegister => {
                 if (self.q_target == NO_QUBIT) == (self.c_target == NO_BIT) {
-                    panic!("kind={:?} needs exactly one qubit target or bit target", self.kind);
+                    panic!(
+                        "kind={:?} needs exactly one qubit target or bit target",
+                        self.kind
+                    );
                 }
                 c_target_flag = ALLOWED;
                 q_target_flag = ALLOWED;
@@ -342,9 +353,6 @@ impl Circuit {
     }
 }
 
-
-
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DepthStats {
     /// Longest chain of non-Clifford (CCX/CCZ) gates respecting data hazards —
@@ -474,30 +482,46 @@ pub fn analyze_depth<'b>(
                 let mut start = 0u64;
                 for k in 0..nrq {
                     let i = rq[k] as usize;
-                    if $qw[i] > start { start = $qw[i]; }
+                    if $qw[i] > start {
+                        start = $qw[i];
+                    }
                 }
                 for k in 0..nwq {
                     let i = wq[k] as usize;
-                    if $qw[i] > start { start = $qw[i]; }
-                    if $qr[i] > start { start = $qr[i]; }
+                    if $qw[i] > start {
+                        start = $qw[i];
+                    }
+                    if $qr[i] > start {
+                        start = $qr[i];
+                    }
                 }
                 if op.c_condition != NO_BIT {
                     let i = op.c_condition.0 as usize;
-                    if $bw[i] > start { start = $bw[i]; }
+                    if $bw[i] > start {
+                        start = $bw[i];
+                    }
                 }
                 for &c in &stack {
                     let i = c as usize;
-                    if $bw[i] > start { start = $bw[i]; }
+                    if $bw[i] > start {
+                        start = $bw[i];
+                    }
                 }
                 if let Some(b) = wb {
                     let i = b as usize;
-                    if $bw[i] > start { start = $bw[i]; }
-                    if $br[i] > start { start = $br[i]; }
+                    if $bw[i] > start {
+                        start = $bw[i];
+                    }
+                    if $br[i] > start {
+                        start = $br[i];
+                    }
                 }
                 let comp = start + $cost;
                 for k in 0..nrq {
                     let i = rq[k] as usize;
-                    if comp > $qr[i] { $qr[i] = comp; }
+                    if comp > $qr[i] {
+                        $qr[i] = comp;
+                    }
                 }
                 for k in 0..nwq {
                     let i = wq[k] as usize;
@@ -505,17 +529,23 @@ pub fn analyze_depth<'b>(
                 }
                 if op.c_condition != NO_BIT {
                     let i = op.c_condition.0 as usize;
-                    if comp > $br[i] { $br[i] = comp; }
+                    if comp > $br[i] {
+                        $br[i] = comp;
+                    }
                 }
                 for &c in &stack {
                     let i = c as usize;
-                    if comp > $br[i] { $br[i] = comp; }
+                    if comp > $br[i] {
+                        $br[i] = comp;
+                    }
                 }
                 if let Some(b) = wb {
                     let i = b as usize;
                     $bw[i] = comp;
                 }
-                if comp > $max { $max = comp; }
+                if comp > $max {
+                    $max = comp;
+                }
             }};
         }
         metric!(qwt, qrt, bwt, brt, cost_t, max_t);
@@ -558,7 +588,8 @@ pub fn analyze_ops<'b>(ops: impl Iterator<Item = &'b Op>) -> (u64, u64, u64, Vec
         }
         if native_op.kind == OperationType::AppendToRegister {
             if native_op.q_target != NO_QUBIT {
-                registers[native_op.r_target.0 as usize].push(QubitOrBit::Qubit(native_op.q_target));
+                registers[native_op.r_target.0 as usize]
+                    .push(QubitOrBit::Qubit(native_op.q_target));
             }
             if native_op.c_target != NO_BIT {
                 registers[native_op.r_target.0 as usize].push(QubitOrBit::Bit(native_op.c_target));
@@ -639,5 +670,3 @@ mod depth_tests {
         assert_eq!(d.toffoli_depth, 1);
     }
 }
-
-

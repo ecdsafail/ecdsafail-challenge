@@ -248,12 +248,7 @@ pub(crate) fn cmp_lt_phase_conditioned_with_cin_borrowed_carries(
     b.pop_condition();
 }
 
-pub(crate) fn cmp_lt_phase_conditioned(
-    b: &mut B,
-    u: &[QubitId],
-    v: &[QubitId],
-    phase: BitId,
-) {
+pub(crate) fn cmp_lt_phase_conditioned(b: &mut B, u: &[QubitId], v: &[QubitId], phase: BitId) {
     let n = u.len();
     assert_eq!(v.len(), n);
     assert!(n > 0);
@@ -274,7 +269,6 @@ pub(crate) fn cmp_lt_phase_conditioned(
     b.pop_condition();
     b.free(c_in);
 }
-
 
 /// Slow (carry-array-free) `flag ^= (u < v + c_in)` comparator. Like
 /// `cmp_lt_into` but threads a borrowed carry-IN qubit (left clean on exit)
@@ -341,4 +335,3 @@ pub(crate) fn cmp_lt_into(b: &mut B, u: &[QubitId], v: &[QubitId], flag: QubitId
 
     b.free(c_in);
 }
-

@@ -60,7 +60,6 @@ pub(crate) fn sub_nbit_qq(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     b.free(c_in);
 }
 
-
 pub(crate) fn add_nbit_const(b: &mut B, acc: &[QubitId], c: U256) {
     let n = acc.len();
     let a = load_const(b, n, c);
@@ -74,5 +73,3 @@ pub(crate) fn sub_nbit_const(b: &mut B, acc: &[QubitId], c: U256) {
     sub_nbit_qq(b, &a, acc);
     unload_const(b, &a, c);
 }
-
-

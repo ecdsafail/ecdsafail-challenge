@@ -67,7 +67,10 @@ fn ladder_composition_is_additive_flat_width_serial_depth() {
         assert_eq!(tof, k * pa_tof, "k={k}: toffoli not additive");
         // Peak width flat: chaining reuses the same qubit ids (ancilla returned
         // to |0>), so the composed width equals a single addition's.
-        assert_eq!(qubits, pa_qubits, "k={k}: peak width grew (ancilla not reused)");
+        assert_eq!(
+            qubits, pa_qubits,
+            "k={k}: peak width grew (ancilla not reused)"
+        );
         // Depth serial: the accumulator written by copy i is read by copy i+1, so
         // the non-Clifford critical path is ~k times a single addition's.
         assert_eq!(tdepth, k * pa_tdepth, "k={k}: toffoli-depth not serial");

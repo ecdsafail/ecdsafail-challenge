@@ -15,9 +15,12 @@
 //!   PAD = 21  (the +f window carry-drop -> ~2^-PAD per-fire approximation,
 //!              inherited from `super::arith`'s mod-sub / mod-double folds).
 
-use super::arith::{self, cuccaro_carry, mod_add_lowpeak, mod_add_shifted_low, mod_sub, mod_sub_shifted_low, F_SECP256K1, LSBS};
-use super::{B, BExt};
-use crate::circuit::{QubitId};
+use super::arith::{
+    self, cuccaro_carry, mod_add_lowpeak, mod_add_shifted_low, mod_sub, mod_sub_shifted_low,
+    F_SECP256K1, LSBS,
+};
+use super::{BExt, B};
+use crate::circuit::QubitId;
 
 const N: usize = 256;
 
@@ -226,7 +229,11 @@ fn flipped(op: ShiftOp) -> ShiftOp {
 }
 
 fn apply_full_width(circ: &mut B, operand: &[QubitId], output_reg: &[QubitId], op: ShiftOp) {
-    assert_eq!(operand.len(), N, "full-width modular operand must be 256 bits");
+    assert_eq!(
+        operand.len(),
+        N,
+        "full-width modular operand must be 256 bits"
+    );
     match op {
         ShiftOp::Add => mod_add_lowpeak(circ, operand, output_reg),
         ShiftOp::Sub => mod_sub(circ, operand, output_reg),
@@ -250,7 +257,10 @@ fn apply_shifted_value_direct(
     shift: usize,
     op: ShiftOp,
 ) {
-    assert!(value.len() + shift <= N, "shifted value must fit in 256 bits");
+    assert!(
+        value.len() + shift <= N,
+        "shifted value must fit in 256 bits"
+    );
     let low_pads = alloc_zeroes(circ, shift);
     let high_pads = alloc_zeroes(circ, N - shift - value.len());
     let mut operand = Vec::with_capacity(N);
@@ -269,7 +279,10 @@ fn apply_shifted_value_low(
     shift: usize,
     op: ShiftOp,
 ) {
-    assert!(value.len() + shift <= N, "shifted value must fit in 256 bits");
+    assert!(
+        value.len() + shift <= N,
+        "shifted value must fit in 256 bits"
+    );
     if shift == 0 {
         apply_unshifted_value(circ, value, output_reg, op);
         return;
@@ -293,10 +306,19 @@ fn env_tag_enabled(var: &str, tag: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn apply_f_times_value_tagged(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp, tag: &str) {
+fn apply_f_times_value_tagged(
+    circ: &mut B,
+    value: &[QubitId],
+    output_reg: &[QubitId],
+    op: ShiftOp,
+    tag: &str,
+) {
     assert!(value.len() <= N, "f-fold value must fit in 256 bits");
     if value.len() + 32 <= N
-        && (std::env::var("TLM_SQUARE_F_RAMP10_DIRECT32").ok().as_deref() == Some("1")
+        && (std::env::var("TLM_SQUARE_F_RAMP10_DIRECT32")
+            .ok()
+            .as_deref()
+            == Some("1")
             || env_tag_enabled("TLM_SQUARE_F_RAMP10_DIRECT32_TAGS", tag))
     {
         let pads = alloc_zeroes(circ, N + 1 - value.len());
@@ -419,8 +441,17 @@ fn apply_f_times_value(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], 
     apply_f_times_value_tagged(circ, value, output_reg, op, "generic");
 }
 
-fn apply_shifted_128_tagged(circ: &mut B, value: &[QubitId], output_reg: &[QubitId], op: ShiftOp, tag: &str) {
-    assert!(value.len() <= N + 2, "128-shifted half product must be at most 258 bits");
+fn apply_shifted_128_tagged(
+    circ: &mut B,
+    value: &[QubitId],
+    output_reg: &[QubitId],
+    op: ShiftOp,
+    tag: &str,
+) {
+    assert!(
+        value.len() <= N + 2,
+        "128-shifted half product must be at most 258 bits"
+    );
     let low_len = value.len().min(128);
     let low_pads = alloc_zeroes(circ, 128);
     let high_pads = alloc_zeroes(circ, 128 - low_len);
@@ -448,7 +479,14 @@ fn build_sum_hi_lo(circ: &mut B, lambda: &[QubitId]) -> Vec<QubitId> {
     for i in 0..128 {
         circ.cx(lambda[i], sum[i]);
     }
-    cuccaro_carry(circ, None, &lambda[128..N], &sum[..128], None, Some(&sum[128]));
+    cuccaro_carry(
+        circ,
+        None,
+        &lambda[128..N],
+        &sum[..128],
+        None,
+        Some(&sum[128]),
+    );
     sum
 }
 
@@ -491,7 +529,11 @@ fn unbuild_sum_hi_lo(circ: &mut B, lambda: &[QubitId], sum: Vec<QubitId>) {
 /// inherits `super::arith`'s `+f`-window carry drop -- a documented ~2^-PAD
 /// (PAD=21) per-fire approximation. The common path is exact; the only legal
 /// divergence is that rare large-input +f-window miss.
-pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], output_reg: &[QubitId]) {
+pub fn mod_square_sub_pm_secp256k1_symmetric(
+    circ: &mut B,
+    lambda: &[QubitId],
+    output_reg: &[QubitId],
+) {
     let n = N;
     assert_eq!(lambda.len(), n, "lambda must be n=256 bits (< q)");
     assert_eq!(output_reg.len(), n, "output must be n=256 bits (< q)");
