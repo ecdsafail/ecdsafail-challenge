@@ -345,6 +345,189 @@ impl Circuit {
 
 
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DepthStats {
+    /// Longest chain of non-Clifford (CCX/CCZ) gates respecting data hazards —
+    /// the fault-tolerance-relevant "T-depth" / magic-state depth that sets the
+    /// reaction-limited runtime.
+    pub toffoli_depth: u64,
+    /// Longest chain of quantum gates (any qubit-touching op) respecting hazards.
+    pub gate_depth: u64,
+}
+
+/// Critical-path depth of the op stream under read/write (RAW/WAR/WAW) hazards on
+/// qubits and classical bits.
+///
+/// A wire's availability is the completion time of the last op that *wrote* it; a
+/// read waits for the last write (RAW); a write waits for the last write (WAW)
+/// and the last read (WAR). `c_condition` and every bit on the condition stack
+/// are treated as READS — a controlled gate depends on the bit but does not
+/// advance it — so gates that merely share a condition are not serialized behind
+/// it. This keeps the deferred phase corrections of the measurement-based
+/// uncompute in the layer their real dependencies allow.
+///
+/// `num_qubits`/`num_bits` must bound every id in the stream (use `analyze_ops`).
+pub fn analyze_depth<'b>(
+    ops: impl Iterator<Item = &'b Op>,
+    num_qubits: usize,
+    num_bits: usize,
+) -> DepthStats {
+    // last-write / last-read completion time per wire, one set per metric.
+    let mut qwt = vec![0u64; num_qubits];
+    let mut qrt = vec![0u64; num_qubits];
+    let mut bwt = vec![0u64; num_bits];
+    let mut brt = vec![0u64; num_bits];
+    let mut qwg = vec![0u64; num_qubits];
+    let mut qrg = vec![0u64; num_qubits];
+    let mut bwg = vec![0u64; num_bits];
+    let mut brg = vec![0u64; num_bits];
+
+    let mut stack: Vec<u64> = Vec::new(); // condition-bit ids currently pushed
+    let mut max_t = 0u64;
+    let mut max_g = 0u64;
+
+    for op in ops {
+        match op.kind {
+            OperationType::PushCondition => {
+                if op.c_condition != NO_BIT {
+                    stack.push(op.c_condition.0);
+                }
+                continue;
+            }
+            OperationType::PopCondition => {
+                stack.pop();
+                continue;
+            }
+            OperationType::Register
+            | OperationType::AppendToRegister
+            | OperationType::DebugPrint
+            | OperationType::Neg => continue,
+            _ => {}
+        }
+
+        // Read/write qubit sets by kind (validate() guarantees no intra-op aliasing).
+        let mut rq = [0u64; 3];
+        let mut nrq = 0usize;
+        let mut wq = [0u64; 2];
+        let mut nwq = 0usize;
+        match op.kind {
+            OperationType::CCX => {
+                rq[0] = op.q_control1.0;
+                rq[1] = op.q_control2.0;
+                nrq = 2;
+                wq[0] = op.q_target.0;
+                nwq = 1;
+            }
+            OperationType::CX => {
+                rq[0] = op.q_control1.0;
+                nrq = 1;
+                wq[0] = op.q_target.0;
+                nwq = 1;
+            }
+            OperationType::Swap => {
+                wq[0] = op.q_control1.0;
+                wq[1] = op.q_target.0;
+                nwq = 2;
+            }
+            OperationType::X | OperationType::Hmr | OperationType::R => {
+                wq[0] = op.q_target.0;
+                nwq = 1;
+            }
+            OperationType::Z => {
+                rq[0] = op.q_target.0;
+                nrq = 1;
+            }
+            OperationType::CZ => {
+                rq[0] = op.q_target.0;
+                rq[1] = op.q_control1.0;
+                nrq = 2;
+            }
+            OperationType::CCZ => {
+                rq[0] = op.q_target.0;
+                rq[1] = op.q_control1.0;
+                rq[2] = op.q_control2.0;
+                nrq = 3;
+            }
+            _ => {} // BitInvert / BitStore*: classical-bit writes only
+        }
+        let wb: Option<u64> = if op.c_target != NO_BIT {
+            Some(op.c_target.0)
+        } else {
+            None
+        };
+        let cost_t = matches!(op.kind, OperationType::CCX | OperationType::CCZ) as u64;
+        let cost_g = matches!(
+            op.kind,
+            OperationType::CCX
+                | OperationType::CX
+                | OperationType::Swap
+                | OperationType::X
+                | OperationType::Z
+                | OperationType::CZ
+                | OperationType::CCZ
+                | OperationType::Hmr
+                | OperationType::R
+        ) as u64;
+
+        macro_rules! metric {
+            ($qw:ident, $qr:ident, $bw:ident, $br:ident, $cost:expr, $max:ident) => {{
+                let mut start = 0u64;
+                for k in 0..nrq {
+                    let i = rq[k] as usize;
+                    if $qw[i] > start { start = $qw[i]; }
+                }
+                for k in 0..nwq {
+                    let i = wq[k] as usize;
+                    if $qw[i] > start { start = $qw[i]; }
+                    if $qr[i] > start { start = $qr[i]; }
+                }
+                if op.c_condition != NO_BIT {
+                    let i = op.c_condition.0 as usize;
+                    if $bw[i] > start { start = $bw[i]; }
+                }
+                for &c in &stack {
+                    let i = c as usize;
+                    if $bw[i] > start { start = $bw[i]; }
+                }
+                if let Some(b) = wb {
+                    let i = b as usize;
+                    if $bw[i] > start { start = $bw[i]; }
+                    if $br[i] > start { start = $br[i]; }
+                }
+                let comp = start + $cost;
+                for k in 0..nrq {
+                    let i = rq[k] as usize;
+                    if comp > $qr[i] { $qr[i] = comp; }
+                }
+                for k in 0..nwq {
+                    let i = wq[k] as usize;
+                    $qw[i] = comp;
+                }
+                if op.c_condition != NO_BIT {
+                    let i = op.c_condition.0 as usize;
+                    if comp > $br[i] { $br[i] = comp; }
+                }
+                for &c in &stack {
+                    let i = c as usize;
+                    if comp > $br[i] { $br[i] = comp; }
+                }
+                if let Some(b) = wb {
+                    let i = b as usize;
+                    $bw[i] = comp;
+                }
+                if comp > $max { $max = comp; }
+            }};
+        }
+        metric!(qwt, qrt, bwt, brt, cost_t, max_t);
+        metric!(qwg, qrg, bwg, brg, cost_g, max_g);
+    }
+
+    DepthStats {
+        toffoli_depth: max_t,
+        gate_depth: max_g,
+    }
+}
+
 pub fn analyze_ops<'b>(ops: impl Iterator<Item = &'b Op>) -> (u64, u64, u64, Vec<Vec<QubitOrBit>>) {
     let mut registers: Vec<Vec<QubitOrBit>> = Vec::new();
     let mut num_qubits = 0u64;
@@ -384,6 +567,77 @@ pub fn analyze_ops<'b>(ops: impl Iterator<Item = &'b Op>) -> (u64, u64, u64, Vec
     }
 
     (num_qubits, num_bits, num_registers, registers)
+}
+
+#[cfg(test)]
+mod depth_tests {
+    use super::*;
+
+    fn ccx(c1: u64, c2: u64, t: u64) -> Op {
+        let mut o = Op::empty();
+        o.kind = OperationType::CCX;
+        o.q_control1 = QubitId(c1);
+        o.q_control2 = QubitId(c2);
+        o.q_target = QubitId(t);
+        o
+    }
+    fn cx(c1: u64, t: u64) -> Op {
+        let mut o = Op::empty();
+        o.kind = OperationType::CX;
+        o.q_control1 = QubitId(c1);
+        o.q_target = QubitId(t);
+        o
+    }
+    fn push(b: u64) -> Op {
+        let mut o = Op::empty();
+        o.kind = OperationType::PushCondition;
+        o.c_condition = BitId(b);
+        o
+    }
+    fn pop() -> Op {
+        let mut o = Op::empty();
+        o.kind = OperationType::PopCondition;
+        o
+    }
+
+    #[test]
+    fn dependent_toffolis_stack_in_depth() {
+        // Two CCX writing the same target must serialize (WAW): depth 2.
+        let ops = [ccx(0, 1, 2), ccx(0, 1, 2)];
+        let d = analyze_depth(ops.iter(), 3, 0);
+        assert_eq!(d.toffoli_depth, 2);
+        assert_eq!(d.gate_depth, 2);
+    }
+
+    #[test]
+    fn disjoint_toffolis_share_a_layer() {
+        // Disjoint qubits => same layer => depth 1.
+        let ops = [ccx(0, 1, 2), ccx(3, 4, 5)];
+        let d = analyze_depth(ops.iter(), 6, 0);
+        assert_eq!(d.toffoli_depth, 1);
+        assert_eq!(d.gate_depth, 1);
+    }
+
+    #[test]
+    fn critical_path_through_cnot() {
+        // CCX(0,1,2); CCX(3,4,5); CX(2,3); CCX(0,1,2)
+        // toffoli critical path: CCX#1 -> (CX carries 2->3 dep) -> CCX#4 via WAW on 2 = 2.
+        // gate critical path: CCX#1 (reads/writes 2) -> CX reads 2 (layer2) -> CCX#4 writes 2
+        //   must follow the CX read of 2 (WAR) => layer 3.
+        let ops = [ccx(0, 1, 2), ccx(3, 4, 5), cx(2, 3), ccx(0, 1, 2)];
+        let d = analyze_depth(ops.iter(), 6, 0);
+        assert_eq!(d.toffoli_depth, 2);
+        assert_eq!(d.gate_depth, 3);
+    }
+
+    #[test]
+    fn shared_condition_does_not_serialize() {
+        // Both CCX are controlled by bit 0 (a READ). Disjoint qubits => depth 1,
+        // i.e. the condition bit does not force them into separate layers.
+        let ops = [push(0), ccx(0, 1, 2), ccx(3, 4, 5), pop()];
+        let d = analyze_depth(ops.iter(), 6, 1);
+        assert_eq!(d.toffoli_depth, 1);
+    }
 }
 
 

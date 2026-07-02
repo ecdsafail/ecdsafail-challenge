@@ -19,3 +19,9 @@ pub mod point_add;
 pub mod sim;
 #[allow(dead_code)]
 pub mod weierstrass_elliptic_curve;
+
+// Bit-precise Kani proofs binding the arithmetic contract to the real Rust
+// types. Compiled only under `cargo kani` (--cfg kani); invisible to the normal
+// build and to benchmark.sh, so it cannot affect the circuit or the score.
+#[cfg(kani)]
+mod kani_proofs;

@@ -14,6 +14,12 @@ path = "src/bin/build_circuit.rs"
 name = "eval_circuit"
 path = "src/bin/eval_circuit.rs"
 
+# Analysis-only: measures circuit depth from ops.bin -> depth.json.
+# Does not run the simulator or touch score.json.
+[[bin]]
+name = "depth_report"
+path = "src/bin/depth_report.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

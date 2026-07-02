@@ -4,3 +4,4 @@ score.*
 .autoresearch
 **/.DS_Store
 ops.bin
+depth.json
