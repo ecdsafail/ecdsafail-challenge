@@ -243,11 +243,18 @@ circuit (one point addition):
   read/write hazards), feeding measured runtime and spacetime volume into the
   cost model.
 - The full-attack ladder cost now uses the source paper's exact closed form
-  (`(PA+3·2^w)(2n/w−4)`, w=16), but adder completeness (exceptional cases: P==Q,
-  P==−Q, ∞) and the classical-vs-quantum-addend gap (this repo's PA folds a
-  compile-time classical addend; the windowed ladder loads P[k] from a quantum
-  table) remain assumptions pending a full-circuit build; only the per-addition
-  figures are measured.
+  (`(PA+3·2^w)(2n/w−4)`, w=16). Adder **completeness** (exceptional cases P==Q,
+  P==−Q, ∞) is now backed by a quantitative **negligibility argument**
+  (`completeness_argument.md`): the gating experiment shows exceptions keep the
+  ancilla clean but corrupt output/phase on the offending state only, so it
+  suffices to bound their amplitude — the ∞-accumulator is removed structurally
+  (paper's direct-lookup first window) and the residual `dx=0` collisions total
+  `≈ 2⁻²⁵⁰` (union bound over 28 additions), >240 bits below Shor's ~1%
+  tolerance. This justifies `completeness_overhead = 1.0`; it is an argument, not
+  a machine-checked proof (equidistribution is heuristic; ∞-removal needs the
+  Tier B ladder). The classical-vs-quantum-addend gap remains, but its cost
+  correction is small (only the coordinate steps change; the dominant
+  inversion/square are addend-independent).
 
 ---
 
