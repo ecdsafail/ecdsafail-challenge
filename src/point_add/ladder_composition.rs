@@ -39,6 +39,13 @@ fn ladder_composition_is_additive_flat_width_serial_depth() {
     let nb = pa_bits as usize;
     let pa_tdepth = analyze_depth(ops.iter(), nq, nb).toffoli_depth;
 
+    // A well-formed point-add has non-zero Toffoli count and depth; assert it so
+    // the ratio reporting below can never divide by zero.
+    assert!(
+        pa_tof > 0 && pa_tdepth > 0,
+        "degenerate build: pa_tof={pa_tof}, pa_tdepth={pa_tdepth}"
+    );
+
     eprintln!("\n=== issue #4 measured ladder composition (chained k additions) ===");
     eprintln!(
         "  k=1 (per addition): toffoli={pa_tof}  peak_qubits={pa_qubits}  toffoli_depth={pa_tdepth}"
