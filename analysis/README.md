@@ -16,6 +16,7 @@ nothing here can affect the circuit or the score.
 | `ecdlp_estimate.py` | Derives the **full Shor-ECDLP** cost by composing the measured per-addition primitive with the double-and-add ladder structure (`2(n+1)` additions, windowed variants); replaces the old hand-picked multiplier. Analysis-only, no `score.json` impact. |
 | `../src/bin/depth_report.rs` | Standalone binary: measures toffoli-depth / gate-depth of `ops.bin` via `circuit::analyze_depth`, writes `depth.json`. Does **not** run the simulator or touch `score.json`. |
 | `scientific-value.md` | Synthesis: what is proven, the cost mapping, and the generalizable vs. curve-specific techniques. |
+| `completeness_argument.md` | Quantitative negligibility argument (issue #5) that the incomplete affine adder suffices for a working Shor run: exceptional-input amplitude `≈ 2⁻²⁵⁰`, >240 bits below Shor's tolerance. |
 | `adr/` | Architecture decision records for the analysis layer (isolation from scoring, derived ECDLP estimate). |
 
 ## Run everything
