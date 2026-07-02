@@ -16,3 +16,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0006](0006-adder-completeness-approach.md) | Approach to adder completeness (cost estimate → verified attack) | Accepted (Path A viable per gating experiment) |
 | [0007](0007-tier-b-measured-ladder.md) | Tier B: measuring the full-ECDLP ladder | Accepted (first increment; QROM/QFT deferred) |
 | [0008](0008-empirical-completeness-collision-rate.md) | Empirically validate (and sharpen) the completeness collision rate | Accepted (equidistribution validated; zero-window ∞ term dominant) |
+| [0011](0011-streamed-full-ladder.md) | Stream-emit and measure the full ECDLP ladder (Tier B, issue #4) | Accepted (ladder emitted+measured; quantum-addend PA the one assumption) |

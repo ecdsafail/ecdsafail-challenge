@@ -68,6 +68,8 @@ pub mod venting;
 mod completeness_probe;
 #[cfg(test)]
 mod ladder_composition;
+#[cfg(test)]
+mod ladder_full;
 
 mod emit;
 pub(crate) use emit::*;
