@@ -1135,36 +1135,6 @@ pub(crate) fn iadd_dirty_2clean_qoffset(
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-pub(crate) fn isub_dirty_2clean_qoffset(
-    b: &mut B,
-    q_target: &[QubitId],
-    q_dirty: &[QubitId],
-    q_clean2: &[QubitId; 2],
-    q_offset: &[QubitId],
-) {
-    let n = q_target.len();
-    for k in 0..n {
-        b.x(q_target[k]);
-    }
-    iadd_dirty_2clean_qoffset(b, q_target, q_dirty, q_clean2, q_offset, false);
-    for k in 0..n {
-        b.x(q_target[k]);
-    }
-}
-
 /// Controlled variant of xor_right_shifted_carries_into.
 fn c_xor_right_shifted_carries_into_classical(
     b: &mut B,
@@ -1536,7 +1506,7 @@ mod tests {
                     *sim.qubit_mut(q_dst[k]) = 1;
                 }
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected_carries = classical_carry(src, offset, cin, n + 1);
             let expected_rsh = expected_carries >> 1; // carries shifted right by 1
@@ -1617,7 +1587,7 @@ mod tests {
                     *sim.qubit_mut(q_target[k]) = 1;
                 }
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected_sum = (target.wrapping_add(offset).wrapping_add(cin as u64)) & mask;
             let mut got: u64 = 0;
@@ -1688,7 +1658,7 @@ mod tests {
                     *sim.qubit_mut(q_target[k]) = 1;
                 }
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected_sum = (target.wrapping_add(offset).wrapping_add(cin as u64)) & mask;
             let mut got: u64 = 0;
@@ -1767,7 +1737,7 @@ mod tests {
                     *sim.qubit_mut(q) = 1;
                 }
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected_sum = (target.wrapping_add(offset).wrapping_add(cin as u64)) & mask;
             let mut got: u64 = 0;
@@ -1789,7 +1759,7 @@ mod tests {
                 true
             };
             // Check phase is 0
-            let phase = sim.global_phase() & 1;
+            let phase = sim.phase & 1;
 
             if got == expected_sum && dirty_ok && phase == 0 {
                 ok += 1;
@@ -1869,7 +1839,7 @@ mod tests {
             if ctrl_val {
                 *sim.qubit_mut(q_ctrl) = 1;
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected_sum = if ctrl_val {
                 (target.wrapping_add(offset).wrapping_add(cin as u64)) & mask
@@ -1889,7 +1859,7 @@ mod tests {
                 }
             }
             let dirty_ok = got_dirty == (dirty_init & ((1u64 << q_dirty.len()) - 1).min(mask));
-            let phase = sim.global_phase() & 1;
+            let phase = sim.phase & 1;
             let ctrl_preserved = sim.qubit(q_ctrl) & 1 == (ctrl_val as u64);
 
             if got == expected_sum && dirty_ok && phase == 0 && ctrl_preserved {
@@ -1965,7 +1935,7 @@ mod tests {
             if ctrl_val {
                 *sim.qubit_mut(q_ctrl) = 1;
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected = if ctrl_val {
                 target.wrapping_sub(c) & mask
@@ -1985,7 +1955,7 @@ mod tests {
                 }
             }
             let dirty_ok = got_dirty == (dirty_init & ((1u64 << q_dirty.len()) - 1).min(mask));
-            let phase = sim.global_phase() & 1;
+            let phase = sim.phase & 1;
 
             if got == expected && dirty_ok && phase == 0 {
                 ok += 1;
@@ -2058,7 +2028,7 @@ mod tests {
             if ctrl_val {
                 *sim.qubit_mut(q_ctrl) = 1;
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected = if ctrl_val {
                 target.wrapping_sub(c_low)
@@ -2078,7 +2048,7 @@ mod tests {
                 }
             }
             let dirty_ok = got_dirty == dirty_init;
-            let phase = sim.global_phase() & 1;
+            let phase = sim.phase & 1;
             let ctrl_preserved = sim.qubit(q_ctrl) & 1 == (ctrl_val as u64);
             if got == expected && dirty_ok && phase == 0 && ctrl_preserved {
                 ok += 1;
@@ -2143,7 +2113,7 @@ mod tests {
             if ctrl_val {
                 *sim.qubit_mut(q_ctrl) = 1;
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected = if ctrl_val {
                 target.wrapping_sub(c_low)
@@ -2158,7 +2128,7 @@ mod tests {
             }
             let got_dirty0 = sim.qubit(q_dirty[0]) & 1 != 0;
             let dirty_ok = got_dirty0 == dirty_u_lsb;
-            let phase = sim.global_phase() & 1;
+            let phase = sim.phase & 1;
             let ctrl_preserved = sim.qubit(q_ctrl) & 1 == (ctrl_val as u64);
             if got == expected && dirty_ok && phase == 0 && ctrl_preserved {
                 ok += 1;
@@ -2225,7 +2195,7 @@ mod tests {
                     *sim.qubit_mut(q) = 1;
                 }
             }
-            sim.apply(&ops);
+            sim.apply_iter(ops.iter());
 
             let expected = (target.wrapping_add(offset).wrapping_add(cin as u64)) & mask;
             let mut got: u64 = 0;
@@ -2249,7 +2219,7 @@ mod tests {
             }
             let dirty_ok = got_dirty == (dirty_init & ((1u64 << q_dirty.len()) - 1).min(mask));
             let offset_ok = got_offset == offset;
-            let phase = sim.global_phase() & 1;
+            let phase = sim.phase & 1;
 
             if got == expected && dirty_ok && offset_ok && phase == 0 {
                 ok += 1;
@@ -2274,119 +2244,6 @@ mod tests {
         }
     }
 
-    fn run_iadd_qoffset_narrow(n: usize, m: usize, trials: usize) -> (usize, usize) {
-        let mut hasher = Shake256::default();
-        hasher.update(&[n as u8, m as u8, trials as u8, 211]);
-        use sha3::digest::XofReader;
-        let mut xof = <sha3::Shake256 as sha3::digest::ExtendableOutput>::finalize_xof(hasher);
-        let mut ok = 0;
-        let mut bad = 0;
-        let nmask = if n < 64 { (1u64 << n) - 1 } else { u64::MAX };
-        let mmask = if m < 64 { (1u64 << m) - 1 } else { u64::MAX };
-        for _trial in 0..trials {
-            let mut buf = [0u8; 40];
-            xof.read(&mut buf);
-            let target = u64::from_le_bytes(buf[0..8].try_into().unwrap()) & nmask;
-            let offset = u64::from_le_bytes(buf[8..16].try_into().unwrap()) & mmask;
-            let dirty_init = u64::from_le_bytes(buf[16..24].try_into().unwrap()) & nmask;
-            let cin = (buf[24] & 1) != 0;
 
-            let mut bb = B::new();
-            let q_target: Vec<QubitId> = bb.alloc_qubits(n);
-            let q_offset: Vec<QubitId> = bb.alloc_qubits(m);
-            let q_dirty: Vec<QubitId> = bb.alloc_qubits(n.saturating_sub(2).max(1));
-            let q_clean2: [QubitId; 2] = [bb.alloc_qubit(), bb.alloc_qubit()];
 
-            iadd_dirty_2clean_qoffset_narrow(
-                &mut bb, &q_target, &q_dirty, &q_clean2, &q_offset, cin,
-            );
-
-            let ops = bb.ops.clone();
-            let num_qubits = bb.next_qubit as usize;
-            let num_bits = bb.next_bit as usize;
-            let mut inner_hasher = Shake256::default();
-            inner_hasher.update(&[233u8]);
-            let mut inner_xof =
-                <sha3::Shake256 as sha3::digest::ExtendableOutput>::finalize_xof(inner_hasher);
-            let mut sim = Simulator::new(num_qubits, num_bits, &mut inner_xof);
-            sim.clear_for_shot();
-            for k in 0..n {
-                if k < 64 && (target >> k) & 1 != 0 {
-                    *sim.qubit_mut(q_target[k]) = 1;
-                }
-            }
-            for k in 0..m {
-                if k < 64 && (offset >> k) & 1 != 0 {
-                    *sim.qubit_mut(q_offset[k]) = 1;
-                }
-            }
-            for (k, &q) in q_dirty.iter().enumerate() {
-                if k < 64 && (dirty_init >> k) & 1 != 0 {
-                    *sim.qubit_mut(q) = 1;
-                }
-            }
-            sim.apply(&ops);
-
-            let expected: u128 = (target as u128) + (offset as u128) + (cin as u128);
-            let readbits = n.min(127);
-            let expected = expected & ((1u128 << readbits) - 1);
-            let mut got: u128 = 0;
-            for k in 0..readbits {
-                if sim.qubit(q_target[k]) & 1 != 0 {
-                    got |= 1u128 << k;
-                }
-            }
-            let mut got_offset: u64 = 0;
-            for k in 0..m {
-                if sim.qubit(q_offset[k]) & 1 != 0 {
-                    got_offset |= 1 << k;
-                }
-            }
-            let mut got_dirty: u64 = 0;
-            for (k, &q) in q_dirty.iter().enumerate() {
-                if sim.qubit(q) & 1 != 0 {
-                    got_dirty |= 1 << k;
-                }
-            }
-            let dmask = if q_dirty.len() < 64 {
-                (1u64 << q_dirty.len()) - 1
-            } else {
-                u64::MAX
-            };
-            let dirty_ok = got_dirty == (dirty_init & dmask & nmask);
-            let offset_ok = got_offset == offset;
-            let phase = sim.global_phase() & 1;
-
-            if got == expected && dirty_ok && offset_ok && phase == 0 {
-                ok += 1;
-            } else {
-                bad += 1;
-                if bad < 3 {
-                    eprintln!(
-                        "narrow FAIL n={} m={} t={:#x} o={:#x} d={:#x} cin={} got={:#x} exp={:#x} d_ok={} o_ok={} phase={}",
-                        n, m, target, offset, dirty_init, cin, got, expected, dirty_ok, offset_ok, phase
-                    );
-                }
-            }
-        }
-        (ok, bad)
-    }
-
-    #[test]
-    fn test_iadd_qoffset_narrow_small() {
-        // m < n covers the shift22 use (short spill into wide register).
-        for n in 5..=12 {
-            for m in 1..n {
-                let (ok, bad) = run_iadd_qoffset_narrow(n, m, 12);
-                assert_eq!(bad, 0, "n={n} m={m}: {ok}/{} passed", ok + bad);
-            }
-        }
-    }
-
-    #[test]
-    fn test_iadd_qoffset_narrow_wide() {
-        // n=256, m=22: the exact shift22 shape.
-        let (ok, bad) = run_iadd_qoffset_narrow(256, 22, 40);
-        assert_eq!(bad, 0, "n=256 m=22: {ok}/{} passed", ok + bad);
-    }
 }
