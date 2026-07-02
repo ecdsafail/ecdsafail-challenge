@@ -223,6 +223,15 @@ circuit (one point addition):
   improved PA propagates through the ladder. (My earlier `2(n+1)=514` /
   `~7×10⁸` figure used the wrong ladder model and a `2^w` lookup; the paper's
   `28`-addition / `3·2^w`-lookup form supersedes it.)
+- **The addition-composition term is now MEASURED, not asserted (issue #4,
+  ADR 0007).** `src/point_add/ladder_composition.rs` (`#[cfg(test)]`) chains the
+  built op stream `k` times through `analyze_ops`/`analyze_depth` and confirms
+  exactly: Toffoli is additive (`k·PA`), **peak width is flat in `k`** (1152,
+  Δ=0 — ancilla reused, validating `ECDLP_Qubits = PA_Qubits + w`), and
+  toffoli-depth is **serial** (`k·PA_depth`). So the dominant `28·PA` term rests
+  on measured composition laws; only the `3·2^w` QROM lookup and the (Clifford)
+  QFT remain derived — refining them needs the quantum-addend build, deferred in
+  #4.
 
 **Key limitations this surfaces** (all real, all worth fixing):
 - The scored "qubits" is `max_id + 1` (total allocated ids), **not peak

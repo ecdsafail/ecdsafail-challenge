@@ -14,3 +14,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0004](0004-cross-validate-against-reference-circuits.md) | Cross-validate against the source paper's reference circuits | Accepted |
 | [0005](0005-validate-lookup-by-construction.md) | Validate the ladder lookup primitive by construction | Accepted |
 | [0006](0006-adder-completeness-approach.md) | Approach to adder completeness (cost estimate → verified attack) | Accepted (Path A viable per gating experiment) |
+| [0007](0007-tier-b-measured-ladder.md) | Tier B: measuring the full-ECDLP ladder | Accepted (first increment; QROM/QFT deferred) |
