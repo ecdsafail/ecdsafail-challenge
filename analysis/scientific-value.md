@@ -279,6 +279,19 @@ circuit (one point addition):
   (`≈2⁻²⁵⁰`). Both sit far below Shor's `~1%` tolerance, so `completeness_overhead
   = 1.0` holds — but the `2⁻¹¹` figure is conditional on the lookup encoding never
   emitting the `∞` table entry, a condition the negligibility argument must state.
+- **The amplitude-1 ∞ start is now circuit-demonstrated as removed (issue #5
+  part (a), ADR 0009).** The one exceptional case that negligibility *cannot*
+  cover — the accumulator starting at ∞ with amplitude 1 — is handled structurally
+  by the paper's "first windowed addition = direct lookup".
+  `verify/direct_lookup_init.py` builds that init as an actual reversible circuit
+  (the validated controlled-lookup QROM writing `acc ^= T[w]`, `T[w] = [w]·P`,
+  into a `\|0⟩` accumulator) and shows exhaustively — toy prime-order curve, both
+  uncompute modes, plus a secp256k1 256-bit spot-check — that the accumulator ends
+  holding a real affine point for every window and is the `(0,0)` ∞ sentinel *iff*
+  `w=0` (ancilla clean, phase `+1`; `ctrl=0` leaves it at ∞). So the adder is
+  never fed the amplitude-1 ∞ start. The remaining gap to a full verified attack
+  is the *mid-ladder* residual over the real 28-window superposition, which needs
+  the Tier B ladder (#4).
 
 ---
 
