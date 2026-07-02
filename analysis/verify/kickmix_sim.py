@@ -18,6 +18,14 @@ reference circuits (and reject its negative controls) without trusting either
 side's code. Measurement (HMR) is simulated with a supplied RNG per the spec's
 fuzz-testing rule: a random result, with phase kickback when the measured qubit
 is ON and the result is ON.
+
+Verified equivalent to the reference kickmix simulator
+`original/zkp_ecc_zenodo_v2/lib/src/sim.rs` (Zenodo release for arXiv:2603.28846v2),
+instruction for instruction: R = random phase-kickback then reset (`phase ^=
+qubit & rng`, `qubit &= !cond`); HMR = random result, same phase kickback, reset;
+CCX/CX/CZ/CCZ/Z/NEG/SWAP; the PushCondition/PopCondition stack; and all qubits
+initialized to |0>. (The reference packs 64 shots into a u64 and tracks phase as
+an XOR bit; here one trajectory tracks phase as +/-1 — equivalent per shot.)
 """
 import re
 
