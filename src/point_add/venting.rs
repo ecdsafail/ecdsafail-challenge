@@ -144,6 +144,7 @@ pub(crate) fn xor_right_shifted_carries_into_classical(
 /// - `vent_keys`: n classical bits. On exit: `vent_keys[k]` for k in 1..n-1
 ///   holds the random measurement outcome that needs phase correction later.
 ///   `vent_keys[0]` and `vent_keys[n-1]` are unused.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn add_vented_2clean_classical(
     b: &mut B,
     q_target: &[QubitId],
@@ -891,6 +892,7 @@ fn c_add_vented_2clean_inline(
 /// Peak transient during this add: 2 clean + 1 c_in = 3 extra qubits.
 /// vs Cuccaro fast which needs n-1 carry ancilla = n+O(1) extra qubits.
 /// Saves ~n qubits at peak.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn add_vented_2clean_qoffset(
     b: &mut B,
     q_target: &[QubitId],
@@ -1004,6 +1006,7 @@ pub(crate) fn add_vented_2clean_qoffset(
 
 /// Quantum-offset version of xor_right_shifted_carries_into.
 /// `Q_dst ^= carry(Q_src, q_offset, carry_in) >> 1`.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn xor_right_shifted_carries_into_qoffset(
     b: &mut B,
     q_src: &[QubitId],
@@ -1072,6 +1075,7 @@ pub(crate) fn xor_right_shifted_carries_into_qoffset(
 
 /// Quantum-offset version of iadd_dirty_2clean: `q_target += q_offset + cin`
 /// using 2 clean + n-2 dirty ancilla. Cost ~3n CCX.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn iadd_dirty_2clean_qoffset(
     b: &mut B,
     q_target: &[QubitId],

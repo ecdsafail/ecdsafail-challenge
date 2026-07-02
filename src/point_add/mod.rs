@@ -57,14 +57,10 @@
 //! reduces them.
 
 use alloy_primitives::U256;
-use sha3::{
-    digest::{ExtendableOutput, Update, XofReader},
-    Shake256,
-};
+use sha3::Shake256;
 
-use crate::circuit::{analyze_ops, BitId, Op, OperationType, QubitId, QubitOrBit, RegisterId};
+use crate::circuit::{BitId, Op, OperationType, QubitId, QubitOrBit, RegisterId};
 use crate::sim::Simulator;
-use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
 pub mod venting;
 
@@ -183,6 +179,7 @@ pub struct B {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 struct CountSnapshot {
     ops: usize,
     kind_ops: [usize; 18],
@@ -236,6 +233,7 @@ impl B {
             k2_shift2_log: Vec::new(),
         }
     }
+    #[allow(dead_code)] // retained reference/alternative impl; not on active build path
     fn new_count_only() -> Self {
         let mut b = Self::new();
         b.count_only = true;
@@ -260,6 +258,7 @@ impl B {
             self.ops.push(op);
         }
     }
+    #[allow(dead_code)] // retained reference/alternative impl; not on active build path
     fn count_snapshot(&self) -> CountSnapshot {
         CountSnapshot {
             ops: self.counted_ops,
@@ -270,6 +269,7 @@ impl B {
             phase: self.phase,
         }
     }
+    #[allow(dead_code)] // retained reference/alternative impl; not on active build path
     fn count_delta_since(&self, snap: CountSnapshot) -> [usize; 18] {
         let mut out = [0usize; 18];
         for (idx, slot) in out.iter_mut().enumerate() {
@@ -277,6 +277,7 @@ impl B {
         }
         out
     }
+    #[allow(dead_code)] // retained reference/alternative impl; not on active build path
     fn restore_count_snapshot(&mut self, snap: CountSnapshot) {
         self.counted_ops = snap.ops;
         self.counted_kind_ops = snap.kind_ops;
@@ -285,6 +286,7 @@ impl B {
         self.counted_phase_rows.truncate(snap.phase_rows_len);
         self.phase = snap.phase;
     }
+    #[allow(dead_code)] // retained reference/alternative impl; not on active build path
     fn add_counted_kind(&mut self, kind: OperationType, count: usize) {
         self.counted_ops += count;
         self.counted_kind_ops[kind as usize] += count;

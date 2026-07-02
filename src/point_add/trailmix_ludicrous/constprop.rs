@@ -60,6 +60,7 @@ pub struct ConstPropStats {
 /// Per-gate transform decision, recorded so the empirical verifier can check the
 /// claimed control constancy on the *original* stream.
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // some variant fields are recorded only for the optional empirical verifier
 enum Decision {
     /// Keep unchanged.
     Keep,

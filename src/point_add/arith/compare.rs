@@ -52,6 +52,7 @@ pub(crate) fn cmp_lt_into_fast(b: &mut B, u: &[QubitId], v: &[QubitId], flag: Qu
     b.free(c_in);
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn cmp_lt_into_fast_with_cin(
     b: &mut B,
     u: &[QubitId],

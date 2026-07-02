@@ -1884,6 +1884,7 @@ fn add_cout_vented_skip_dead(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &
     circ.zero_and_free(zpad);
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 fn add_cout_vented_unctrl_bounded(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId) {
     let n = y.len();
     assert_eq!(x.len(), n, "add_cout_vented_unctrl_bounded: x,y width mismatch");

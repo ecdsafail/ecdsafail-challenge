@@ -48,6 +48,7 @@ pub(crate) fn mod_add_qq(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
     let _ = (acc_ext, a_ext);
 }
 
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn mod_sub_qq(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
     // mod_add_qq is a bijection on (acc, a): (acc, a) ↦ (acc + a mod p, a).
     // Its gate-level inverse therefore acts as (acc, a) ↦ (acc - a mod p, a),
@@ -128,6 +129,7 @@ pub(crate) fn mod_sub_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
 /// Used inside the round84 Solinas reduction where the materialized `load_const`
 /// coexisting with tmp_ext + z1_reg was the peak binder. `c = 2^256 - p` fits in
 /// 64 bits, so `c_low` carries the whole constant.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn mod_add_qq_vent(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
     let n = acc.len();
     assert_eq!(n, a.len());
@@ -189,6 +191,7 @@ pub(crate) fn mod_add_qq_vent(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
 /// cannot reverse them; each venting step is undone by its matched dual:
 /// iadd↔isub, cisub↔ciadd). The flag-uncompute is `cmp_lt_into` (self-inverse,
 /// no materialized neg), so no n-wide const register is ever live.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub(crate) fn mod_sub_qq_vent(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
     let n = acc.len();
     assert_eq!(n, a.len());

@@ -286,6 +286,7 @@ pub fn mcx_clean_k(circ: &mut B, ctrls: &[&QubitId], target: &QubitId) {
 }
 
 /// Increment `a` modulo `2^a.len()` with the Khattar-Gidney prefix ladder.
+#[allow(dead_code)] // retained reference/alternative impl; not on active build path
 pub fn inc_khattar_gidney(circ: &mut B, a: &[QubitId]) {
     let refs: Vec<&QubitId> = a.iter().collect();
     inc_khattar_gidney_refs_inner(circ, &refs, false);
