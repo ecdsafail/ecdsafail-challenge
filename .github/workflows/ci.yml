@@ -17,6 +17,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: these jobs only read the repo and upload run artifacts;
+# neither needs write access to repo contents or any other scope.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -27,9 +32,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      # rust-toolchain (channel 1.93.0) is honored automatically by cargo.
-      - name: Install pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install pinned toolchain (1.93.0, per rust-toolchain)
+        run: rustup toolchain install 1.93.0 --profile minimal
       - uses: Swatinem/rust-cache@v2
       - name: Build (locked)
         run: cargo build --release --locked --bins
@@ -46,14 +50,18 @@ jobs:
       - name: Install pinned toolchain
         run: rustup toolchain install 1.93.0 --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - name: Install z3 Python bindings (for the analysis proofs)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-z3
+      - name: Install sandbox + z3 bindings (bubblewrap, python3-z3)
+        # bubblewrap lets benchmark.sh confine the UNTRUSTED build_circuit
+        # (compiled from src/point_add) exactly as the scoring platform does —
+        # read-only FS, no network, dropped caps, unprivileged uid — instead of
+        # falling back to an unconfined run. z3 is for the analysis proofs.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap libcap2-bin python3-z3
       - name: Fetch crates (so the offline benchmark build succeeds)
         run: cargo fetch --locked
       - name: Build + score the circuit (benchmark.sh -> ops.bin, score.json)
-        # No bubblewrap in CI -> benchmark.sh takes its documented unconfined
-        # fallback. Scoring is done by the trusted eval_circuit either way, so
-        # the score is authoritative regardless of the sandbox.
+        # benchmark.sh sandboxes build_circuit under bubblewrap (installed
+        # above) and scores the emitted op stream with the trusted eval_circuit
+        # (which never imports contestant code).
         env:
           RUSTUP_TOOLCHAIN: "1.93.0"
         run: bash benchmark.sh
