@@ -140,6 +140,15 @@ and that the phase-/ancilla-aware fuzz methodology (the paper's Appendix A.5
 correctness argument, mirrored by `eval_circuit`'s garbage checks) actually
 catches bugs.
 
+**Not yet covered:** the reference `table_lookup_3x3.kmx` (a measurement-based
+*unary-iteration* QROM, Gidney 2018 §III.C — the `3·2^w` lookup primitive of the
+windowed ladder, [ADR 0003](adr/0003-ground-ecdlp-estimate-in-source-paper.md)).
+Under the current classical-trajectory simulator its decode accumulator stays
+`|0⟩` (the standalone extract lacks the outer control the full circuit would
+drive), so it reduces to a no-op and is **not** claimed as validated. Modelling
+unary iteration's accumulator re-priming across the address walk is future work;
+the adder primitives above are validated, the QROM is not.
+
 ### Scope / honesty
 
 This verifies the **algebraic lemmas each optimization class depends on** and
