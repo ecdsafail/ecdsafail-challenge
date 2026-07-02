@@ -10,8 +10,10 @@ nothing here can affect the circuit or the score.
 | `verify/peephole_identities.py` | z3 proofs of the constprop CCX identities, the ripple-carry adder recurrence, and the borrow-chain comparator (22 lemmas). |
 | `verify/run_kani.sh` | Runs the Kani (bit-precise BMC) harnesses in `src/kani_proofs.rs` that bind to the **real Rust `alloy` U256 type** (not an abstract model). |
 | `cost_model.py` | Maps the real `score.json` + `depth.json` metrics to surface-code physical resources (incl. measured runtime + spacetime volume) under explicit, editable assumptions. |
+| `ecdlp_estimate.py` | Derives the **full Shor-ECDLP** cost by composing the measured per-addition primitive with the double-and-add ladder structure (`2(n+1)` additions, windowed variants); replaces the old hand-picked multiplier. Analysis-only, no `score.json` impact. |
 | `../src/bin/depth_report.rs` | Standalone binary: measures toffoli-depth / gate-depth of `ops.bin` via `circuit::analyze_depth`, writes `depth.json`. Does **not** run the simulator or touch `score.json`. |
 | `scientific-value.md` | Synthesis: what is proven, the cost mapping, and the generalizable vs. curve-specific techniques. |
+| `adr/` | Architecture decision records for the analysis layer (isolation from scoring, derived ECDLP estimate). |
 
 ## Run everything
 

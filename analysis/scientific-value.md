@@ -137,9 +137,15 @@ circuit (one point addition):
   arithmetic). Reaction-limited runtime = 10.77 s (vs the 13.6 s sequential
   upper bound), giving a **spacetime volume ≈ 3.6×10⁷ physical-qubit-seconds**
   at d=27.
-- **Full ECDLP extrapolation (order-of-magnitude, assumption-driven):**
-  ~1,600 point additions ⇒ ~2.2×10⁹ Toffoli. This lands in the same order as
-  Gidney–Ekerå's RSA-2048 estimate (~3×10⁹), a useful sanity check.
+- **Full ECDLP extrapolation (derived, `analysis/ecdlp_estimate.py`):** the
+  ladder factor is now **derived structurally**, not hand-picked — basic
+  double-and-add is `2(n+1) = 514` controlled additions (n=256), so
+  **514 × 1.36M ≈ 7.0×10⁸ Toffoli** (T-count ≈ 2.8×10⁹ @ 4 T/Toffoli), with a
+  composed toffoli-depth ≈ 5.5×10⁸ (accumulator serializes the additions).
+  Windowing lowers the count (w=4 → ~1.8×10⁸, w=8 → ~9.0×10⁷ Toffoli). This sits
+  just below Gidney–Ekerå's RSA-2048 estimate (~3×10⁹), the expected ordering.
+  The earlier ~1,600-addition / ~2.2×10⁹ figure was a placeholder multiplier and
+  overestimated by ~3×.
 
 **Key limitations this surfaces** (all real, all worth fixing):
 - The scored "qubits" is `max_id + 1` (total allocated ids), **not peak
@@ -150,8 +156,10 @@ circuit (one point addition):
   `depth_report` now measure toffoli-depth and gate-depth (critical path over
   read/write hazards), feeding measured runtime and spacetime volume into the
   cost model.
-- The full-attack multiplier and register-file width are assumptions pending a
-  full-circuit build; only the per-addition figures are measured.
+- The full-attack ladder factor is now derived (`2(n+1)`), but the register-file
+  width and adder completeness (exceptional cases: P==Q, P==−Q, ∞) remain
+  assumptions pending a full-circuit build; only the per-addition figures are
+  measured.
 
 ---
 

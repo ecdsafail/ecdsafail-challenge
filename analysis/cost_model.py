@@ -20,7 +20,9 @@ Physical model references (assumptions, not repo facts):
     measurement-based uncompute, so 4 T/Toffoli is the apt convention; 7 T is the
     Clifford+T textbook upper bound).
   - Roetteler, Naehrig, Svore, Lauter 2017 (arXiv:1706.06752) -- full n-bit ECDLP
-    is O(n) point additions; the multiplier below is the (assumed) ladder factor.
+    is O(n) point additions; the extrapolation below derives the ladder factor as
+    2(n+1) (basic double-and-add). See analysis/ecdlp_estimate.py for the full
+    derived cost (windowed rows, peak width, completeness caveats).
 """
 import json
 import math
@@ -56,7 +58,7 @@ A = {
     "phys_per_patch": lambda d: 2 * d * d,   # physical qubits per logical patch
     "factory_routing_overhead": 2.0,         # x logical patches for factories+routing
     "distances": [21, 25, 27],
-    "ecdlp_point_additions": 1600,  # ASSUMED full-attack ladder factor ~ O(n), n=256
+    "ecdlp_field_bits": 256,        # secp256k1 n; ladder factor DERIVED as 2(n+1)
     "target_fail_prob": 0.01,
 }
 
@@ -126,9 +128,10 @@ print("  NOTE: depth is the reaction-limited critical path; true wall-clock also
 print("        depends on having enough magic-state factories to feed each layer.")
 
 section("EXTRAPOLATION TO A FULL secp256k1 ECDLP BREAK (order-of-magnitude)")
-mult = A["ecdlp_point_additions"]
+n = A["ecdlp_field_bits"]
+mult = 2 * (n + 1)              # DERIVED: basic double-and-add, 2 scalars x (n+1) bits
 tof_full = TOFFOLI * mult
-print(f"  ASSUMED point additions in the full Shor-ECDLP ladder : ~{mult:,}  (O(n), n=256)")
+print(f"  DERIVED point additions in the full Shor-ECDLP ladder : {mult:,}  (2(n+1), n={n})")
 print(f"  => full-attack Toffoli count : ~{tof_full:,.0f}  (~{tof_full:.1e})")
 print(f"  => full-attack T-count @4    : ~{tof_full*4:.1e}")
 print(f"  physical qubits @ d={d_hi}        : ~{phys_hi:,}  (single-addition width; the full")
@@ -138,7 +141,8 @@ if TOFFOLI_DEPTH is not None:
     print(f"  reaction-limited runtime     : ~{full_rt_h:,.1f} h  (depth-based, if additions are serial)")
 else:
     print(f"  reaction-limited runtime UB  : ~{tof_full*A['t_react_us']*1e-6/3600:,.1f} h  (count-based)")
-print("\n  Caveat: the multiplier and full-algorithm width are ASSUMPTIONS pending a")
-print("  full-circuit build; only the per-point-addition figures are measured.")
-print("  See Roetteler et al. 2017 for the exact ladder structure.")
+print("\n  The ladder factor 2(n+1) is the basic (window w=1) double-and-add count;")
+print("  windowing lowers it (see analysis/ecdlp_estimate.py for the full derived")
+print("  breakdown incl. windowed rows, peak width, and completeness caveats).")
+print("  Full-algorithm width and adder completeness remain unbuilt (Tier B).")
 print("=" * 68)
