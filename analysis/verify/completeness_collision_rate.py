@@ -188,7 +188,12 @@ def find_prime_order_curve():
     p, a, b, n, gen = _PINNED_CURVE
     c = Curve(p, a, b)
     c.order = n
-    assert c.is_on(gen) and gen is not INF, "pinned generator off-curve"
+    # Validate the pin explicitly (not via `assert`, which `python -O` strips):
+    # a malformed pin must fail loudly here, never silently feed the analysis.
+    if not _is_prime(n) or len(c.points()) != n:
+        raise RuntimeError("pinned curve is not the expected prime-order group")
+    if gen is INF or not c.is_on(gen):
+        raise RuntimeError("pinned generator is off-curve or the identity")
     return c, gen, n
 
 
@@ -300,8 +305,10 @@ def measure_ladder(n, w, d, label):
         n_adds += 1
         c = windows[k]
         # non-uniformity of the accumulator seen by this addition, exact:
-        # |p(y) - 1/n| * n = |dist[y]*n - denom| / denom
-        dev = max(Fraction(abs(dist[y] * n - denom), denom) for y in range(n))
+        # |p(y) - 1/n| * n = |dist[y]*n - denom| / denom. All candidates share
+        # the denominator, so take the integer max once and build one Fraction.
+        max_num = max(abs(dist[y] * n - denom) for y in range(n))
+        dev = Fraction(max_num, denom)
         max_nonuniform = max(max_nonuniform, dev)
 
         p_add_inf = Fraction(1, 1 << w)        # v == 0  -> addend M = ∞
