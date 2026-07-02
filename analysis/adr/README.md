@@ -13,3 +13,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0003](0003-ground-ecdlp-estimate-in-source-paper.md) | Ground the ECDLP estimate in the source paper's closed form | Accepted |
 | [0004](0004-cross-validate-against-reference-circuits.md) | Cross-validate against the source paper's reference circuits | Accepted |
 | [0005](0005-validate-lookup-by-construction.md) | Validate the ladder lookup primitive by construction | Accepted |
+| [0006](0006-adder-completeness-approach.md) | Approach to adder completeness (cost estimate → verified attack) | Accepted (path gated by experiment) |
