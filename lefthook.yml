@@ -1,0 +1,18 @@
+# lefthook — git hooks manager (https://lefthook.dev)
+#
+# One-time setup per clone (installs the git hooks into .git/hooks):
+#     lefthook install
+# Get lefthook via your package manager, or:  cargo install lefthook
+#
+# The pre-commit hook mirrors CI's "fmt + clippy" job (.github/workflows/ci.yml)
+# so formatting and lint problems are caught locally before they reach CI. Both
+# commands use the toolchain pinned in `rust-toolchain` (1.93.0) and only run
+# when Rust sources are staged. To bypass in an emergency:  git commit --no-verify
+pre-commit:
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --all --check
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets --locked

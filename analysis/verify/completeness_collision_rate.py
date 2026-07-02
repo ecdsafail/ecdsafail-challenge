@@ -51,6 +51,7 @@ Analysis-only, deterministic, pure-Python (no numpy / no z3). Never touches the
 scored circuit.
 """
 import sys
+from fractions import Fraction
 
 # --------------------------------------------------------------------------- #
 # Part A — a real prime-order elliptic curve, to validate the scalar model.
@@ -139,16 +140,33 @@ def _tonelli(n, p):
     return r
 
 
-def find_prime_order_curve():
-    """Return (curve, generator, order) for a small prime-order curve."""
-    def is_prime(x):
-        if x < 2:
+def _is_prime(x):
+    if x < 2:
+        return False
+    for d in range(2, int(x**0.5) + 1):
+        if x % d == 0:
             return False
-        for d in range(2, int(x**0.5) + 1):
-            if x % d == 0:
-                return False
-        return True
+    return True
 
+
+# A pinned, once-searched toy curve, used as a deterministic fallback so this
+# stage can never fail to find a group (the search below could otherwise regress
+# if its ranges are ever tightened, and analysis/run.sh runs this stage
+# unconditionally). y^2 = x^3 + 3 over F_199 has PRIME group order n = 211, so
+# it is a prime-order group: every non-identity point is a generator, hence the
+# fixed base (1, 2) is valid without any generator search. Values verified once
+# by the search+validation this module performs, and re-checked at use in
+# validate_scalar_model() (order primality + [0]P = INF + exhaustive x-collision
+# model), so a silently-wrong pin cannot pass unnoticed.
+_PINNED_CURVE = (199, 0, 3, 211, (1, 2))  # (p, a, b, order, generator)
+
+
+def find_prime_order_curve():
+    """Return (curve, generator, order) for a small prime-order curve.
+
+    Searches a small parameter grid for a prime-order curve, and falls back to a
+    pinned known-good curve if the search comes up empty, so this stage of
+    analysis/run.sh cannot abort with RuntimeError."""
     for p in [199, 211, 223, 227, 229, 233, 239, 251, 263, 271]:
         if p % 4 != 3:
             continue  # keep sqrt trivial
@@ -158,11 +176,25 @@ def find_prime_order_curve():
                     continue
                 c = Curve(p, a, b)
                 n = len(c.points())  # includes INF -> full group order
-                if is_prime(n) and n > 20:
+                if _is_prime(n) and n > 20:
                     c.order = n
                     gen = next(pt for pt in c.points() if pt is not INF)
                     return c, gen, n
-    raise RuntimeError("no small prime-order curve found")
+
+    # Deterministic fallback: the search space above is fixed, so this is
+    # unreachable today, but it guarantees the stage keeps working even if the
+    # grid is ever narrowed. The pin is a prime-order group, so its generator is
+    # any non-identity point; the caller still validates it exhaustively.
+    p, a, b, n, gen = _PINNED_CURVE
+    c = Curve(p, a, b)
+    c.order = n
+    # Validate the pin explicitly (not via `assert`, which `python -O` strips):
+    # a malformed pin must fail loudly here, never silently feed the analysis.
+    if not _is_prime(n) or len(c.points()) != n:
+        raise RuntimeError("pinned curve is not the expected prime-order group")
+    if gen is INF or not c.is_on(gen):
+        raise RuntimeError("pinned generator is off-curve or the identity")
+    return c, gen, n
 
 
 def validate_scalar_model():
@@ -222,19 +254,26 @@ def contribution_dist(c, n, w):
     return [(v * c) % n for v in range(1 << w)]
 
 
-def convolve(dist, masses, n, w):
-    """dist (length-n prob vector) (+) the uniform mass list -> new length-n vec."""
-    out = [0.0] * n
-    scale = 1.0 / (1 << w)
+def convolve(dist, masses, n):
+    """Exact convolution of an integer-count distribution with a uniform window.
+
+    `dist` is a length-n vector of integer counts (implicit denominator tracked
+    by the caller). Adding the window scatters each count into every one of its
+    |masses| shifts, so the returned counts have denominator |masses| times the
+    input's — no division, hence no floating-point error."""
+    out = [0] * n
     for m in masses:
-        # add the m-shift of dist, weighted by 1/2^w
         for y in range(n):
-            out[(y + m) % n] += dist[y] * scale
+            out[(y + m) % n] += dist[y]
     return out
 
 
 def measure_ladder(n, w, d, label):
     """Exact per-addition exceptional probabilities for the combined ladder.
+
+    All probabilities are computed as exact rationals (Fraction) over an
+    integer-count accumulator distribution — no floating-point arithmetic enters
+    the measurement; floats appear only when the caller formats the output.
 
     Returns a dict of summed (union-bound) probabilities per exceptional class,
     plus the worst-case accumulator non-uniformity observed."""
@@ -249,30 +288,37 @@ def measure_ladder(n, w, d, label):
     masses = [contribution_dist(c, n, w) for c in windows]
 
     # accumulator distribution AFTER the direct-lookup first window (window 0),
-    # which writes the accumulator instead of adding into ∞.
-    dist = [0.0] * n
+    # which writes the accumulator instead of adding into ∞. Held as integer
+    # counts with an explicit power-of-two denominator, so probabilities are
+    # exact rationals: p(y) = dist[y] / denom.
+    dist = [0] * n
     for s in masses[0]:
-        dist[s] += 1.0 / (1 << w)
+        dist[s] += 1
+    denom = 1 << w  # sum(dist) == denom at all times
 
-    sums = {"dx0": 0.0, "addend_inf": 0.0, "acc_inf": 0.0, "any": 0.0}
-    max_nonuniform = 0.0  # max_y | dist[y] - 1/n | * n, over pre-add distributions
+    sums = {"dx0": Fraction(0), "addend_inf": Fraction(0),
+            "acc_inf": Fraction(0), "any": Fraction(0)}
+    max_nonuniform = Fraction(0)  # max_y |dist[y]/denom - 1/n| * n, pre-add
     n_adds = 0
 
     for k in range(1, len(windows)):  # each is one adder addition
         n_adds += 1
         c = windows[k]
-        # non-uniformity of the accumulator seen by this addition
-        dev = max(abs(dist[y] - 1.0 / n) for y in range(n)) * n
+        # non-uniformity of the accumulator seen by this addition, exact:
+        # |p(y) - 1/n| * n = |dist[y]*n - denom| / denom. All candidates share
+        # the denominator, so take the integer max once and build one Fraction.
+        max_num = max(abs(dist[y] * n - denom) for y in range(n))
+        dev = Fraction(max_num, denom)
         max_nonuniform = max(max_nonuniform, dev)
 
-        p_add_inf = 1.0 / (1 << w)              # v == 0  -> addend M = ∞
-        p_acc_inf = dist[0]                     # A == ∞  (partial scalar ≡ 0)
+        p_add_inf = Fraction(1, 1 << w)        # v == 0  -> addend M = ∞
+        p_acc_inf = Fraction(dist[0], denom)   # A == ∞  (partial scalar ≡ 0)
         # dx=0 (both finite): A ∈ {M, −M}, M = v*c, v != 0. A != 0 automatically.
-        p_dx0 = 0.0
+        cnt_dx0 = 0
         for v in range(1, 1 << w):
             mv = (v * c) % n
-            p_dx0 += (dist[mv] + dist[(n - mv) % n])
-        p_dx0 /= (1 << w)
+            cnt_dx0 += dist[mv] + dist[(n - mv) % n]
+        p_dx0 = Fraction(cnt_dx0, denom * (1 << w))
 
         # exact "exceptional at this addition" = union of the three (disjoint:
         # dx=0 requires both finite, so no overlap with the ∞ cases; A=∞ and
@@ -284,11 +330,12 @@ def measure_ladder(n, w, d, label):
         sums["acc_inf"] += p_acc_inf
         sums["any"] += p_any
 
-        dist = convolve(dist, masses[k], n, w)
+        dist = convolve(dist, masses[k], n)
+        denom *= (1 << w)
 
     sums.update(n=n, w=w, t=t, m_bits=m_bits, n_adds=n_adds,
                 max_nonuniform=max_nonuniform, label=label,
-                dx0_per_add=sums["dx0"] / n_adds, twoovern=2.0 / n)
+                dx0_per_add=sums["dx0"] / n_adds, twoovern=Fraction(2, n))
     return sums
 
 
@@ -303,7 +350,8 @@ def main():
 
     print("Part B — exact per-addition dx=0 collision rate vs. the 2/n heuristic")
     print("-" * 74)
-    print("  'nonunif' = max accumulator concentration seen (x the uniform mass);")
+    print("  'nonunif' = max deviation of the accumulator from uniform, in units")
+    print("  of the uniform mass 1/n  (max_y |p(y) - 1/n| * n; 0 = exactly uniform).")
     print("  the KEY column is 'ratio' = measured dx=0 rate / (2/n).  It stays O(1)")
     print("  even when nonunif is huge, because the addend multiple sweeps the")
     print("  group -> the collision rate is insensitive to accumulator shape.")
@@ -324,9 +372,9 @@ def main():
     for n, w, d in configs:
         r = measure_ladder(n, w, d, f"n={n},w={w}")
         results.append(r)
-        print(f"  {r['n']:>5} {r['w']:>2} {r['n_adds']:>4} {r['max_nonuniform']:>8.1f}  "
-              f"{r['dx0_per_add']:>9.2e} {r['twoovern']:>9.2e} "
-              f"{r['dx0_per_add'] / r['twoovern']:>6.2f}  {r['dx0']:>9.2e}")
+        print(f"  {r['n']:>5} {r['w']:>2} {r['n_adds']:>4} {float(r['max_nonuniform']):>8.1f}  "
+              f"{float(r['dx0_per_add']):>9.2e} {float(r['twoovern']):>9.2e} "
+              f"{float(r['dx0_per_add'] / r['twoovern']):>6.2f}  {float(r['dx0']):>9.2e}")
     print()
     print("  The other exceptional branches are n-independent per addition:")
     print("    addend = ∞ (zero window):  exactly 1/2^w   (measured, matches)")
@@ -345,7 +393,7 @@ def main():
 
     N_REAL = 2 ** 256          # ~ secp256k1 group order
     W_REAL, ADDS_REAL = 16, 28
-    pref = max(r["dx0_per_add"] / r["twoovern"] for r in results)  # conservative
+    pref = float(max(r["dx0_per_add"] / r["twoovern"] for r in results))  # conservative
     dx0_real = ADDS_REAL * pref * (2.0 / N_REAL)
     zerowin_real = ADDS_REAL * (1.0 / (1 << W_REAL))
     total_real = dx0_real + zerowin_real
@@ -367,14 +415,15 @@ def main():
     # (1) equidistribution: dx=0 stays within a small constant of 2/n on every
     #     toy config, independent of (large) accumulator non-uniformity.
     ratios = [r["dx0_per_add"] / r["twoovern"] for r in results]
-    c1 = all(0.2 <= x <= 6.0 for x in ratios)
+    c1 = all(Fraction(1, 5) <= x <= 6 for x in ratios)
     ok &= c1
     notes.append(f"[{'ok' if c1 else 'XX'}] dx=0 rate in [0.2, 6]x of 2/n on all "
-                 f"configs (measured {min(ratios):.2f}-{max(ratios):.2f}x) "
+                 f"configs (measured {float(min(ratios)):.2f}-{float(max(ratios)):.2f}x) "
                  f"-> equidistribution validated")
 
     # (2) addend=∞ probability is exactly 1/2^w per addition (n-independent).
-    c2 = all(abs(r["addend_inf"] / r["n_adds"] - 1.0 / (1 << r["w"])) < 1e-12
+    # Exact rational arithmetic -> assert exact equality, not a float tolerance.
+    c2 = all(r["addend_inf"] / r["n_adds"] == Fraction(1, 1 << r["w"])
              for r in results)
     ok &= c2
     notes.append(f"[{'ok' if c2 else 'XX'}] addend=∞ rate == 1/2^w exactly "
