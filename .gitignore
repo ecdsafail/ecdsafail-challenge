@@ -6,3 +6,5 @@ score.*
 ops.bin
 depth.json
 docs/*.pdf
+/original
+__pycache__/
