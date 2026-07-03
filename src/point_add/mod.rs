@@ -82,6 +82,8 @@ pub(crate) use rounds::*;
 pub mod trailmix_ludicrous;
 mod single_ccx_fanout;
 
+pub mod island_search;
+
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
         std::cell::Cell::new(false);
@@ -1977,6 +1979,19 @@ pub fn build_builder() -> B {
 }
 
 pub fn build() -> Vec<Op> {
+    // Env-gated real-simulator nonce hunt (analysis tooling, not the scored
+    // circuit). `run_realsim_hunt_from_env` calls `build()` to materialize the
+    // base op stream, so a re-entrancy guard lets that inner call fall through
+    // to the normal build while the outer call runs the sweep and exits.
+    if std::env::var_os("FASTHUNT").is_some() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static IN_HUNT: AtomicBool = AtomicBool::new(false);
+        if !IN_HUNT.swap(true, Ordering::SeqCst) {
+            island_search::run_realsim_hunt_from_env();
+            std::process::exit(0);
+        }
+    }
+
     configure_q1153_second512_submission_defaults();
 
     if std::env::var("DIALOG_GCD_K5_HEAD11_SELFTEST").is_ok() {

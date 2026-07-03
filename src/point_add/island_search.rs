@@ -306,6 +306,11 @@ impl PrefixState {
     pub fn from_build(base_nonce: u64) -> PrefixState {
         std::env::set_var("DIALOG_TAIL_NONCE", base_nonce.to_string());
         let ops = crate::point_add::build();
+        Self::from_ops(&ops, base_nonce)
+    }
+
+    /// Same as [`from_build`] but for an already-materialized op stream.
+    pub fn from_ops(ops: &[Op], base_nonce: u64) -> PrefixState {
         let n = ops.len();
         assert!(n > TAIL_OPS, "op stream too short for a nonce tail");
         let tail = &ops[n - TAIL_OPS..];
@@ -611,9 +616,6 @@ pub fn run_from_env() {
         );
         let aw: Vec<usize> = (0..ai).map(|s| cfg.active_width(s)).collect();
         let cb: Vec<usize> = (0..ai).map(|s| cfg.compare_bits_for_step(s, aw[s])).collect();
-        let csw: Vec<usize> = (0..ai).map(|s| cfg.cswap_width(aw[s], s)).collect();
-        let bw: Vec<usize> = (0..ai).map(|s| cfg.body_carry_trunc_width_fast(aw[s], s)).collect();
-        let shw: Vec<usize> = (0..ai).map(|s| cfg.shift_width(aw[s], s)).collect();
         let pr = |name: &str, v: &[usize]| {
             print!("{name}");
             for x in v {
@@ -623,9 +625,6 @@ pub fn run_from_env() {
         };
         pr("SCHED_AW", &aw);
         pr("SCHED_CB", &cb);
-        pr("SCHED_CSW", &csw);
-        pr("SCHED_BW", &bw);
-        pr("SCHED_SHW", &shw);
         return;
     }
     let curve = secp256k1();
@@ -743,5 +742,230 @@ pub fn run_from_env() {
     );
     for s in &survivors {
         println!("SURVIVOR {}", s);
+    }
+}
+
+/// REAL-simulator nonce hunt. Unlike `run_from_env` (which uses the dialog
+/// classical prefilter that does not model the trailmix circuit), this screens
+/// each nonce with the ACTUAL `Simulator`, exactly reproducing `eval_circuit`'s
+/// correctness/phase/ancilla checks, with an early exit at the first failing
+/// batch. A `[CLEAN]` nonce here is guaranteed to pass the trusted evaluator.
+///
+///   DIALOG_TAIL_NONCE  base nonce (fixes the op-stream prefix; its tail is
+///                      stripped and replaced per candidate)
+///   HUNT_START, HUNT_COUNT   nonce sweep range
+///   ISLAND_THREADS     worker threads
+///   HUNT_REPORT_AVG    also compute avg executed Toffoli for clean nonces
+///   SINGLE_CCX_FANOUT_DISABLE=0   hunt the fanout-reduced circuit
+pub fn run_realsim_hunt_from_env() {
+    use crate::circuit::{analyze_ops, QubitId, QubitOrBit};
+    use crate::sim::Simulator;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    let base_nonce = env_u64("DIALOG_TAIL_NONCE", 50400005525597);
+    let start = env_u64("HUNT_START", 0);
+    let count = env_u64("HUNT_COUNT", 1000);
+    let target_shots = env_usize("ISLAND_SHOTS", DEFAULT_SHOTS);
+    let threads = env_usize(
+        "ISLAND_THREADS",
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+    );
+    let report_avg = std::env::var("HUNT_REPORT_AVG").is_ok();
+
+    std::env::set_var("DIALOG_TAIL_NONCE", base_nonce.to_string());
+    let ops = crate::point_add::build();
+    let n = ops.len();
+    let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter());
+    assert_eq!(regs.len(), 4, "expected 4 registers");
+    let prefix = PrefixState::from_ops(&ops, base_nonce);
+
+    let curve = secp256k1();
+    let comb = CombTable::new(&curve);
+
+    eprintln!(
+        "realsim hunt: base_nonce={base_nonce} n_ops={n} qubits={total_qubits} bits={num_bits} \
+         sweeping [{start},{}) on {threads} threads (fanout_disable={:?})",
+        start + count,
+        std::env::var("SINGLE_CCX_FANOUT_DISABLE").ok(),
+    );
+
+    // avgT probe: full-sim one nonce (no early exit), report avg executed
+    // Toffoli + failure counts regardless of correctness. Lets the loosening
+    // cost be measured without a clean nonce.
+    if std::env::var_os("HUNT_AVG_PROBE").is_some() {
+        let nonce = start;
+        let mut xof = prefix.xof_for(nonce);
+        let mut targets: Vec<(U256, U256)> = Vec::new();
+        let mut offsets: Vec<(U256, U256)> = Vec::new();
+        let mut expected: Vec<(U256, U256)> = Vec::new();
+        let mut rb = [[0u8; 32]; 2];
+        for _ in 0..target_shots {
+            XofReader::read(&mut xof, &mut rb[0]);
+            XofReader::read(&mut xof, &mut rb[1]);
+            let k1 = U256::from_le_bytes(rb[0]);
+            let k2 = U256::from_le_bytes(rb[1]);
+            let t = mul_g(&comb, &curve, k1);
+            let o = mul_g(&comb, &curve, k2);
+            if t.0 == o.0 || (t.0.is_zero() && t.1.is_zero()) || (o.0.is_zero() && o.1.is_zero()) {
+                continue;
+            }
+            expected.push(curve.add(t.0, t.1, o.0, o.1));
+            targets.push(t);
+            offsets.push(o);
+        }
+        let nshots = targets.len();
+        let mut sim = Simulator::new(total_qubits as usize, num_bits as usize, &mut xof);
+        const BATCH: usize = 64;
+        let num_batches = (nshots + BATCH - 1) / BATCH;
+        let (mut cm, mut pg, mut ag) = (0usize, 0usize, 0usize);
+        for batch in 0..num_batches {
+            let bs = BATCH.min(nshots - batch * BATCH);
+            let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
+            sim.clear_for_shot();
+            for shot in 0..bs {
+                let i = batch * BATCH + shot;
+                sim.set_register(&regs[0], targets[i].0, shot);
+                sim.set_register(&regs[1], targets[i].1, shot);
+                sim.set_register(&regs[2], offsets[i].0, shot);
+                sim.set_register(&regs[3], offsets[i].1, shot);
+            }
+            sim.apply_iter(ops.iter());
+            for shot in 0..bs {
+                let i = batch * BATCH + shot;
+                if sim.get_register(&regs[0], shot) != expected[i].0
+                    || sim.get_register(&regs[1], shot) != expected[i].1
+                {
+                    cm += 1;
+                }
+            }
+            if (sim.phase & cond_mask) != 0 {
+                pg += 1;
+            }
+            for register in &regs {
+                for qb in register {
+                    if let crate::circuit::QubitOrBit::Qubit(q) = *qb {
+                        *sim.qubit_mut(q) = 0;
+                    }
+                }
+            }
+            for q in 0..total_qubits {
+                if (sim.qubit(crate::circuit::QubitId(q)) & cond_mask) != 0 {
+                    ag += 1;
+                    break;
+                }
+            }
+        }
+        let avg = sim.stats.toffoli_gates as f64 / nshots.max(1) as f64;
+        let rt = avg.round() as u64;
+        println!(
+            "AVGPROBE nonce={nonce} qubits={total_qubits} avgT={avg:.3} roundT={rt} \
+             score={} cm={cm} pg={pg} ag={ag} shots={nshots}",
+            rt * total_qubits as u64
+        );
+        std::process::exit(0);
+    }
+
+    let screen = |nonce: u64| -> Option<f64> {
+        let mut xof = prefix.xof_for(nonce);
+        let mut targets: Vec<(U256, U256)> = Vec::with_capacity(target_shots);
+        let mut offsets: Vec<(U256, U256)> = Vec::with_capacity(target_shots);
+        let mut expected: Vec<(U256, U256)> = Vec::with_capacity(target_shots);
+        let mut rb = [[0u8; 32]; 2];
+        for _ in 0..target_shots {
+            XofReader::read(&mut xof, &mut rb[0]);
+            XofReader::read(&mut xof, &mut rb[1]);
+            let k1 = U256::from_le_bytes(rb[0]);
+            let k2 = U256::from_le_bytes(rb[1]);
+            let t = mul_g(&comb, &curve, k1);
+            let o = mul_g(&comb, &curve, k2);
+            if t.0 == o.0 {
+                continue;
+            }
+            if t.0.is_zero() && t.1.is_zero() {
+                continue;
+            }
+            if o.0.is_zero() && o.1.is_zero() {
+                continue;
+            }
+            let e = curve.add(t.0, t.1, o.0, o.1);
+            targets.push(t);
+            offsets.push(o);
+            expected.push(e);
+        }
+        let nshots = targets.len();
+        let mut sim = Simulator::new(total_qubits as usize, num_bits as usize, &mut xof);
+        const BATCH: usize = 64;
+        let num_batches = (nshots + BATCH - 1) / BATCH;
+        for batch in 0..num_batches {
+            let bs = BATCH.min(nshots - batch * BATCH);
+            let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
+            sim.clear_for_shot();
+            for shot in 0..bs {
+                let i = batch * BATCH + shot;
+                sim.set_register(&regs[0], targets[i].0, shot);
+                sim.set_register(&regs[1], targets[i].1, shot);
+                sim.set_register(&regs[2], offsets[i].0, shot);
+                sim.set_register(&regs[3], offsets[i].1, shot);
+            }
+            sim.apply_iter(ops.iter());
+            for shot in 0..bs {
+                let i = batch * BATCH + shot;
+                let gx = sim.get_register(&regs[0], shot);
+                let gy = sim.get_register(&regs[1], shot);
+                if gx != expected[i].0 || gy != expected[i].1 {
+                    return None;
+                }
+            }
+            if (sim.phase & cond_mask) != 0 {
+                return None;
+            }
+            for register in &regs {
+                for qb in register {
+                    if let QubitOrBit::Qubit(q) = *qb {
+                        *sim.qubit_mut(q) = 0;
+                    }
+                }
+            }
+            for q in 0..total_qubits {
+                if (sim.qubit(QubitId(q)) & cond_mask) != 0 {
+                    return None;
+                }
+            }
+        }
+        Some(if report_avg {
+            sim.stats.toffoli_gates as f64 / nshots.max(1) as f64
+        } else {
+            0.0
+        })
+    };
+
+    let next = AtomicU64::new(start);
+    let endx = start + count;
+    let scanned = AtomicUsize::new(0);
+    let found: Mutex<Vec<(u64, f64)>> = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..threads.max(1) {
+            scope.spawn(|| loop {
+                let nonce = next.fetch_add(1, Ordering::Relaxed);
+                if nonce >= endx {
+                    break;
+                }
+                let k = scanned.fetch_add(1, Ordering::Relaxed) + 1;
+                if k % 200 == 0 {
+                    eprintln!("... scanned {k}/{count}");
+                }
+                if let Some(avg) = screen(nonce) {
+                    eprintln!("[CLEAN] nonce={nonce} avgT={avg:.3}");
+                    found.lock().unwrap().push((nonce, avg));
+                }
+            });
+        }
+    });
+    let mut f = found.into_inner().unwrap();
+    f.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    eprintln!("swept {count} nonces, {} CLEAN", f.len());
+    for (nonce, avg) in &f {
+        println!("CLEAN {nonce} {avg:.3}");
     }
 }
