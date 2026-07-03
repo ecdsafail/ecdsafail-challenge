@@ -136,6 +136,32 @@ fn qrom_read(circ: &mut B, win: &[QubitId], anc: &[QubitId], addend: &[QubitId],
         cx_opt(circ, ctrl, a);
         and_into(circ, ctrl, wq, a);
     }
+    // Shape invariants: turn silent OOB/shift panics into clear failures if this
+    // reusable helper is ever called with inconsistent registers.
+    assert!(
+        win.len() <= 32,
+        "qrom_read: window width {} unreasonably large (2^w table)",
+        win.len()
+    );
+    assert_eq!(
+        anc.len(),
+        win.len(),
+        "qrom_read: need one selector ancilla per window bit ({} anc vs {} win)",
+        anc.len(),
+        win.len()
+    );
+    assert_eq!(
+        table.len(),
+        1usize << win.len(),
+        "qrom_read: table must have 2^w = {} entries, got {}",
+        1usize << win.len(),
+        table.len()
+    );
+    assert!(
+        addend.len() <= 64,
+        "qrom_read: u64 table entries support <= 64 addend bits, got {}",
+        addend.len()
+    );
     rec(circ, 0, None, 0, win, anc, addend, table);
 }
 
