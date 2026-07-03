@@ -54,22 +54,55 @@ fn build_and_measure() -> (u64, u64) {
     (tof, qubits)
 }
 
+/// Sets an env var for its lifetime and restores the *prior* value on drop, so a
+/// panic mid-test cannot leak a mutated process environment into other tests
+/// (`build()` reads these vars to pick circuit-generation paths).
+struct EnvGuard {
+    key: &'static str,
+    prior: Option<std::ffi::OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, val: &str) -> Self {
+        let prior = std::env::var_os(key);
+        std::env::set_var(key, val);
+        Self { key, prior }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.prior {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 #[test]
 #[ignore = "heavy; toggles env vars, run ALONE with --ignored --exact"]
 fn constprop_addend_gap() {
-    // Direct-constant-arithmetic ON: would exploit the classical constant in the
-    // adders instead of loading it into a qubit register.
-    std::env::set_var("SECP_DIRECT_CONST_ARITH", "1");
-    std::env::set_var("KAL_DIRECT_CONST_WALKS", "1");
-    let (dc_tof, _dc_q) = build_and_measure();
-    std::env::remove_var("SECP_DIRECT_CONST_ARITH");
-    std::env::remove_var("KAL_DIRECT_CONST_WALKS");
+    // These toggles are process-global; serialize so a manual multi-test run can
+    // never observe another test's env (poison-tolerant: we only need exclusion).
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 
-    // Peephole constprop OFF (env set), then removed so the default (on) build is
-    // measured with a clean environment.
-    std::env::set_var("CONSTPROP_DISABLE", "1");
-    let (off_tof, _off_q) = build_and_measure();
-    std::env::remove_var("CONSTPROP_DISABLE");
+    // Direct-constant-arithmetic ON: would exploit the classical constant in the
+    // adders instead of loading it into a qubit register. Guards restore the prior
+    // env when the scope ends (or on unwind), so each phase builds under exactly
+    // the vars it sets and nothing leaks afterward.
+    let (dc_tof, _dc_q) = {
+        let _g1 = EnvGuard::set("SECP_DIRECT_CONST_ARITH", "1");
+        let _g2 = EnvGuard::set("KAL_DIRECT_CONST_WALKS", "1");
+        build_and_measure()
+    };
+
+    // Peephole constprop OFF, then restored so the default (on) build below is
+    // measured with the pre-existing environment.
+    let (off_tof, _off_q) = {
+        let _g = EnvGuard::set("CONSTPROP_DISABLE", "1");
+        build_and_measure()
+    };
     let (on_tof, on_q) = build_and_measure();
 
     assert!(on_tof > 0, "degenerate build");
