@@ -33,10 +33,13 @@ The paper's ZK-proven point-addition (PA) bounds and resulting full ECDLP:
 
 CAVEATS (printed below too):
   - The paper's PA table lookup loads P[k] from a QUANTUM window register; this
-    repo's measured PA adds a *classical, compile-time* point, so its constprop
-    pass (which folds addend-dependent gates) may not fully transfer to the
-    windowed setting. The 3*2^w term prices the lookup separately, but the PA
-    arithmetic core is taken as addend-independent (a stated assumption).
+    repo's measured PA adds a *classical, compile-time* point. That the PA
+    arithmetic core is addend-independent is now MEASURED, not assumed (issue #27,
+    ADR 0012): `coord_addsub` loads the classical addend into a qubit register and
+    runs an uncontrolled quantum-quantum Cuccaro add, so the Toffoli count is
+    addend-value-independent; the only addend-dependent optimization (peephole
+    constprop) is 0.05% of PA. So the classical-vs-quantum-addend Toffoli gap is
+    negligible. The 3*2^w term prices the lookup separately.
   - COMPLETENESS: exceptional cases (P==Q, P==-Q, infinity) are assumed handled
     at negligible Toffoli cost, as in the paper. This is a cost estimate, not a
     verified attack. Set completeness_overhead > 1 to price complete formulas.
@@ -196,10 +199,11 @@ print("  above the paper's optimized < 500k -- an assumptions gap, not a discrep
 print("  in the logical circuit. See cost_model.py for the physical assumptions.")
 
 section("CAVEATS")
-print("  - Composition assumes the PA arithmetic core is addend-independent; this")
-print("    repo's measured PA folds a CLASSICAL addend (constprop), whereas the")
-print("    paper's windowed PA loads P[k] from a quantum register. The 3*2^w term")
-print("    prices the lookup separately; residual constprop gain may not transfer.")
+print("  - PA arithmetic core addend-independence is now MEASURED (issue #27,")
+print("    ADR 0012): coord_addsub loads the classical addend into a qubit register")
+print("    and runs an uncontrolled q-q Cuccaro add, so Toffoli is addend-value-")
+print("    independent; the classical-vs-quantum-addend gap is <=0.05% of PA. The")
+print("    3*2^w term prices the lookup separately.")
 print("  - COMPLETENESS (P==Q, P==-Q, infinity) assumed negligible, as in the paper.")
 print("    This is a COST estimate, not a verified attack.")
 print("  - Numbers are DERIVED (measured PA x paper's closed form), not emitted+")
