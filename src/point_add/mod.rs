@@ -65,11 +65,17 @@ use crate::sim::Simulator;
 pub mod venting;
 
 #[cfg(test)]
+mod addend_width;
+#[cfg(test)]
 mod completeness_probe;
+#[cfg(test)]
+mod constprop_gap;
 #[cfg(test)]
 mod ladder_composition;
 #[cfg(test)]
 mod ladder_full;
+#[cfg(test)]
+mod qaddend_testbed;
 
 mod emit;
 pub(crate) use emit::*;

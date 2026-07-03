@@ -35,16 +35,26 @@
 //! uses the *executed* avg-per-shot PA (~1.36M → ~43.7M), a smaller basis; this
 //! harness cross-validates that closed form rather than replacing it.
 //!
-//! **Not measured here** (the one remaining Tier B build): the **peak qubits** and
-//! **exact depth** of a *functionally composed* ladder need the **quantum-addend
-//! point-add** — this repo's PA folds a *classical* compile-time addend, whereas
-//! the ladder loads `P[k]` from a *quantum* table that the addition then consumes.
-//! Only that variant fixes the real register overlap behind `ECDLP_Qubits =
-//! PA_Qubits + w` (A2) and the read→add data dependency. Emitting the lookup on
-//! *disjoint* ids (as here) would OVER-count width and UNDER-count the serial
-//! depth, so width is reported per A2 and depth as the measured add-dominated
-//! critical path, both flagged. Issue #5's mid-ladder ∞/`dx=0` residual lands in
-//! that same quantum-addend testbed and is out of scope for this cost harness.
+//! **Width note (now measured — `addend_width.rs`, ADR 0013):** this harness
+//! reports `total_qubits_a2 = PA_Qubits + w` per A2, but that is the *paper's*
+//! bound. A faithful quantum-addend port of THIS classical-addend PA must hold the
+//! QROM `P[k]` resident across the GCD peak (where the classical addend is not),
+//! adding +256..512 qubits → a measured port peak of 1408..1664, above A2's 1168.
+//! So the `PA_Qubits + w` printed below is the paper's figure, not this PA's port.
+//!
+//! **The read→add composition now works** (`qaddend_testbed.rs`, ADR 0014): a real
+//! unary-iteration QROM read (with data-writes) feeding an uncontrolled q-q add,
+//! then unread, is simulation-verified to compute `acc + P[k]` with all ancilla
+//! clean. So the quantum-addend point-add is no longer hypothetical.
+//!
+//! **Still not measured here** (the remaining Tier B build): the **exact depth** of
+//! a *functionally composed full-width* ladder — this repo's scored PA folds a
+//! *classical* compile-time addend, whereas the ladder loads `P[k]` from a *quantum*
+//! table that the addition then consumes (the read→add data dependency, exhibited
+//! at small width in the testbed). Emitting the lookup on *disjoint* ids (as here)
+//! UNDER-counts the serial depth, so depth is reported as the measured add-dominated
+//! critical path, flagged. Issue #5's mid-ladder ∞/`dx=0` residual lands in that
+//! same quantum-addend testbed and is out of scope for this cost harness.
 //!
 //! `#[cfg(test)]` only; never compiled into the scored circuit.
 
@@ -192,8 +202,9 @@ fn full_ladder_streamed_toffoli_qubits_depth() {
     let lookup_mbuc_per_add = qrom_read_tof + qrom_read_tof / 2; // = 3*2^w - 6
     let total_tof_mbuc = add_tof + n_add * lookup_mbuc_per_add;
 
-    // Peak qubits: reported per A2 (register reuse). A naive disjoint emission
-    // would over-count; the true overlap needs the quantum-addend PA.
+    // Peak qubits: the PAPER's A2 bound. A faithful quantum-addend port of this
+    // classical-addend PA is wider — the QROM addend must stay resident across the
+    // GCD peak (+256..512, measured in addend_width.rs / ADR 0013).
     let total_qubits_a2 = pa_qubits + w;
     let disjoint_peak = top; // what emitting the lookup on separate ids costs
 
@@ -224,7 +235,7 @@ fn full_ladder_streamed_toffoli_qubits_depth() {
         "    toffoli-depth (measured)    = {ladder_tdepth}  (~{:.2}M; add-dominated)",
         ladder_tdepth as f64 / 1e6
     );
-    eprintln!("    peak qubits (A2, reuse)     = {total_qubits_a2}   [disjoint-emit peak = {disjoint_peak}, over-counts]");
+    eprintln!("    peak qubits (paper A2)      = {total_qubits_a2}   [this PA's quantum-addend port = {}..{} (ADR 0013); disjoint-emit = {disjoint_peak}]", pa_qubits + 256 + w, pa_qubits + 512 + w);
     eprintln!(
         "  vs derived (PA+3·2^w)·n_add = {derived_tof}  (Δ = {delta} = 6·n_add, MBUC saving)"
     );

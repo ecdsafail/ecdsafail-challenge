@@ -257,12 +257,38 @@ circuit (one point addition):
   add-dominated). **Peak qubits** are reported as `PA_qubits + w = 1168` per A2
   (register reuse) — *not* the naive disjoint-emit peak (`1184`), which over-counts.
   It matches the derived `(PA+3·2^w)·n_add` headline to within the MBUC saving
-  (`6·n_add`), cross-validating `ecdlp_estimate.py`. The single remaining
-  assumption is the **quantum-addend point-add** (this repo's PA folds a classical
-  compile-time addend; the ladder loads `P[k]` from a quantum table the addition
-  consumes) — the genuine remaining Tier B build that would fix the exact
-  register overlap (A2) and read→add depth dependency, and where #5's mid-ladder
-  residual also lands.
+  (`6·n_add`), cross-validating `ecdlp_estimate.py`.
+- **The classical-vs-quantum-addend *Toffoli* gap is now measured negligible
+  (issue #27, ADR 0012).** `src/point_add/constprop_gap.rs` shows `coord_addsub`
+  loads the classical addend into a qubit register and runs an *uncontrolled
+  quantum-quantum* Cuccaro add — so the PA Toffoli is addend-**value**-independent;
+  the only addend-dependent optimization (peephole constprop) is **0.05% of PA**,
+  and the direct-const-arith knobs are inert. So `28·PA` already reflects the
+  quantum-addend *arithmetic* cost.
+- **But the classical-vs-quantum-addend *width* gap IS real (issue #27, ADR 0013).**
+  `src/point_add/addend_width.rs` measures it: the classical addend is resident only
+  off-peak (coord steps 1026 < the 1152 GCD peak), because `coord_addsub` frees its
+  temp within each step. A QROM quantum addend must instead stay resident *across*
+  the peak (`ox`@3/7/15, `oy`@4/14 straddle both GCD passes), where it cannot overlap
+  the GCD scratch — so the constructed port peaks at **1408** (hold one coord) to
+  **1664** (hold `P[k]=(x,y)`), i.e. `PA + 256..512`. So A2's `ECDLP_Qubits =
+  PA_Qubits + w` (= 1168) **undercounts** a verified port of *this* PA by 256..512
+  qubits; A2 holds for the paper because its `PA_Qubits` bound already prices a
+  resident addend into a tighter core (this repo stayed under bound by keeping the
+  addend classical — a port would erase that width edge).
+- **The QROM-fed quantum-addend add now works end-to-end — verified by simulation
+  (issue #27/#28, ADR 0014).** `src/point_add/qaddend_testbed.rs` composes, on
+  fresh registers, a real **unary-iteration QROM read** (the ADR 0010 selector,
+  now WITH the leaf data-writes the cost-only harnesses omit) → an uncontrolled
+  **q-q Cuccaro add** (the `coord_addsub` shape) → a **QROM unread**, and checks by
+  masked multi-shot simulation over all `2^w` windows × several accumulators that
+  `acc' == (acc + P[k]) mod 2^n` with the addend, selector spine, carry, and window
+  register all clean/preserved (read selector Toffoli `= 2^(w+1)−4`, tying back to
+  ADR 0010). This closes the "does the composition even work" question ADR 0011
+  deferred and gives the register-overlap picture an executable form (addend +
+  spine ride on top of the adder — the small-scale ADR 0013). Still open on this
+  testbed: the field-modular reduction tail, and #28's EC exceptional cases
+  (`P==Q`, `dx=0`, ∞) which need the group law on top.
 
 **Key limitations this surfaces** (all real, all worth fixing):
 - The scored "qubits" is `max_id + 1` (total allocated ids), **not peak
