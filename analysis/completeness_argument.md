@@ -62,9 +62,23 @@ negligible.
 > a real affine point for every window and is the `(0,0)` ∞ sentinel **iff
 > `w = 0`** (ancilla clean, phase `+1`; a `ctrl=0` negative control leaves it at
 > ∞). So the adder is never fed the amplitude-1 ∞ start; the only residual is the
-> `w=0` zero-window term (§4 / issue #5 part (b)), already negligible. A full
+> `w=0` zero-window term (issue #5 part (b)) — and that term is now removed
+> *structurally* by the offset window encoding below, not merely bounded. A full
 > end-to-end check of the *mid-ladder* residual over the real 28-window
 > two-scalar superposition still needs the Tier B ladder ([issue #4](https://github.com/CaptainEmpower/ecdsafail-challenge/issues/4)).
+
+> **The zero-window ∞ term is removed by an offset encoding** (issue #5 part (b),
+> [ADR 0015](adr/0015-offset-window-encoding.md)). The exact measurement
+> (`verify/completeness_collision_rate.py`) found the *dominant* exceptional term
+> is not `dx=0` (§4) but the **zero-window ∞** addend — a window digit of `0`
+> selecting the `[0]·P = ∞` table entry — at `1/2^w` per addition, `≈2⁻¹¹` over
+> the ladder. `verify/offset_window_encoding.py` removes it: shifting every window
+> digit `g → g+1` (with one compile-time correction point `[(1+d)S]P`) makes the
+> emitted index `g+1 ∈ [1, 2^w]` never `0`, so for `2^w < n` the addend is finite
+> at every window. This is verified exhaustively on a real toy curve (never emits
+> ∞; still computes `[a]P+[b]Q`), and re-measuring shows the `addend=∞` rate is
+> then **exactly 0** with `dx=0` unchanged — so the headline below returns to the
+> `dx=0`-limited `≈2⁻²⁵⁰` under an explicit encoding condition.
 
 ## 4. The `dx=0` collisions are negligible
 

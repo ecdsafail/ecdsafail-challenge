@@ -323,7 +323,16 @@ circuit (one point addition):
   case at `~1/2^w` per addition (`≈2⁻¹¹` total at `w=16`), not the `dx=0` term
   (`≈2⁻²⁵⁰`). Both sit far below Shor's `~1%` tolerance, so `completeness_overhead
   = 1.0` holds — but the `2⁻¹¹` figure is conditional on the lookup encoding never
-  emitting the `∞` table entry, a condition the negligibility argument must state.
+  emitting the `∞` table entry.
+- **That dominant term is now removed, not just bounded (issue #5 part (b),
+  ADR 0015).** `verify/offset_window_encoding.py` implements the **offset window
+  encoding** (shift every window digit `g → g+1`, correct by one compile-time
+  point) and proves exhaustively on a real toy curve that it *never* emits the `∞`
+  table entry — while standard windowing does, exactly at a zero digit — yet still
+  computes `[a]P+[b]Q` for every `(a,b)`. Re-running the exact measurement, the
+  `addend=∞` rate is then **exactly 0** and `dx=0` is unchanged, so the completeness
+  headline sharpens from `~2⁻¹¹` back to the `dx=0`-limited `~2⁻²⁵⁰` under an
+  explicit, validated encoding condition rather than a silent assumption.
 - **The amplitude-1 ∞ start is now circuit-demonstrated as removed (issue #5
   part (a), ADR 0009).** The one exceptional case that negligibility *cannot*
   cover — the accumulator starting at ∞ with amplitude 1 — is handled structurally
