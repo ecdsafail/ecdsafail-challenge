@@ -299,7 +299,7 @@ circuit (one point addition):
   = 1.0` holds — but the `2⁻¹¹` figure is conditional on the lookup encoding never
   emitting the `∞` table entry.
 - **That dominant term is now removed, not just bounded (issue #5 part (b),
-  ADR 0012).** `verify/offset_window_encoding.py` implements the **offset window
+  ADR 0015).** `verify/offset_window_encoding.py` implements the **offset window
   encoding** (shift every window digit `g → g+1`, correct by one compile-time
   point) and proves exhaustively on a real toy curve that it *never* emits the `∞`
   table entry — while standard windowing does, exactly at a zero digit — yet still

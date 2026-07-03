@@ -1,4 +1,4 @@
-# ADR 0012 — Offset window encoding removes the zero-window ∞ exceptional term
+# ADR 0015 — Offset window encoding removes the zero-window ∞ exceptional term
 
 **Status:** Accepted — dominant exceptional term (zero-window ∞) removed
 structurally; completeness bound sharpened from ~2⁻¹¹ back to the dx=0-limited ~2⁻²⁵⁰

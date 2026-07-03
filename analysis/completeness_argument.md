@@ -68,7 +68,7 @@ negligible.
 > two-scalar superposition still needs the Tier B ladder ([issue #4](https://github.com/CaptainEmpower/ecdsafail-challenge/issues/4)).
 
 > **The zero-window ∞ term is removed by an offset encoding** (issue #5 part (b),
-> [ADR 0012](adr/0012-offset-window-encoding.md)). The exact measurement
+> [ADR 0015](adr/0015-offset-window-encoding.md)). The exact measurement
 > (`verify/completeness_collision_rate.py`) found the *dominant* exceptional term
 > is not `dx=0` (§4) but the **zero-window ∞** addend — a window digit of `0`
 > selecting the `[0]·P = ∞` table entry — at `1/2^w` per addition, `≈2⁻¹¹` over

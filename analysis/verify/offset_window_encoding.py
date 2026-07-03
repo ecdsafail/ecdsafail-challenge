@@ -65,6 +65,8 @@ from completeness_collision_rate import (  # noqa: E402
 def window_count(n, w):
     """Smallest t with 2^{w t} >= n, so every scalar in [0, n) is representable
     by t base-2^w windows."""
+    if w <= 0:
+        raise ValueError(f"window width w must be positive, got {w}")
     t = 0
     while (1 << (w * t)) < n:
         t += 1
@@ -278,7 +280,7 @@ def main():
         print(" RESULT: the offset window encoding removes the dominant zero-window ∞")
         print(" exceptional term STRUCTURALLY (addend never ∞), verified ∞-free and")
         print(" correct on a real toy curve. The completeness headline sharpens from")
-        print(" ~2⁻¹¹ back to the dx=0-limited ~2⁻²⁵⁰ (issue #5b; ADR 0012).")
+        print(" ~2⁻¹¹ back to the dx=0-limited ~2⁻²⁵⁰ (issue #5b; ADR 0015).")
         print("=" * 74)
         return 0
     print(" RESULT: FAILURE — see [XX] above.")
