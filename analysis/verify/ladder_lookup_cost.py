@@ -13,15 +13,19 @@ measured behind it.
 
 This module builds the lookup as an **optimized unary-iteration QROM**
 (Gidney 2018 §III.C — the same primitive the paper cites) as an actual kickmix
-circuit, **validates it** exhaustively with the reference-faithful `kickmix_sim.py`
-(correct read, address/table unchanged, all iteration ancilla returned to |0⟩,
-global phase +1), and **measures** its Toffoli count and ancilla width. A single
-QROM read of `N = 2^w` entries costs:
+circuit, in **both** uncomputation forms, **validates** each exhaustively with the
+reference-faithful `kickmix_sim.py` (correct read, address/table unchanged, all
+iteration ancilla returned to |0⟩, global phase +1), and **measures** its Toffoli
+count and ancilla width. A single QROM read of `N = 2^w` entries costs:
 
-    Toffoli(reversible) = 2^(w+1) − 4        (compute + reversible uncompute)
-    Toffoli(compute-only, MBUC bound) = 2^w − 2   (uncompute → Clifford, the
-                                                    paper's measurement technique)
+    Toffoli(reversible) = 2^(w+1) − 4   (compute + reversible-uncompute CCX)
+    Toffoli(mbuc)       = 2^w − 2       (compute only; the uncompute is the
+                                         paper's measurement-based technique —
+                                         HMR + a CZ phase fixup — hence Clifford)
     ancilla = w
+
+Both forms are validated here (issue #29); the mbuc form's phase corrections are
+load-bearing — deleting them fails the phase check (teeth test).
 
 both **below** the paper's `3·2^w` per-addition budget — so the estimate's lookup
 term is conservative, and now has a validated construction behind it. (A windowed
@@ -51,8 +55,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kickmix_sim import Circuit, State, simulate  # noqa: E402
 
 
-def build_qrom_kmx(w, d):
+def build_qrom_kmx(w, d, mode="reversible"):
     """Return kmx text for an unconditional unary-iteration read `out ^= T[addr]`.
+
+    `mode` selects the selector-spine uncomputation:
+      - "reversible": replay the CCX ladder (2^(w+1)-4 Toffoli).
+      - "mbuc":       measurement-based uncompute (HMR + CZ phase fixup) — the
+                      uncompute becomes Clifford, so only the 2^w-2 compute CCX
+                      remain (the paper's / adders' technique).
+      - "mbuc_nofix": mbuc with the CZ/Z phase corrections omitted (teeth check;
+                      must fail the phase test).
 
     Layout: out = q[0..d), addr = q[d..d+w), scratch = q[d+w..d+2w). Registers
     r0=out, r1=addr, r2=table (classical bits: T[k] bit j is b[k*d+j])."""
@@ -67,6 +79,7 @@ def build_qrom_kmx(w, d):
     for k in range(1 << w):
         for j in range(d):
             L.append(f"APPEND_TO_REGISTER b{k*d+j} r2")
+    meas = (1 << w) * d  # one measurement bit, after the table bits (mbuc only)
 
     def emit(level, ctrl, prefix):
         if level == w:  # leaf: write T[prefix] into out, controlled on `ctrl`
@@ -80,22 +93,30 @@ def build_qrom_kmx(w, d):
         # a ^= ctrl  =>  a = ctrl AND NOT addr[level]
         L.append(f"X q{a}" if ctrl is None else f"CX q{ctrl} q{a}")
         emit(level + 1, a, prefix)                         # addr[level] == 0
-        # restore a = ctrl AND addr[level], then uncompute a -> 0
-        if ctrl is None:
-            L.append(f"X q{a}")
-            L.append(f"CX q{ab} q{a}")
+        # restore a = ctrl AND addr[level] (Clifford), then uncompute a -> 0.
+        L.append(f"X q{a}" if ctrl is None else f"CX q{ctrl} q{a}")
+        if mode == "reversible":
+            # replay the compute CCX/CX (a second Toffoli per internal node).
+            L.append(f"CX q{ab} q{a}" if ctrl is None else f"CCX q{ctrl} q{ab} q{a}")
+        elif mode in ("mbuc", "mbuc_nofix"):
+            # measurement-based uncompute: X-basis demolition + a Z-basis phase
+            # correction on the AND's inputs (the paper's / adders' technique).
+            # The uncompute Toffoli becomes Clifford -> only the compute CCX count.
+            L.append(f"HMR q{a} b{meas}")
+            if mode == "mbuc":  # 'mbuc_nofix' omits this -> teeth check must fail
+                L.append(f"Z q{ab} if b{meas}" if ctrl is None
+                         else f"CZ q{ctrl} q{ab} if b{meas}")
         else:
-            L.append(f"CX q{ctrl} q{a}")
-            L.append(f"CCX q{ctrl} q{ab} q{a}")
+            raise ValueError(mode)
 
     emit(0, None, 0)
     return "\n".join(L) + "\n", scratch
 
 
-def validate(w, d, rng, table_shots=24):
+def validate(w, d, rng, table_shots=24, mode="reversible"):
     """Exhaustive over addresses x random tables: correct read, addr/table
     unchanged, iteration ancilla cleared, phase +1."""
-    text, scratch = build_qrom_kmx(w, d)
+    text, scratch = build_qrom_kmx(w, d, mode)
     circ = Circuit.parse(text)
     scratch = set(scratch)
     mod_d = 1 << d
@@ -124,18 +145,25 @@ def validate(w, d, rng, table_shots=24):
     return True, ""
 
 
-def measure(w):
-    """Count Toffoli (CCX), the compute-only subset, and ancilla width.
+def _count_ccx(w, mode):
+    # CCX count is `w`-only (the spine), independent of data width `d` or table
+    # contents, so build with d=0 to omit the O(2^w * d) table/output lines and
+    # scan via a StringIO iterator (no list of all lines materialized).
+    text, _ = build_qrom_kmx(w, 0, mode)
+    return sum(1 for ln in io.StringIO(text) if ln.startswith("CCX "))
 
-    The Toffoli count and ancilla width depend only on `w` (the unary-iteration
-    spine), not on the data width `d` or the table contents. So build the spine
-    with `d=0`: that omits the O(2^w * d) table/output lines entirely — avoiding a
-    large transient for big `w` (e.g. w=16) — while leaving the CCX spine and the
-    `w` scratch ancilla identical. Scan the text line-by-line via a StringIO
-    iterator rather than `splitlines()`, so no list of all lines is materialized."""
-    text, scratch = build_qrom_kmx(w, 0)
-    ccx = sum(1 for ln in io.StringIO(text) if ln.startswith("CCX "))
-    return {"w": w, "toffoli": ccx, "compute_only": ccx // 2, "ancilla": len(scratch)}
+
+def measure(w):
+    """Count Toffoli (CCX) for both uncompute modes, and the ancilla width."""
+    _, scratch = build_qrom_kmx(w, 0)
+    rev = _count_ccx(w, "reversible")   # 2^(w+1) - 4
+    mbuc = _count_ccx(w, "mbuc")        # 2^w - 2 (uncompute is Clifford)
+    return {
+        "w": w,
+        "toffoli": rev,
+        "compute_only": mbuc,
+        "ancilla": len(scratch),
+    }
 
 
 def main():
@@ -148,14 +176,21 @@ def main():
 
     ok = True
 
-    # (1) Validate the construction is a correct, clean, phase-+1 QROM read.
+    # (1) Validate the construction is a correct, clean, phase-+1 QROM read, for
+    #     BOTH the reversible and the measurement-based (MBUC) uncompute.
     print("Validation (exhaustive addresses x random tables, kickmix sim)")
     print("-" * 74)
-    for w, d in [(2, 3), (3, 3), (4, 2), (5, 2), (6, 2)]:
-        good, detail = validate(w, d, rng)
-        ok &= good
-        print(f"  [{'ok' if good else 'XX'}] w={w} ({1<<w:>3} entries), d={d} data bits"
-              f"{'' if good else '  ' + detail}")
+    for mode in ("reversible", "mbuc"):
+        for w, d in [(2, 3), (3, 3), (4, 2), (5, 2), (6, 2)]:
+            good, detail = validate(w, d, rng, mode=mode)
+            ok &= good
+            print(f"  [{'ok' if good else 'XX'}] {mode:<10} w={w} ({1<<w:>3} entries),"
+                  f" d={d} data bits{'' if good else '  ' + detail}")
+    # Teeth: MBUC with the phase corrections deleted must FAIL the phase check.
+    teeth_ok, _ = validate(3, 3, rng, mode="mbuc_nofix")
+    ok &= not teeth_ok
+    print(f"  [{'ok' if not teeth_ok else 'XX'}] teeth: mbuc without CZ/Z phase "
+          f"fixups is REJECTED (phase -1) -> the correction is load-bearing")
     print()
 
     # (2) Measure Toffoli(w) / ancilla(w) and compare to the paper's 3*2^w.
@@ -189,6 +224,10 @@ def main():
     notes.append(f"[{'ok' if anc else 'XX'}] ancilla == w (O(w) spine, matches the "
                  f"paper's PA_Qubits + w)")
     ok &= anc
+    mbuc_cf = all(m["compute_only"] == (1 << m["w"]) - 2 for m, _ in rows)
+    notes.append(f"[{'ok' if mbuc_cf else 'XX'}] MBUC uncompute Toffoli == 2^w - 2 "
+                 f"(validated; uncompute is Clifford) -> read + MBUC-unread = 3*2^w - 6")
+    ok &= mbuc_cf
     print("Findings")
     print("-" * 74)
     for ln in notes:
@@ -203,10 +242,10 @@ def main():
 
     print("=" * 74)
     if ok:
-        print(" RESULT: the windowed-lookup term now has a validated construction and")
-        print(" a measured cost (2^(w+1)-4 Toffoli, w ancilla per read) — below the")
-        print(" paper's derived 3*2^w. The estimate's lookup term is grounded, not")
-        print(" just cited (issue #4; ADR 0010).")
+        print(" RESULT: the windowed-lookup term has a validated construction and a")
+        print(" measured cost in BOTH uncompute forms — reversible 2^(w+1)-4 and MBUC")
+        print(" 2^w-2 Toffoli, w ancilla per read — below the paper's 3*2^w. The")
+        print(" estimate's lookup term is grounded, not just cited (issue #4/#29; ADR 0010).")
         print("=" * 74)
         return 0
     print(" RESULT: FAILURE — see [XX] above.")
