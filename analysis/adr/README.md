@@ -21,3 +21,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0011](0011-streamed-full-ladder.md) | Stream-emit and measure the full ECDLP ladder (Tier B, issue #4) | Accepted (ladder emitted+measured; quantum-addend PA the one assumption) |
 | [0012](0012-classical-vs-quantum-addend-gap.md) | The classical-vs-quantum-addend gap is negligible (Tier B, issue #27) | Accepted (Toffoli gap ≤0.05% measured; width/register-overlap remains) |
 | [0013](0013-quantum-addend-width-gap.md) | The quantum-addend WIDTH gap is real: A2's `+w` undercounts this PA (Tier B, issue #27) | Accepted (measured port needs PA+256..512+w; functional QROM-fed add remains) |
+| [0014](0014-quantum-addend-testbed.md) | Quantum-addend point-add testbed: a QROM-fed add, verified by simulation (Tier B, issue #27/#28) | Accepted (v1: QROM read→q-q add→unread sim-verified; modular/EC-exception next) |

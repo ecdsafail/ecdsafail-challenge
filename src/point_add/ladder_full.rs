@@ -42,14 +42,19 @@
 //! adding +256..512 qubits → a measured port peak of 1408..1664, above A2's 1168.
 //! So the `PA_Qubits + w` printed below is the paper's figure, not this PA's port.
 //!
+//! **The read→add composition now works** (`qaddend_testbed.rs`, ADR 0014): a real
+//! unary-iteration QROM read (with data-writes) feeding an uncontrolled q-q add,
+//! then unread, is simulation-verified to compute `acc + P[k]` with all ancilla
+//! clean. So the quantum-addend point-add is no longer hypothetical.
+//!
 //! **Still not measured here** (the remaining Tier B build): the **exact depth** of
-//! a *functionally composed* ladder needs the **quantum-addend point-add** — this
-//! repo's PA folds a *classical* compile-time addend, whereas the ladder loads
-//! `P[k]` from a *quantum* table that the addition then consumes (the read→add data
-//! dependency). Emitting the lookup on *disjoint* ids (as here) UNDER-counts the
-//! serial depth, so depth is reported as the measured add-dominated critical path,
-//! flagged. Issue #5's mid-ladder ∞/`dx=0` residual lands in that same
-//! quantum-addend testbed and is out of scope for this cost harness.
+//! a *functionally composed full-width* ladder — this repo's scored PA folds a
+//! *classical* compile-time addend, whereas the ladder loads `P[k]` from a *quantum*
+//! table that the addition then consumes (the read→add data dependency, exhibited
+//! at small width in the testbed). Emitting the lookup on *disjoint* ids (as here)
+//! UNDER-counts the serial depth, so depth is reported as the measured add-dominated
+//! critical path, flagged. Issue #5's mid-ladder ∞/`dx=0` residual lands in that
+//! same quantum-addend testbed and is out of scope for this cost harness.
 //!
 //! `#[cfg(test)]` only; never compiled into the scored circuit.
 

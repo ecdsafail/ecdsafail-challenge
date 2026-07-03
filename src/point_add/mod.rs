@@ -74,6 +74,8 @@ mod constprop_gap;
 mod ladder_composition;
 #[cfg(test)]
 mod ladder_full;
+#[cfg(test)]
+mod qaddend_testbed;
 
 mod emit;
 pub(crate) use emit::*;

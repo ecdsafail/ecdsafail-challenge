@@ -275,9 +275,20 @@ circuit (one point addition):
   PA_Qubits + w` (= 1168) **undercounts** a verified port of *this* PA by 256..512
   qubits; A2 holds for the paper because its `PA_Qubits` bound already prices a
   resident addend into a tighter core (this repo stayed under bound by keeping the
-  addend classical — a port would erase that width edge). Still open for the
-  **quantum-addend point-add** build: functional correctness of a QROM-fed add and
-  the read→add depth dependency — plus #5's mid-ladder residual (#28).
+  addend classical — a port would erase that width edge).
+- **The QROM-fed quantum-addend add now works end-to-end — verified by simulation
+  (issue #27/#28, ADR 0014).** `src/point_add/qaddend_testbed.rs` composes, on
+  fresh registers, a real **unary-iteration QROM read** (the ADR 0010 selector,
+  now WITH the leaf data-writes the cost-only harnesses omit) → an uncontrolled
+  **q-q Cuccaro add** (the `coord_addsub` shape) → a **QROM unread**, and checks by
+  masked multi-shot simulation over all `2^w` windows × several accumulators that
+  `acc' == (acc + P[k]) mod 2^n` with the addend, selector spine, carry, and window
+  register all clean/preserved (read selector Toffoli `= 2^(w+1)−4`, tying back to
+  ADR 0010). This closes the "does the composition even work" question ADR 0011
+  deferred and gives the register-overlap picture an executable form (addend +
+  spine ride on top of the adder — the small-scale ADR 0013). Still open on this
+  testbed: the field-modular reduction tail, and #28's EC exceptional cases
+  (`P==Q`, `dx=0`, ∞) which need the group law on top.
 
 **Key limitations this surfaces** (all real, all worth fixing):
 - The scored "qubits" is `max_id + 1` (total allocated ids), **not peak
