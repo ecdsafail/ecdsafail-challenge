@@ -41,11 +41,14 @@ without building the full quantum-addend ladder:
   read is `~0.67×` the paper's per-addition budget, and the ancilla scaling `w`
   matches `ECDLP_Qubits = PA_Qubits + w` (A2). `ecdlp_estimate.py` keeps `3·2^w`
   as the **conservative headline** but now prints the measured grounding.
-- The compute half of the read (`2^w − 2` Toffoli) is a subset of the same
-  validated circuit; with measurement-based uncomputation (the repo's / paper's
-  technique, as the adders and `controlled_lookup.py` use) the uncompute becomes
-  Clifford, so a windowed addition's read + uncompute-read stays near `2·2^w`,
-  within the `3·2^w` budget.
+- The **measurement-based-uncompute (MBUC)** form is now also built and validated
+  (issue #29): the selector spine is cleared with `HMR` + a `CZ`/`Z` phase fixup
+  (the repo's / paper's technique, as the adders and `controlled_lookup.py` use)
+  instead of replaying the CCX ladder, so the uncompute is Clifford and only the
+  `2^w − 2` compute CCX remain — validated exhaustively (correct read, ancilla
+  clean, phase `+1`), with a teeth check that deleting the phase fixups fails the
+  phase test. So a windowed addition's read + MBUC-uncompute-read is a **measured**
+  `3·2^w − 6`, within the paper's `3·2^w` budget.
 - **Still deferred** (the remaining Tier B work, issue #4): composing the
   quantum-addend point-add + this QROM + the semiclassical QFT into the actual
   28-window ladder and stream-measuring the end-to-end Toffoli/qubit/depth (the
