@@ -18,3 +18,4 @@ Format: Status · Context · Decision · Consequences (lightweight MADR).
 | [0008](0008-empirical-completeness-collision-rate.md) | Empirically validate (and sharpen) the completeness collision rate | Accepted (equidistribution validated; zero-window ∞ term dominant) |
 | [0009](0009-direct-lookup-init.md) | Circuit-demonstrate the ∞-start removal (direct-lookup first window) | Accepted (amplitude-1 ∞ start removed; mid-ladder residual deferred to #4) |
 | [0010](0010-measured-windowed-lookup-cost.md) | Measure the windowed-lookup (QROM) cost (Tier B, issue #4) | Accepted (lookup term grounded; end-to-end ladder deferred) |
+| [0011](0011-streamed-full-ladder.md) | Stream-emit and measure the full ECDLP ladder (Tier B, issue #4) | Accepted (ladder emitted+measured; quantum-addend PA the one assumption) |
