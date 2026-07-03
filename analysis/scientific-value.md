@@ -257,12 +257,17 @@ circuit (one point addition):
   add-dominated). **Peak qubits** are reported as `PA_qubits + w = 1168` per A2
   (register reuse) — *not* the naive disjoint-emit peak (`1184`), which over-counts.
   It matches the derived `(PA+3·2^w)·n_add` headline to within the MBUC saving
-  (`6·n_add`), cross-validating `ecdlp_estimate.py`. The single remaining
-  assumption is the **quantum-addend point-add** (this repo's PA folds a classical
-  compile-time addend; the ladder loads `P[k]` from a quantum table the addition
-  consumes) — the genuine remaining Tier B build that would fix the exact
-  register overlap (A2) and read→add depth dependency, and where #5's mid-ladder
-  residual also lands.
+  (`6·n_add`), cross-validating `ecdlp_estimate.py`.
+- **The classical-vs-quantum-addend *Toffoli* gap is now measured negligible
+  (issue #27, ADR 0012).** `src/point_add/constprop_gap.rs` shows `coord_addsub`
+  loads the classical addend into a qubit register and runs an *uncontrolled
+  quantum-quantum* Cuccaro add — so the PA Toffoli is addend-**value**-independent;
+  the only addend-dependent optimization (peephole constprop) is **0.05% of PA**,
+  and the direct-const-arith knobs are inert. So `28·PA` already reflects the
+  quantum-addend *arithmetic* cost. What remains of the **quantum-addend point-add**
+  build is the **width / register-overlap** question (does the QROM-provided addend
+  register + lookup ancilla reuse PA's workspace behind `ECDLP_Qubits = PA_Qubits
+  + w`, A2) and the read→add depth dependency — plus #5's mid-ladder residual (#28).
 
 **Key limitations this surfaces** (all real, all worth fixing):
 - The scored "qubits" is `max_id + 1` (total allocated ids), **not peak
