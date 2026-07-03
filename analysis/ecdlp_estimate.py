@@ -40,6 +40,14 @@ CAVEATS (printed below too):
     addend-value-independent; the only addend-dependent optimization (peephole
     constprop) is 0.05% of PA. So the classical-vs-quantum-addend Toffoli gap is
     negligible. The 3*2^w term prices the lookup separately.
+  - QUBITS (A2): the qubit headline uses the paper's ECDLP_Qubits = PA_Qubits + w.
+    That +w (window register) is correct for the paper's PA, whose PA_Qubits bound
+    already prices a RESIDENT quantum addend. This repo's measured PA_Qubits keeps
+    the addend CLASSICAL (loaded into a transient temp, freed off-peak, never at the
+    GCD peak), so a faithful quantum-addend port of THIS PA must hold the addend
+    resident ACROSS the peak, adding +256..512 qubits (MEASURED, issue #27, ADR 0013:
+    coord 1026 < 1152 peak; port peak 1408..1664). The Toffoli headline is unaffected
+    (ADR 0012); only the qubit figure carries this +256..512 caveat.
   - COMPLETENESS: exceptional cases (P==Q, P==-Q, infinity) are assumed handled
     at negligible Toffoli cost, as in the paper. This is a cost estimate, not a
     verified attack. Set completeness_overhead > 1 to price complete formulas.
@@ -204,6 +212,11 @@ print("    ADR 0012): coord_addsub loads the classical addend into a qubit regis
 print("    and runs an uncontrolled q-q Cuccaro add, so Toffoli is addend-value-")
 print("    independent; the classical-vs-quantum-addend gap is <=0.05% of PA. The")
 print("    3*2^w term prices the lookup separately.")
+print("  - QUBITS (A2): the qubit headline PA_Qubits+w is the PAPER's bound (its")
+print("    PA_Qubits already prices a resident quantum addend). This repo keeps the")
+print("    addend CLASSICAL (freed off-peak), so a faithful quantum-addend port of")
+print("    THIS PA holds it resident across the peak: +256..512 qubits (MEASURED,")
+print("    issue #27, ADR 0013: port peak 1408..1664 vs PA 1152). Toffoli unaffected.")
 print("  - COMPLETENESS (P==Q, P==-Q, infinity) assumed negligible, as in the paper.")
 print("    This is a COST estimate, not a verified attack.")
 print("  - Numbers are DERIVED (measured PA x paper's closed form), not emitted+")

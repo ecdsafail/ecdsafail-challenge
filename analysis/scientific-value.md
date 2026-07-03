@@ -264,10 +264,20 @@ circuit (one point addition):
   quantum-quantum* Cuccaro add — so the PA Toffoli is addend-**value**-independent;
   the only addend-dependent optimization (peephole constprop) is **0.05% of PA**,
   and the direct-const-arith knobs are inert. So `28·PA` already reflects the
-  quantum-addend *arithmetic* cost. What remains of the **quantum-addend point-add**
-  build is the **width / register-overlap** question (does the QROM-provided addend
-  register + lookup ancilla reuse PA's workspace behind `ECDLP_Qubits = PA_Qubits
-  + w`, A2) and the read→add depth dependency — plus #5's mid-ladder residual (#28).
+  quantum-addend *arithmetic* cost.
+- **But the classical-vs-quantum-addend *width* gap IS real (issue #27, ADR 0013).**
+  `src/point_add/addend_width.rs` measures it: the classical addend is resident only
+  off-peak (coord steps 1026 < the 1152 GCD peak), because `coord_addsub` frees its
+  temp within each step. A QROM quantum addend must instead stay resident *across*
+  the peak (`ox`@3/7/15, `oy`@4/14 straddle both GCD passes), where it cannot overlap
+  the GCD scratch — so the constructed port peaks at **1408** (hold one coord) to
+  **1664** (hold `P[k]=(x,y)`), i.e. `PA + 256..512`. So A2's `ECDLP_Qubits =
+  PA_Qubits + w` (= 1168) **undercounts** a verified port of *this* PA by 256..512
+  qubits; A2 holds for the paper because its `PA_Qubits` bound already prices a
+  resident addend into a tighter core (this repo stayed under bound by keeping the
+  addend classical — a port would erase that width edge). Still open for the
+  **quantum-addend point-add** build: functional correctness of a QROM-fed add and
+  the read→add depth dependency — plus #5's mid-ladder residual (#28).
 
 **Key limitations this surfaces** (all real, all worth fixing):
 - The scored "qubits" is `max_id + 1` (total allocated ids), **not peak

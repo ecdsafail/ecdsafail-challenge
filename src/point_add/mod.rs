@@ -65,6 +65,8 @@ use crate::sim::Simulator;
 pub mod venting;
 
 #[cfg(test)]
+mod addend_width;
+#[cfg(test)]
 mod completeness_probe;
 #[cfg(test)]
 mod constprop_gap;
