@@ -1,8 +1,8 @@
 # ADR 0014 — Quantum-addend point-add testbed: a QROM-fed add, verified by simulation (Tier B, issue #27/#28)
 
 **Status:** Accepted — decides the approach for the deferred quantum-addend build
-that ADRs 0011/0012/0013 all point to; first increment implemented in
-`src/point_add/qaddend_testbed.rs`.
+that ADRs 0011/0012/0013 all point to; implemented in
+`src/point_add/qaddend_testbed.rs` (v1: mod-2^n add; v2: field-modular add).
 **Date:** 2026-07-03
 
 ## Context
@@ -70,12 +70,19 @@ scored 256-bit point-add:
 - **The register-overlap picture becomes concrete and executable**: the addend and
   selector ancilla are explicit registers whose peak contribution is measured, not
   argued, complementing ADR 0013's full-width construction.
-- **Scope of v1** (honest): integer add mod `2^n` (not yet a field-modular
-  reduction) and a single table read→add→unread (not the full ladder). The
-  modular-reduction tail is a fixed, addend-independent extension (as
-  `coord_addsub`'s `mod_add` shows); issue #28's EC exceptional cases (`P==Q`,
-  `dx=0`, ∞) need the *group law* on top and are the next increments on this same
-  testbed. These are called out, not silently omitted.
+- **v2 — field-modular reduction (delivered).** `qrom_fed_quantum_addend_modular_add`
+  extends the composition to `acc := (acc + P[k]) mod p` with a textbook
+  Vedral–Barenco–Ekert modular adder (`mod_add`), built from the same
+  quantum-quantum Cuccaro add/sub plus (conditional) loads of the classical
+  modulus `p` — the reduction tail v1 deferred. Verified ancilla-clean by
+  simulation over all `2^w` windows × several accumulators (all `< p`), for a few
+  `(n, w, p)` with `p` prime. So the read→add→**reduce**→unread tail is now
+  executable, not just asserted addend-independent.
+- **Scope** (honest): still a single table read→add→unread (not the full ladder),
+  and `mod_add` assumes reduced inputs (`acc, addend < p`), matching the ladder's
+  invariant. Issue #28's EC exceptional cases (`P==Q`, `dx=0`, ∞) need the *group
+  law* on top and are the next increment on this same testbed. These are called
+  out, not silently omitted.
 - Consistent with [ADR 0001](0001-analysis-layer-isolated-from-score.md): the
   harness is `#[cfg(test)]`, never compiled into `build_circuit`; the scored
   circuit is byte-identical (`ops.bin` SHA unchanged).
