@@ -70,6 +70,8 @@ pub mod venting;
 
 pub mod dialog_gcd_classical_filter;
 
+pub mod island_search;
+
 mod emit;
 pub(crate) use emit::*;
 
@@ -1166,6 +1168,8 @@ fn configure_q1153_second512_submission_defaults() {
     set_default_env("TLM_FFG_RELEASE_CY0_DURING_SUFFIX", "1");
     set_default_env("TLM_FFG_RELEASE_CY0_CALLS", "178,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,203,208,210,211,212,213,215,217,219,221,226,232,234,235,236,237,239");
     set_default_env("TLM_APPLY_FWD_CSWAP_SKIP_LAST", "1");
+    set_default_env("TLM_APPLY_FWD_CSWAP_SKIP_PENULT_BITS", "13");
+    set_default_env("TLM_APPLY_FWD_CSWAP_SKIP_PENULT_PHASE_FIX", "full_cswap");
     set_default_env("TLM_COORD_RSUB_FUSED", "1");
     set_default_env("TLM_SQUARE_VENT_MARGIN", "0");
     set_default_env("TLM_COORD_ADD3X_TRUNC", "1");

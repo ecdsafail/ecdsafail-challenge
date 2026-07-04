@@ -211,6 +211,91 @@ fn apply_fwd_cswap_skip(i: usize) -> bool {
     legacy_first_skip || (last_n != 0 && i + last_n >= ITERS)
 }
 
+fn apply_fwd_cswap_bit_skip(i: usize, j: usize) -> bool {
+    if i + 2 != ITERS {
+        return false;
+    }
+    let Ok(bits) = std::env::var("TLM_APPLY_FWD_CSWAP_SKIP_PENULT_BITS") else {
+        return false;
+    };
+    for token in bits.split(',').map(str::trim).filter(|token| !token.is_empty()) {
+        if let Some((lo, hi)) = token.split_once('-') {
+            let Ok(lo) = lo.trim().parse::<usize>() else {
+                continue;
+            };
+            let Ok(hi) = hi.trim().parse::<usize>() else {
+                continue;
+            };
+            if lo <= j && j <= hi {
+                return true;
+            }
+        } else if token.parse::<usize>().ok() == Some(j) {
+            return true;
+        }
+    }
+    false
+}
+
+fn apply_fwd_cswap_bit_phase_fix(circ: &mut B, swp: QubitId, x: QubitId, y: QubitId) {
+    let Ok(mode) = std::env::var("TLM_APPLY_FWD_CSWAP_SKIP_PENULT_PHASE_FIX") else {
+        return;
+    };
+    match mode.as_str() {
+        "z_swp" => circ.z(swp),
+        "z_x" => circ.z(x),
+        "z_y" => circ.z(y),
+        "cz_swp_x" => circ.cz(swp, x),
+        "cz_swp_y" => circ.cz(swp, y),
+        "cz_x_y" => circ.cz(x, y),
+        "cz_swp_notx" => {
+            circ.x(x);
+            circ.cz(swp, x);
+            circ.x(x);
+        }
+        "cz_swp_noty" => {
+            circ.x(y);
+            circ.cz(swp, y);
+            circ.x(y);
+        }
+        "cz_notx_y" => {
+            circ.x(x);
+            circ.cz(x, y);
+            circ.x(x);
+        }
+        "cz_x_noty" => {
+            circ.x(y);
+            circ.cz(x, y);
+            circ.x(y);
+        }
+        "cz_notx_noty" => {
+            circ.x(x);
+            circ.x(y);
+            circ.cz(x, y);
+            circ.x(y);
+            circ.x(x);
+        }
+        "cx_x_y" => circ.cx(x, y),
+        "cx_y_x" => circ.cx(y, x),
+        "ccx_swp_x_y" => circ.ccx(swp, x, y),
+        "ccx_swp_y_x" => circ.ccx(swp, y, x),
+        "cx_y_x_ccx_swp_x_y" => {
+            circ.cx(y, x);
+            circ.ccx(swp, x, y);
+        }
+        "ccx_swp_x_y_cx_y_x" => {
+            circ.ccx(swp, x, y);
+            circ.cx(y, x);
+        }
+        "full_cswap" => {
+            circ.cx(y, x);
+            circ.ccx(swp, x, y);
+            circ.cx(y, x);
+        }
+        "ccz_swp_x_y" => circ.ccz(swp, x, y),
+        _ => {}
+    }
+}
+
 fn apply_inv_cswap_skip(i: usize) -> bool {
     let last_n = std::env::var("TLM_APPLY_INV_CSWAP_SKIP_LAST")
         .ok()
@@ -1457,7 +1542,11 @@ fn apply_step_forward(
     circ.set_phase("tlm_apply_forward_swap");
     if !apply_fwd_cswap_skip(i) {
         for j in 0..n {
-            circ.cswap(*swp, x_reg[j], y_reg[j]);
+            if !apply_fwd_cswap_bit_skip(i, j) {
+                circ.cswap(*swp, x_reg[j], y_reg[j]);
+            } else {
+                apply_fwd_cswap_bit_phase_fix(circ, *swp, x_reg[j], y_reg[j]);
+            }
         }
     }
     // 3) y := 2*(1+s2)*y mod q. i==0: two separate controlled doublings (shift1 is
