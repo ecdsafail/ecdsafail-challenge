@@ -81,149 +81,6 @@ pub const TRIPLE_DATA_WIRES: [usize; 7] = [0, 1, 2, 3, 4, 7, 8];
 /// Wires freed to |0> after compress (pair's wire 5 + merge's wire 6).
 pub const TRIPLE_FREED_WIRES: [usize; 2] = [5, 6];
 
-const TAIL4_TOP32_CODE_BITS: usize = 5;
-const TAIL4_TOP32_CODE_CONSTANT: u8 = 22;
-const TAIL4_TOP32_ENCODER_ANF: [&[u16]; TAIL4_TOP32_CODE_BITS] = [
-    &[2, 4, 8, 16, 32, 1024, 65, 528],
-    &[1, 2, 4, 16, 32, 520],
-    &[1, 2, 4, 8, 1024, 72],
-    &[4, 16, 32, 256, 520],
-    &[1, 4, 1024, 10, 66],
-];
-const TAIL4_TOP32_DECODER_ANF: [&[u16]; 12] = [
-    &[0, 3, 7, 18, 20, 21, 25, 27, 29, 31],
-    &[5, 6, 7, 9, 11, 13, 16, 18, 19, 20, 21, 31],
-    &[0, 11, 15, 16, 18, 20, 23, 24, 26, 27, 28, 29, 31],
-    &[3, 4, 5, 6, 11, 18, 19, 20, 21, 24, 26, 27, 28, 30],
-    &[0, 2, 3, 5, 6, 9, 13, 18, 19, 20, 23, 25, 31],
-    &[30, 31],
-    &[3, 7, 9, 13, 19, 21, 25, 30],
-    &[],
-    &[2, 3, 5, 6, 8, 9, 11, 13, 16, 19, 25, 27, 29],
-    &[0, 1, 4, 9, 13, 18, 19, 20, 27, 29],
-    &[0, 3, 7, 9, 13, 19, 21, 25, 30],
-    &[0],
-];
-
-fn tail4_top32_enabled() -> bool {
-    std::env::var("TLM_TAIL4_TOP32").ok().as_deref() == Some("1")
-}
-
-fn toggle_mcx_with_dirty(
-    circ: &mut B,
-    controls: &[QubitId],
-    dirty: &[QubitId],
-    target: QubitId,
-) {
-    debug_assert!(!controls.contains(&target));
-    match controls.len() {
-        0 => circ.x(target),
-        1 => circ.cx(controls[0], target),
-        2 => circ.ccx(controls[0], controls[1], target),
-        count => {
-            let bridge = dirty
-                .iter()
-                .copied()
-                .find(|q| *q != target && !controls.contains(q))
-                .expect("tail4 codec needs a disjoint dirty bridge");
-            let rest: Vec<QubitId> = dirty.iter().copied().filter(|q| *q != bridge).collect();
-            toggle_mcx_with_dirty(circ, &controls[..count - 1], &rest, bridge);
-            circ.ccx(bridge, controls[count - 1], target);
-            toggle_mcx_with_dirty(circ, &controls[..count - 1], &rest, bridge);
-            circ.ccx(bridge, controls[count - 1], target);
-        }
-    }
-}
-
-fn toggle_anf_with_dirty(
-    circ: &mut B,
-    controls: &[QubitId],
-    target: QubitId,
-    dirty: &[QubitId],
-    terms: &[u16],
-) {
-    for &mask in terms {
-        let term_controls: Vec<QubitId> = controls
-            .iter()
-            .enumerate()
-            .filter_map(|(i, q)| ((mask >> i) & 1 != 0).then_some(*q))
-            .collect();
-        toggle_mcx_with_dirty(circ, &term_controls, dirty, target);
-    }
-}
-
-// The historical K5 codec stores each symbol's first two flags contiguously,
-// followed by all four s2 flags. The current tape stores contiguous triples.
-fn tail4_reordered_raw(raw: &[QubitId]) -> [QubitId; 12] {
-    assert_eq!(raw.len(), 12, "tail4 raw window must contain four symbols");
-    [
-        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10],
-        raw[2], raw[5], raw[8], raw[11],
-    ]
-}
-
-fn tail4_toggle_code_from_raw(circ: &mut B, code: &[QubitId], raw: &[QubitId]) {
-    assert_eq!(code.len(), TAIL4_TOP32_CODE_BITS);
-    let wires = tail4_reordered_raw(raw);
-    for (i, terms) in TAIL4_TOP32_ENCODER_ANF.iter().enumerate() {
-        if (TAIL4_TOP32_CODE_CONSTANT >> i) & 1 != 0 {
-            circ.x(code[i]);
-        }
-        for &mask in *terms {
-            let controls: Vec<QubitId> = wires
-                .iter()
-                .enumerate()
-                .filter_map(|(j, q)| ((mask >> j) & 1 != 0).then_some(*q))
-                .collect();
-            toggle_mcx_with_dirty(circ, &controls, &wires, code[i]);
-        }
-    }
-}
-
-fn tail4_toggle_raw_from_code(circ: &mut B, code: &[QubitId], raw: &[QubitId]) {
-    assert_eq!(code.len(), TAIL4_TOP32_CODE_BITS);
-    let wires = tail4_reordered_raw(raw);
-    for (i, terms) in TAIL4_TOP32_DECODER_ANF.iter().enumerate() {
-        toggle_anf_with_dirty(circ, code, wires[i], &wires, terms);
-    }
-}
-
-fn compress_tail4_top32_payload(circ: &mut B, raw: &[QubitId]) -> Vec<QubitId> {
-    let code: Vec<QubitId> = (0..TAIL4_TOP32_CODE_BITS)
-        .map(|_| circ.alloc_qubit())
-        .collect();
-    tail4_toggle_code_from_raw(circ, &code, raw);
-    tail4_toggle_raw_from_code(circ, &code, raw);
-    for &q in raw {
-        circ.zero_and_free(q);
-    }
-    code
-}
-
-fn decompress_tail4_top32_payload(circ: &mut B, code: &[QubitId]) -> Vec<QubitId> {
-    let raw: Vec<QubitId> = (0..12).map(|_| circ.alloc_qubit()).collect();
-    tail4_toggle_raw_from_code(circ, code, &raw);
-    tail4_toggle_code_from_raw(circ, code, &raw);
-    for &q in code {
-        circ.zero_and_free(q);
-    }
-    raw
-}
-
-fn compress_tail4_top32(circ: &mut B, raw: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw.len(), 15, "tail4 hybrid window must contain five symbols");
-    let mut data = raw[..3].to_vec();
-    data.extend(compress_tail4_top32_payload(circ, &raw[3..]));
-    data
-}
-
-fn decompress_tail4_top32(circ: &mut B, data: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(data.len(), 3 + TAIL4_TOP32_CODE_BITS);
-    let mut raw = data[..3].to_vec();
-    raw.extend(decompress_tail4_top32_payload(circ, &data[3..]));
-    raw
-}
-
 /// Affine pair-code normalizer (s2,s3 pair-code set -> {0..24}). `(kind,a,b,c)`:
 /// 0 = `x a`, 1 = `cx a->b`, 2 = `ccx a,b->c`. Wires addressed in the 6..11
 /// reference layout; the 9->7 triple puts the same structure 6 wires lower.
@@ -334,8 +191,6 @@ pub enum DialogCodec {
     /// 1-symbol codec keeps `subtracted` + `s_2` (2 bits) and drops the redundant
     /// `swap`: compress `CX(sub->swap)` clears swap to |0>; decompress restores it.
     Step0,
-    /// One generic symbol plus four terminal symbols on the frozen support (15 -> 8).
-    Tail4Top32,
 }
 
 impl DialogCodec {
@@ -344,7 +199,6 @@ impl DialogCodec {
         match self {
             Self::Pair => 2,
             Self::Triple => 3,
-            Self::Tail4Top32 => 5,
             Self::Raw | Self::Step0 => 1,
         }
     }
@@ -353,7 +207,6 @@ impl DialogCodec {
         match self {
             Self::Pair => 5,
             Self::Triple => 7,
-            Self::Tail4Top32 => 3 + TAIL4_TOP32_CODE_BITS,
             Self::Raw => 3,
             Self::Step0 => 2,
         }
@@ -361,7 +214,7 @@ impl DialogCodec {
     /// Transient clean ancilla (|0> in and out), separate from the symbol wires.
     fn clean_anc(self) -> usize {
         match self {
-            Self::Pair | Self::Raw | Self::Step0 | Self::Tail4Top32 => 0,
+            Self::Pair | Self::Raw | Self::Step0 => 0,
             Self::Triple => 2,
         }
     }
@@ -372,7 +225,6 @@ impl DialogCodec {
             Self::Triple => &TRIPLE_DATA_WIRES,
             Self::Raw => &[0, 1, 2],
             Self::Step0 => &[0, 2], // keep subtracted(0) + s_2(2); swap(1) is freed
-            Self::Tail4Top32 => &[], // separate code wires; handled by the special path
         }
     }
     /// Symbol-window wires cleared to |0> by compress (freed by compaction).
@@ -382,7 +234,6 @@ impl DialogCodec {
             Self::Triple => &TRIPLE_FREED_WIRES,
             Self::Raw => &[],
             Self::Step0 => &[1], // swap (= subtracted; CX'd to |0>)
-            Self::Tail4Top32 => &[],
         }
     }
     /// Forward codec on a prebuilt window (compress: symbols -> code).
@@ -393,7 +244,6 @@ impl DialogCodec {
             Self::Raw => {}
             // swap == subtracted -> CX(sub, swap) clears swap to |0>.
             Self::Step0 => circ.cx(*win[0], *win[1]),
-            Self::Tail4Top32 => unreachable!("tail4 uses separate code wires"),
         }
     }
     /// Reverse codec (decompress: code -> symbols).
@@ -404,7 +254,6 @@ impl DialogCodec {
             Self::Raw => {}
             // restore swap = subtracted on the freshly expanded |0> swap wire.
             Self::Step0 => circ.cx(*win[0], *win[1]),
-            Self::Tail4Top32 => unreachable!("tail4 uses separate code wires"),
         }
     }
 
@@ -417,9 +266,6 @@ impl DialogCodec {
     #[must_use]
     pub fn decompress_window(self, circ: &mut B, data: &[QubitId]) -> Vec<QubitId> {
         assert_eq!(data.len(), self.code_bits(), "data len != code_bits");
-        if self == Self::Tail4Top32 {
-            return decompress_tail4_top32(circ, data);
-        }
         // Build the syms*3 raw slot vector: data qubits at data_wires positions,
         // fresh |0> at freed_wires positions.
         let mut slots: Vec<Option<QubitId>> = (0..self.syms() * 3).map(|_| None).collect();
@@ -447,9 +293,6 @@ impl DialogCodec {
     #[must_use]
     pub fn compress_window(self, circ: &mut B, raw: &[QubitId]) -> Vec<QubitId> {
         assert_eq!(raw.len(), self.syms() * 3, "raw len != syms*3");
-        if self == Self::Tail4Top32 {
-            return compress_tail4_top32(circ, raw);
-        }
         let clean: Vec<QubitId> = (0..self.clean_anc()).map(|_| circ.alloc_qubit()).collect();
         let win: Vec<&QubitId> = raw.iter().chain(clean.iter()).collect();
         self.compress(circ, &win);
@@ -514,8 +357,7 @@ pub fn decompress_step0_with_t1(circ: &mut B, data: &[QubitId]) -> (QubitId, Vec
 #[must_use]
 pub fn jump_dialog_regions(n3: usize, iters: usize) -> Vec<(DialogCodec, usize)> {
     // Symbol 0 is the 1-symbol Step0 codec. The remaining iters-1 symbols tile.
-    let tail4 = usize::from(tail4_top32_enabled() && iters >= 6) * 5;
-    let codec_syms = iters - 1 - tail4;
+    let codec_syms = iters - 1;
     let mut n3 = n3;
     while 3 * n3 > codec_syms {
         n3 -= 1;
@@ -537,9 +379,6 @@ pub fn jump_dialog_regions(n3: usize, iters: usize) -> Vec<(DialogCodec, usize)>
                 r.push((DialogCodec::Raw, 1));
             }
         }
-    }
-    if tail4 != 0 {
-        r.push((DialogCodec::Tail4Top32, 1));
     }
     r
 }
