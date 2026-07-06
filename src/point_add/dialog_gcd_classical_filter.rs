@@ -641,7 +641,7 @@ impl DialogGcdFilterConfig {
     }
 
     #[inline]
-    fn body_carry_trunc_width_fast(&self, active_width: usize, step: usize) -> usize {
+    pub(crate) fn body_carry_trunc_width_fast(&self, active_width: usize, step: usize) -> usize {
         if let Some(&width) = self.body_width_overrides.get(step) {
             return width.clamp(2, active_width);
         }
@@ -654,7 +654,7 @@ impl DialogGcdFilterConfig {
     }
 
     #[inline]
-    fn cswap_width(&self, active_width: usize, step: usize) -> usize {
+    pub(crate) fn cswap_width(&self, active_width: usize, step: usize) -> usize {
         if self.tobitvector_cswap_body_trim {
             self.body_carry_trunc_width_fast(active_width, step)
                 .min(active_width)
@@ -664,7 +664,7 @@ impl DialogGcdFilterConfig {
     }
 
     #[inline]
-    fn shift_width(&self, active_width: usize, step: usize) -> usize {
+    pub(crate) fn shift_width(&self, active_width: usize, step: usize) -> usize {
         if self.tobitvector_shift_body_trim {
             self.body_carry_trunc_width_fast(active_width, step)
                 .min(active_width)

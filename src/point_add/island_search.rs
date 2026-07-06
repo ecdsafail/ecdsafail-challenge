@@ -6,7 +6,7 @@
 //! `DIALOG_TAIL_NONCE` is set (see mod.rs). Only `q_target` of those 96 ops
 //! varies. So we:
 //!   1. build the base op stream once, strip the 96-op tail,
-//!   2. pre-absorb the fixed prefix into a SHAKE256 state,
+//!   2. pre-absorb th fixed prefix into a SHAKE256 state,
 //!   3. per candidate nonce: clone the state, absorb just the 96 tail ops,
 //!      finalize, derive the same shots `eval_circuit` would, and run the
 //!      classical GCD prefilter on both inversion factors of every shot.

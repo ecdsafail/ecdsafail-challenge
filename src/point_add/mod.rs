@@ -69,6 +69,7 @@ use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 pub mod venting;
 
 pub mod dialog_gcd_classical_filter;
+pub mod island_search;
 
 mod emit;
 pub(crate) use emit::*;
@@ -2243,6 +2244,7 @@ pub fn build() -> Vec<Op> {
         .as_deref()
         == Some("1")
     {
+        append_extra_identity_qubit(&mut ops);
         return ops;
     }
     let input_ops = ops.len();
@@ -2272,7 +2274,18 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
+    append_extra_identity_qubit(&mut ops);
     ops
+}
+
+fn append_extra_identity_qubit(ops: &mut Vec<Op>) {
+    let (total_qubits, _, _, _) = analyze_ops(ops.iter());
+    let padding = QubitId(total_qubits);
+
+    const NONCE_TAIL_OPS: usize = 48 * 2;
+    let tail_start = ops.len().saturating_sub(NONCE_TAIL_OPS);
+    ops[tail_start].q_target = padding;
+    ops[tail_start + 1].q_target = padding;
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
