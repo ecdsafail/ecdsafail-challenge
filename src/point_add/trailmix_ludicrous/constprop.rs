@@ -147,10 +147,20 @@ fn merge(old: Val, new: Val) -> Val {
 
 /// Run the static forward analysis. `input_qubits` lists the qubit ids that are
 /// seeded Unknown (the IO data registers); all other qubit ids are seeded Zero.
+///
+/// Classical bits (`b:`) are seeded Unknown (NOT Zero). Rationale: the input
+/// classical registers reg2=ox, reg3=oy carry per-shot data and are NOT
+/// constant. Seeding any bit as Zero when it is in fact variable would let
+/// `cond_always_true()` falsely claim a CCX's classical condition is always
+/// satisfied, causing unsound FoldX/FoldCx decisions and classical mismatches.
+/// This matches `analyze_affine()`'s conservative seeding (line 399) and is
+/// strictly sound: every CCX with a maybe-false condition is treated as
+/// "writes happen on some shots", and `merge` collapses the target to Unknown
+/// in that case (precision loss only, never an unsound claim).
 fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> (Vec<Decision>, ConstPropStats) {
     let mut a = Analyzer {
         q: vec![Zero; num_q],
-        b: vec![Zero; num_b],
+        b: vec![Unknown; num_b],
         cond_stack: Vec::new(),
     };
     for &q in input_qubits {

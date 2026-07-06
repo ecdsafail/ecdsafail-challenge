@@ -778,6 +778,84 @@ fn controlled_mod_double_reverse(circ: &mut B, ctrl: &QubitId, a: &[QubitId]) {
     circ.zero_and_free(ovf);
 }
 
+/// Iter-0 forward fused double-double: `y := (1+t1)*(1+s2)*y mod q`. Equivalent to
+/// `controlled_mod_double(t1, y); controlled_mod_double(s2, y)` in series, but kept
+/// in a single call so the schedule-driven headroom read for the two `add_f_window`
+/// folds sees the same snapshot (avoids the live-active drift between consecutive
+/// calls and lets the chunked fold commit one fewer carry-cleanup boundary).
+/// `a.len() == 256`.
+fn controlled_mod_double_double(circ: &mut B, ctrl1: &QubitId, ctrl2: &QubitId, a: &[QubitId]) {
+    let n = a.len();
+    assert_eq!(n, 256, "controlled_mod_double_double expects 256-bit a");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let ovf1 = circ.alloc_qubit();
+    // 1) first controlled left-shift by 1 over the n+1 view a ++ ovf1: MSB -> ovf1.
+    let w1: Vec<&QubitId> = a.iter().chain(std::iter::once(&ovf1)).collect();
+    for i in (0..n).rev() {
+        circ.cswap(*ctrl1, *w1[i], *w1[i + 1]);
+    }
+    // 2) if ovf1 (= ctrl1 AND old-MSB), add f to the low LSBS bits.
+    arith::add_f_window_pub(circ, &ovf1, a, arith::LSBS, &f_bytes, None);
+    // 3) clear ovf1 (= ctrl1 AND a[0], post-fold) by MBU; ovf1 returns to |0>.
+    clear_and(circ, &ovf1, ctrl1, &a[0]);
+    circ.zero_and_free(ovf1);
+
+    let ovf2 = circ.alloc_qubit();
+    // 4) second controlled left-shift by 1 over the n+1 view a ++ ovf2: MSB -> ovf2.
+    let w2: Vec<&QubitId> = a.iter().chain(std::iter::once(&ovf2)).collect();
+    for i in (0..n).rev() {
+        circ.cswap(*ctrl2, *w2[i], *w2[i + 1]);
+    }
+    // 5) if ovf2 (= ctrl2 AND new-MSB-post-fold1), add f to the low LSBS bits.
+    arith::add_f_window_pub(circ, &ovf2, a, arith::LSBS, &f_bytes, None);
+    // 6) clear ovf2 by MBU.
+    clear_and(circ, &ovf2, ctrl2, &a[0]);
+    circ.zero_and_free(ovf2);
+}
+
+/// Exact gate-inverse of [`controlled_mod_double_double`]: `y := y / ((1+t1)*(1+s2)) mod q`.
+/// Reverse of the two fused controlled doublings.
+fn controlled_mod_double_double_reverse(circ: &mut B, ctrl1: &QubitId, ctrl2: &QubitId, a: &[QubitId]) {
+    let n = a.len();
+    assert_eq!(n, 256, "controlled_mod_double_double_reverse expects 256-bit a");
+    let f_bytes = F_SECP256K1.to_le_bytes();
+    let ovf2 = circ.alloc_qubit();
+    // reverse of 6): rebuild ovf2 = ctrl2 AND a[0] with a CCX.
+    circ.ccx(*ctrl2, a[0], ovf2);
+    // reverse of 5): subtract f gated on ovf2.
+    for q in &a[..arith::LSBS] {
+        circ.x(*q);
+    }
+    arith::add_f_window_pub(circ, &ovf2, a, arith::LSBS, &f_bytes, None);
+    for q in &a[..arith::LSBS] {
+        circ.x(*q);
+    }
+    // reverse of 4): controlled right-shift over a ++ ovf2.
+    let w2: Vec<&QubitId> = a.iter().chain(std::iter::once(&ovf2)).collect();
+    for i in 0..n {
+        circ.cswap(*ctrl2, *w2[i], *w2[i + 1]);
+    }
+    circ.zero_and_free(ovf2);
+
+    let ovf1 = circ.alloc_qubit();
+    // reverse of 3): rebuild ovf1 = ctrl1 AND a[0] with a CCX.
+    circ.ccx(*ctrl1, a[0], ovf1);
+    // reverse of 2): subtract f gated on ovf1.
+    for q in &a[..arith::LSBS] {
+        circ.x(*q);
+    }
+    arith::add_f_window_pub(circ, &ovf1, a, arith::LSBS, &f_bytes, None);
+    for q in &a[..arith::LSBS] {
+        circ.x(*q);
+    }
+    // reverse of 1): controlled right-shift over a ++ ovf1.
+    let w1: Vec<&QubitId> = a.iter().chain(std::iter::once(&ovf1)).collect();
+    for i in 0..n {
+        circ.cswap(*ctrl1, *w1[i], *w1[i + 1]);
+    }
+    circ.zero_and_free(ovf1);
+}
+
 // =====================================================================
 // Forward jump-GCD: record the dialog onto the compressed tape.
 // =====================================================================
@@ -1460,13 +1538,13 @@ fn apply_step_forward(
             circ.cswap(*swp, x_reg[j], y_reg[j]);
         }
     }
-    // 3) y := 2*(1+s2)*y mod q. i==0: two separate controlled doublings (shift1 is
-    //    t1-gated). i>0: the fused double+cdouble -- one combined (e+2d)*f fold
+    // 3) y := 2*(1+s2)*y mod q. i==0: fused double-double (two controlled doublings
+    //    in one chained call -- shared ovf capture timing, single-phase scheduling).
+    //    i>0: the fused double+cdouble -- one combined (e+2d)*f fold
     //    (the unfused form costs extra inversion Toffoli).
     circ.set_phase("tlm_apply_forward_fold");
     if i == 0 {
-        controlled_mod_double(circ, t1, y_reg);
-        controlled_mod_double(circ, s2, y_reg);
+        controlled_mod_double_double(circ, t1, s2, y_reg);
     } else if s2_known_zero {
         super::fused::fused_double_only(circ, y_reg);
     } else {
@@ -1490,12 +1568,11 @@ fn apply_step_reverse(
     let n = 256usize;
     let s2_known_zero = i != 0 && apply_inv_s2_zero(i);
 
-    // inverse of 3): i==0 two separate reverse-doublings (s2 halve then t1 halve);
+    // inverse of 3): i==0 fused double-double reverse (s2 halve then t1 halve);
     // i>0 the fused inverse double+cdouble.
     circ.set_phase("tlm_apply_inverse_fold");
     if i == 0 {
-        controlled_mod_double_reverse(circ, s2, y_reg);
-        controlled_mod_double_reverse(circ, t1, y_reg);
+        controlled_mod_double_double_reverse(circ, t1, s2, y_reg);
     } else if s2_known_zero {
         super::fused::fused_double_only_reverse(circ, y_reg);
     } else {
