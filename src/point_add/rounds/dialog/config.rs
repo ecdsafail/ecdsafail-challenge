@@ -1,8 +1,4 @@
-//! Dialog-GCD configuration layer: the `DIALOG_GCD_*_ENV` env-var name strings,
-//! the structural constants (max iterations, raw-log width, special-add LSBs,
-//! the PA9024 per-step compare schedule), and the lever readers
-//! (`*_enabled()` / `*_bits()` / `*_blocks()` / width + schedule helpers) that
-//! the raw and compressed emitters consult. Env-var STRINGS are frozen.
+
 use super::*;
 
 pub const DIALOG_GCD_ACTIVE_ITERATIONS_ENV: &str = "DIALOG_GCD_ACTIVE_ITERATIONS";
@@ -38,7 +34,6 @@ pub const DIALOG_GCD_RAW_PA_STOP_AFTER_QUOTIENT_ENV: &str = "DIALOG_GCD_RAW_PA_S
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_XTAIL_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_XTAIL";
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_C_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_C";
 pub const DIALOG_GCD_RAW_PA_STOP_AFTER_PAIR2_ENV: &str = "DIALOG_GCD_RAW_PA_STOP_AFTER_PAIR2";
-
 
 pub(crate) fn dialog_gcd_raw_apply_direct_special_add_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_APPLY_DIRECT_SPECIAL_ADD_ENV)
@@ -186,47 +181,18 @@ pub(crate) fn dialog_gcd_apply_final_lowq_enabled() -> bool {
     std::env::var("DIALOG_GCD_APPLY_FINAL_LOWQ").ok().as_deref() == Some("1")
 }
 
-/// Default-OFF lever: in the apply-phase fused double_y / halve_y, uncompute the
-/// `h` control ancilla (`h = a & b` for two ancilla a,b that are unchanged
-/// between the set and the clear) with a Gidney measurement (Hmr + a classically
-/// -conditioned CZ) instead of a second CCX. 0 Toffoli for the uncompute.
-/// Apply-phase only (the documented round84 phase hazard does not apply here).
-/// Phase-exact precisely because `h` deterministically equals `a & b` at the
-/// Hmr, so the Hmr's `h·rng` phase is cancelled by `cz_if(a, b, ·)`'s
-/// `(a&b)·rng`. Value-identical: the Hmr forces `h -> 0` just like the CCX did.
 pub(crate) fn dialog_gcd_fused_hclear_measured_enabled() -> bool {
     std::env::var("DIALOG_GCD_FUSED_HCLEAR_MEASURED").ok().as_deref() == Some("1")
 }
 
-/// Default-OFF lever: in the apply-phase fused double_y, uncompute the `d`
-/// control ancilla (`d = ovf1 & s2`, set by `ccx(ovf1, s2, d)`) with a Gidney
-/// measurement (Hmr + a classically-conditioned CZ on its ORIGINAL set-controls
-/// ovf1,s2) instead of the `ccx(s2, y[1], d)` clear. 0 Toffoli for the
-/// uncompute. Phase-exact precisely because `d` deterministically equals
-/// `ovf1 & s2` at the Hmr (neither d, ovf1, nor s2 is mutated between set and
-/// clear — ovf1 is an overflow holder untouched by the fold, s2 is the read-only
-/// gate control, and d is used only as a control in between), so the Hmr's
-/// `d·rng` phase is cancelled by `cz_if(ovf1, s2, ·)`'s `(ovf1&s2)·rng`.
-/// Value-identical: the Hmr forces `d -> 0` just like the CCX did, and ovf1&s2
-/// equals the s2&y[1] the stock clear used (y[1] == ovf1 post-fold). Forward
-/// (double_y) only — in halve_y the matching `d` clear reads y[1] AFTER the
-/// csub fold has overwritten it, so the set-controls are no longer live there.
 pub(crate) fn dialog_gcd_fused_dclear_measured_enabled() -> bool {
     std::env::var("DIALOG_GCD_FUSED_DCLEAR_MEASURED").ok().as_deref() == Some("1")
 }
 
-/// Default-OFF lever: in the apply-phase fused double_y, uncompute overflow
-/// cleanup ancilla with Gidney measurements when their current boolean
-/// expressions are known exactly. `ovf1 == (s2 ? y[1] : y[0])` and
-/// `ovf2 == s2 & y[0]` at cleanup. Phase correction applies the same mux/AND
-/// expression against the Hmr bit, saving the stock CCX clears.
 pub(crate) fn dialog_gcd_fused_ovfclear_measured_enabled() -> bool {
     std::env::var("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED").ok().as_deref() == Some("1")
 }
 
-/// Default-OFF lever: in fused halve_y cleanup, uncompute `e` and `d` with
-/// Hmr + phase feedback from their current live overflow expressions:
-/// `e == (s2 ? ovf2 : ovf1)` and `d == s2 & ovf1`.
 pub(crate) fn dialog_gcd_fused_halve_edclear_measured_enabled() -> bool {
     std::env::var("DIALOG_GCD_FUSED_HALVE_EDCLEAR_MEASURED").ok().as_deref() == Some("1")
 }
@@ -274,19 +240,12 @@ pub(crate) fn dialog_gcd_special_clean_conditional_replay_enabled() -> bool {
 }
 
 pub(crate) fn dialog_gcd_apply_replay_swap_host_enabled() -> bool {
-    // Prototype, deliberately NOT enabled by configure_ecdsafail_submission_route.
-    //
-    // Block-lifecycle apply normally CNOT-copies the current compressed
-    // transcript block into raw_block before decompressing it.  Swapping the
-    // five compressed cells into raw_block instead leaves five allocated,
-    // clean cells available throughout the three replay steps.  The matching
-    // swap after recompression restores the transcript block.
+
     std::env::var("DIALOG_GCD_APPLY_REPLAY_SWAP_HOST")
         .ok()
         .as_deref()
         == Some("1")
 }
-
 
 pub(crate) fn dialog_gcd_raw_tobitvector_materialized_sub_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_TOBITVECTOR_MATERIALIZED_SUB_ENV)
@@ -295,15 +254,6 @@ pub(crate) fn dialog_gcd_raw_tobitvector_materialized_sub_enabled() -> bool {
         == Some("1")
 }
 
-/// Default-ON lever: in the CONTROLLED GCD body's `else` branch (the non-
-/// materialized fallback that today uses full-CCX controlled Cuccaro
-/// `cucc_{sub,add}_ctrl_lowq` at ~8-10 CCX/bit), use the Gidney measurement-
-/// vented controlled adder `cuccaro_{add,sub}_ctrl_vented` (~2 CCX/bit: a
-/// forward carry chain vented onto a BORROWED |0> pool plus a controlled-sum
-/// pass, with the carry uncomputed by measurement at 0 Toffoli). Requires the
-/// caller-supplied `borrowed_carries` to have >= active_width-1 clean lanes;
-/// if absent the branch falls back to `cucc_*_ctrl_lowq`. Borrowed (never
-/// fresh-allocated) so the peak does not grow.
 pub(crate) fn dialog_gcd_ctrl_body_vented_enabled() -> bool {
     std::env::var("DIALOG_GCD_CTRL_BODY_VENTED")
         .ok()
@@ -324,7 +274,6 @@ pub(crate) fn dialog_gcd_raw_tobitvector_borrow_future_log_carries_enabled() -> 
         .as_deref()
         == Some("1")
 }
-
 
 pub(crate) fn dialog_gcd_raw_ipmul_terminal_reuse_enabled() -> bool {
     std::env::var(DIALOG_GCD_RAW_IPMUL_TERMINAL_REUSE_ENV)
@@ -389,14 +338,12 @@ pub(crate) fn dialog_gcd_raw_pa_stop_after_pair2_enabled() -> bool {
         == Some("1")
 }
 
-
 pub(crate) const DIALOG_GCD_MAX_ITERATIONS: usize = 402;
 pub(crate) const DIALOG_GCD_RAW_LOG_BITS: usize = 2 * DIALOG_GCD_MAX_ITERATIONS;
 pub(crate) const DIALOG_GCD_SPECIAL_ADD_LSBS: usize = 73;
 pub(crate) const DIALOG_GCD_DEFAULT_COMPARE_BITS: usize = 77;
 pub(crate) const DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE: usize = 3;
 pub(crate) const DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS: usize = 5;
-
 
 pub(crate) fn dialog_gcd_compressed_sidecar_log_enabled() -> bool {
     std::env::var(DIALOG_GCD_COMPRESSED_SIDECAR_LOG_ENV)
@@ -415,11 +362,6 @@ pub(crate) fn dialog_gcd_compressed_block_lifecycle_enabled() -> bool {
         == Some("1")
 }
 
-/// K=2 bounded-shift GCD prototype. When enabled, each tobitvector step strips up
-/// to TWO trailing zeros (one extra conditional shift), recording the shift2 bit
-/// in `b.k2_shift2_log[step]`; the apply mirrors it with a conditional 2nd
-/// double/halve of y. Prototype stores shift2 UNCOMPRESSED (separate register) so
-/// it does not touch the round763 packer yet. Default OFF -> frontier byte-identical.
 pub(crate) fn dialog_gcd_k2_enabled() -> bool {
     std::env::var("DIALOG_GCD_K2").ok().as_deref() == Some("1")
 }
@@ -432,18 +374,11 @@ pub(crate) fn dialog_gcd_k5_clean_block_enabled() -> bool {
             == Some("1")
 }
 
-/// Compressed bits per transcript block. K=2 packs an extra `shift2` bit per step
-/// (GROUP_SIZE=3 steps) on top of the round763 6->5 base packing: 5 + 3 = 8.
-/// NOTE: the compile-time `DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS` const stays 5
-/// (it sizes fixed arrays in the high-tail machinery); this fn is for the dynamic
-/// compressed_log stride / indexing / runway only.
 pub(crate) fn dialog_gcd_block_bits() -> usize {
     if dialog_gcd_k5_clean_block_enabled() {
         12
     } else if dialog_gcd_k2_pair_compress_enabled() {
-        // Two K=2 steps have 6 raw transcript bits. The pair language has only
-        // 30 reachable states: the first five bits compress 15 -> 4, while the
-        // second shift2 bit stays raw. Total: 5 block bits for 2 steps.
+
         DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS
     } else if dialog_gcd_k2_enabled() {
         DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS + DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE
@@ -452,8 +387,6 @@ pub(crate) fn dialog_gcd_block_bits() -> usize {
     }
 }
 
-/// Raw (uncompressed) per-block scratch length: 2 bits/step base, +1/step for K=2
-/// shift2. K1: 2*GROUP_SIZE=6; K2: 3*GROUP_SIZE=9.
 pub(crate) fn dialog_gcd_raw_block_len() -> usize {
     if dialog_gcd_k2_enabled() {
         3 * dialog_gcd_sidecar_group_size()
@@ -461,19 +394,7 @@ pub(crate) fn dialog_gcd_raw_block_len() -> usize {
         2 * dialog_gcd_sidecar_group_size()
     }
 }
-/// K2-calibrated per-step comparator requirement: the OBSERVED maximum
-/// `req_cb = active_width - msb(u^v)` (the minimum truncated-comparator width
-/// that still resolves the `b1 = u>v` branch decision) measured over 8,000,000
-/// reachable GCD factors (both the pair1 quotient dx = Px-Qx and the pair2 ipmul
-/// c = Qx-Rx, generated from random secp256k1 curve points) under the active
-/// route (K2 double-shift, WIDTH_SLOPE=1.014, WIDTH_MARGIN=10, active=258).
-/// The branch comparator only fires when b0=1 (v odd); u is always odd and an
-/// odd v means u,v agree at bit 0, so the comparison never needs the bottom bit
-/// (=> req_cb <= active_width-1, exact). Early steps need far fewer than the flat
-/// DEFAULT_COMPARE_BITS=50, so a per-step schedule (effective bits =
-/// min(SCHEDULE[step]+MARGIN, global, active_width)) is value-exact on reachable
-/// support yet strictly cheaper than flat-50 on the early steps; mid steps cap at
-/// the global 50 (unchanged from baseline, where compare hazards are already ~0).
+
 pub const DIALOG_GCD_PA9024_COMPARE_SCHEDULE: [usize; 258] = [
     22, 21, 24, 24, 28, 25, 29, 26, 29, 30, 33, 35, 31, 32, 31, 33, 33, 34, 30, 32, 33, 35, 33, 35,
     34, 33, 35, 35, 35, 34, 33, 33, 33, 34, 34, 38, 35, 35, 33, 36, 34, 36, 37, 36, 38, 36, 38, 36,
@@ -577,7 +498,6 @@ pub(crate) fn dialog_gcd_odd_u_lowbit_fastpath_enabled() -> bool {
         .as_deref()
         == Some("1")
 }
-
 
 pub(crate) fn dialog_gcd_k2_pair_compress_enabled() -> bool {
     dialog_gcd_k2_enabled()

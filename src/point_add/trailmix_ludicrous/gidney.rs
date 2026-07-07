@@ -1,13 +1,3 @@
-//! Controlled qubit-qubit (q-q) vented-adder family (the GCD-subtract + apply cofactor-add
-//! path) for the reversible secp256k1 EC point-add circuit, built on this
-//! crate's `B` builder. Carries are vented two ways:
-//!   * AND-carry erase: `let b = alloc_bit(); hmr(q,b); cz_if_bit(..,b)`
-//!     -- an X-basis HMR measurement followed by a conditional-Z phase correction.
-//!   * conditional erase: `let b = alloc_bit(); hmr(carry,b); push_condition(b);
-//!     middle(..|..|{z/cz/ccz/neg}..); pop_condition()` -- the
-//!     boundary carry is measured, then the comparator middle applies the gated
-//!     phase correction.
-//! `k` is the available qubit headroom, passed in from the schedule.
 
 use super::comparator::compare_geq_cin_middle;
 use super::{B, BExt};
@@ -1039,20 +1029,10 @@ fn trace_schedule_fit(
     );
 }
 
-// ============================================================================
-// controlled_hybrid_add_refs  (plain Gidney AND-carry adder)
-// ============================================================================
 pub fn controlled_hybrid_add_refs(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId]) {
     controlled_hybrid_add_refs_impl(circ, ctrl, a, b, false);
 }
 
-/// As [`controlled_hybrid_add_refs`] but skips the bit-0 controlled sum
-/// `a[0] ^= ctrl AND b[0]`. Used by [`controlled_vented_chunk_add`], whose `|1>`
-/// low pad's bit-0 sum is immediately undone by the caller's `ccx(ctrl,cin,one)`
-/// restore -- the two cancel. Skipping the sum here and dropping that restore
-/// reproduces the elided circuit directly (a[0] is a discarded pad, so its sum
-/// value is irrelevant; the bit-0 carry into the chunk is still formed). Saves
-/// 2 CCX per chunk.
 fn controlled_hybrid_add_refs_skiplow(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId]) {
     controlled_hybrid_add_refs_impl(circ, ctrl, a, b, true);
 }
@@ -1068,10 +1048,7 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
         return;
     }
     let call_index = next_hybrid_add_call_index();
-    // Effective vent count, read from the baked schedule; no decision logic here.
-    // When no schedule is loaded (standalone primitive unit tests), the schedule
-    // value is usize::MAX, which the `i < vents` loop reads as "vent every carry"
-    // -- still value-correct.
+
     let fit = super::next_hyb_v_fit();
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
@@ -1079,7 +1056,6 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     let vents = super::target_qubit_headroom(circ)
         .map_or(fit.selected, |headroom| fit.selected.min(headroom));
 
-    // b is the addend (carry-threaded); a is the target.
     for i in 1..n {
         circ.cx(*b[i], *a[i]);
     }
@@ -1087,8 +1063,6 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
         circ.cx(*b[i], *b[i + 1]);
     }
 
-    // Forward carry chain. First `vents` carries land in measurement-vent ancillae;
-    // the rest are Toffoli'd straight into b.
     #[derive(Clone, Copy)]
     enum VentLane {
         Clean(QubitId),
@@ -1115,7 +1089,7 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
                 let old_context = crate::point_add::set_op_trace_context(
                     0x1600_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
                 );
-                circ.ccx(*a[i], *b[i], anc); // anc = a[i] & b[i]
+                circ.ccx(*a[i], *b[i], anc);
                 crate::point_add::restore_op_trace_context(old_context);
                 circ.cx(anc, *b[i + 1]);
                 vent_ancs[i] = Some(VentLane::Clean(anc));
@@ -1129,18 +1103,16 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
         }
     }
 
-    // Reverse: write the controlled sum bit, then uncompute each carry. Vented
-    // lanes measure-erase; the rest re-Toffoli.
     for i in (0..n - 1).rev() {
         let old_context = crate::point_add::set_op_trace_context(
             0x1700_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
         );
-        circ.ccx(*ctrl, *b[i + 1], *a[i + 1]); // controlled sum bit i+1
+        circ.ccx(*ctrl, *b[i + 1], *a[i + 1]);
         crate::point_add::restore_op_trace_context(old_context);
         if let Some(lane) = vent_ancs[i].take() {
             match lane {
                 VentLane::Clean(anc) => {
-                    circ.cx(anc, *b[i + 1]); // undo the forward cx
+                    circ.cx(anc, *b[i + 1]);
                     let bit = circ.alloc_bit();
                     circ.hmr(anc, bit);
                     circ.zero_and_free(anc);
@@ -1192,9 +1164,6 @@ fn controlled_hybrid_add_refs_impl(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     );
 }
 
-// ============================================================================
-// controlled_clean_add_threaded  (size-s chunk add, threaded cin/cout, `vents`)
-// ============================================================================
 fn controlled_clean_add_threaded(
     circ: &mut B,
     ctrl: &QubitId,
@@ -1216,7 +1185,7 @@ fn controlled_clean_add_threaded(
     let n_inner = if cout.is_some() { s } else { s - 1 };
     let mut inner: Vec<Option<QubitId>> = (0..n_inner).map(|_| Some(circ.alloc_qubit())).collect();
     let produces = |i: usize| cout.is_some() || i + 1 < s;
-    // Forward MAJ (unconditional -- not gated by ctrl).
+
     for i in 0..s {
         if !produces(i) {
             continue;
@@ -1244,7 +1213,7 @@ fn controlled_clean_add_threaded(
             }
         }
     }
-    // Extract the gated boundary carry: cout = ctrl AND top_carry (c_s).
+
     if let Some(cout) = cout {
         let old_context = crate::point_add::set_op_trace_context(
             0x0600_0000 | (((call_index as u32) & 0xffff) << 8) | ((s.saturating_sub(1)) as u32 & 0xff),
@@ -1254,7 +1223,7 @@ fn controlled_clean_add_threaded(
         }
         crate::point_add::restore_op_trace_context(old_context);
     }
-    // Reverse: gated sums, clear every internal carry.
+
     for i in (0..s).rev() {
         if !produces(i) {
             let ci: Option<&QubitId> = if i == 0 { cin } else { inner[i - 1].as_ref() };
@@ -1276,7 +1245,7 @@ fn controlled_clean_add_threaded(
         let co = inner[i].take().unwrap();
         let ci: Option<&QubitId> = if i == 0 { cin } else { inner[i - 1].as_ref() };
         if let Some(ci) = ci {
-            circ.cx(*ci, co); // co = a[i] & b[i] (folded)
+            circ.cx(*ci, co);
         }
         if i < vents {
             let bit = circ.alloc_bit();
@@ -1288,17 +1257,17 @@ fn controlled_clean_add_threaded(
             circ.zero_and_free(co);
         }
         if let Some(ci) = ci {
-            circ.cx(*ci, *a[i]); // a = a_i (remove the forward fold)
+            circ.cx(*ci, *a[i]);
         }
         if !threaded_add_call_has_structurally_dead_sum(call_index, i, s, s, vents) {
             let old_context = crate::point_add::set_op_trace_context(
                 0x0700_0000 | (((call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
             );
-            circ.ccx(*ctrl, *b[i], *a[i]); // a ^= ctrl & (b_i ^ ci) -> sum
+            circ.ccx(*ctrl, *b[i], *a[i]);
             crate::point_add::restore_op_trace_context(old_context);
         }
         if let Some(ci) = ci {
-            circ.cx(*ci, *b[i]); // restore b
+            circ.cx(*ci, *b[i]);
         }
     }
     if std::env::var_os("TRACE_TLM_GIDNEY_THREAD").is_some() {
@@ -1316,9 +1285,6 @@ fn controlled_clean_add_threaded(
     }
 }
 
-// ============================================================================
-// controlled_erase_carry_gated[_capped]  (the boundary-carry gated vented erase)
-// ============================================================================
 fn deref(s: &[&QubitId]) -> Vec<QubitId> {
     s.iter().map(|q| **q).collect()
 }
@@ -1339,16 +1305,14 @@ fn controlled_erase_carry_gated_impl(
     let ctrl = *ctrl;
     let cin = match cin {
         Some(cin) => {
-            // HMR has already reset `carry` to |0>. Return that physical lane to
-            // the allocator while the phase-recovery comparator uses the real
-            // incoming carry.
+
             circ.loan_zero_qubit(carry);
             *cin
         }
         None => carry,
     };
     compare_geq_cin_middle(circ, &av, &bv, &cin, |c, ta, tb, c_prev| {
-        // ctrl . NOT c_n = ctrl.1 ^ ctrl.(ta&tb) ^ ctrl.c_prev:
+
         c.z(ctrl);
         let old_context = crate::point_add::set_op_trace_context(
             0x0900_0000 | (((call_index as u32) & 0xffff) << 8),
@@ -1422,7 +1386,6 @@ fn controlled_erase_carry_gated_capped(
     circ.zero_and_free(carry);
 }
 
-
 fn controlled_erase_carry_gated_capped_zero_cin(
     circ: &mut B,
     ctrl: &QubitId,
@@ -1434,15 +1397,11 @@ fn controlled_erase_carry_gated_capped_zero_cin(
     if a.len() <= cap {
         controlled_erase_carry_gated_zero_cin(circ, ctrl, a, b, carry);
     } else {
-        // The capped comparator starts above the incoming carry and therefore
-        // has the same implementation for a known-zero or retained carry-in.
+
         controlled_erase_carry_gated_capped(circ, ctrl, a, b, &carry, carry, cap);
     }
 }
 
-// ============================================================================
-// controlled_vented_chunk_add  (padded plain-Gidney add with cin/cout)
-// ============================================================================
 fn controlled_vented_chunk_add(circ: &mut B, ctrl: &QubitId, a_chunk: &[&QubitId], b_chunk: &[&QubitId], cin: &QubitId, cout: &QubitId) {
     let one = circ.alloc_qubit();
     circ.x(one);
@@ -1455,18 +1414,13 @@ fn controlled_vented_chunk_add(circ: &mut B, ctrl: &QubitId, a_chunk: &[&QubitId
     bext.push(cin);
     bext.extend_from_slice(b_chunk);
     bext.push(&zero);
-    // Skip the adder's bit-0 sum `one ^= ctrl AND cin` and its restore (they
-    // cancel). `one` is left at |1> by the adder, so x() returns it to |0>
-    // directly. Saves 2 CCX/chunk.
+
     controlled_hybrid_add_refs_skiplow(circ, ctrl, &aext, &bext);
     circ.x(one);
     circ.zero_and_free(one);
     circ.zero_and_free(zero);
 }
 
-// ============================================================================
-// varchunk_schedule / varchunk_cost
-// ============================================================================
 fn varchunk_schedule(n: usize, k: usize) -> Vec<usize> {
     const RESERVE: usize = 4;
     let mut sizes = Vec::new();
@@ -1493,9 +1447,6 @@ fn varchunk_cost(n: usize, k: usize, cap: usize) -> usize {
     n + erase
 }
 
-// ============================================================================
-// adaptive_layout / adaptive_add_cost_tof
-// ============================================================================
 pub(crate) struct AdaptiveLayout {
     pub(crate) c: usize,
     pub(crate) chunked_len: usize,
@@ -1695,10 +1646,6 @@ fn adaptive_add_cost_tof(n: usize, k: usize, controlled: bool) -> u64 {
     (base.saturating_sub(saved)) as u64
 }
 
-// ============================================================================
-// controlled_chunked_then_cuccaro
-// ============================================================================
-
 fn controlled_chunked_then_cuccaro(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], cout: Option<&QubitId>, k: usize) {
     let n = a.len();
     if n == 0 {
@@ -1723,9 +1670,7 @@ fn controlled_chunked_then_cuccaro(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     }
     if chunked_len < n {
         let cin: &QubitId = carries.last().unwrap_or(&cin0);
-        // cuccaro_carry(ctrl, x, y, ..) accumulates `y += ctrl*x` (sum into the
-        // second reg, first restored). This adder computes `a += b`, so `a` must be
-        // the accumulator: pass it as `y` (second), the addend `b` as `x` (first).
+
         let at = deref(&a[chunked_len..n]);
         let bt = deref(&b[chunked_len..n]);
         super::arith::cuccaro_carry(circ, Some(ctrl), &bt, &at, Some(cin), cout);
@@ -1744,9 +1689,6 @@ fn controlled_chunked_then_cuccaro(circ: &mut B, ctrl: &QubitId, a: &[&QubitId],
     }
 }
 
-// ============================================================================
-// controlled_hybrid_add_adaptive_refs
-// ============================================================================
 fn controlled_hybrid_add_adaptive_refs(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], k: usize) {
     let n = a.len();
     assert_eq!(b.len(), n, "controlled adaptive add: a,b width mismatch");
@@ -1816,9 +1758,6 @@ fn controlled_hybrid_add_adaptive_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qubit
     }
 }
 
-// ============================================================================
-// controlled_hybrid_add_varchunk_gated_refs
-// ============================================================================
 fn controlled_hybrid_add_varchunk_gated_refs(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], k: usize, cap: usize) {
     let n = a.len();
     assert_eq!(b.len(), n, "varchunk add: a,b width mismatch");
@@ -1839,8 +1778,7 @@ fn controlled_hybrid_add_varchunk_gated_refs(circ: &mut B, ctrl: &QubitId, a: &[
         let hi = lo + s;
         let cout = circ.alloc_qubit();
         if direct {
-            // Preserve the baked HYB cursor even though the direct threaded form
-            // does not need a separate vent-count decision.
+
             let fit = super::next_hyb_v_fit();
             let timeline_start = circ.active_timeline.len();
             let entry_active = circ.active_qubits;
@@ -1893,10 +1831,6 @@ fn controlled_hybrid_add_varchunk_gated_refs(circ: &mut B, ctrl: &QubitId, a: &[
     }
 }
 
-// ============================================================================
-// controlled_hybrid_add_knob_capped_refs / controlled_hybrid_add_capped
-// `k` comes from the caller (schedule).
-// ============================================================================
 fn controlled_hybrid_add_knob_capped_refs(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], k: usize, cap: usize) {
     let n = a.len();
     if cap < n
@@ -1909,13 +1843,6 @@ fn controlled_hybrid_add_knob_capped_refs(circ: &mut B, ctrl: &QubitId, a: &[&Qu
     }
 }
 
-/// Branch-dispatch variant: `branch` is the baked dispatch decision from the
-/// schedule (0=plain, 1=varchunk, 2=adaptive; chunked-then-Cuccaro is k-selected
-/// inside the adaptive path). The varchunk-vs-rest
-/// choice is the cost-model-dependent knob decision -- we take it from the schedule
-/// (instead of re-deciding via the cost model); the plain/adaptive/cuccaro
-/// sub-choice is k-determined, so `controlled_hybrid_add_adaptive_refs(k)`
-/// reproduces it.
 pub fn controlled_hybrid_add_capped_branch(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], k: usize, cap: usize, branch: u8) {
     let n = a.len();
     let k = super::target_qubit_headroom(circ).map_or(k, |headroom| k.min(headroom));
@@ -1930,22 +1857,16 @@ pub fn controlled_hybrid_add_capped_branch(circ: &mut B, ctrl: &QubitId, a: &[&Q
     if branch == 1 && n > 0 && !varchunk_schedule(n, k).is_empty() {
         controlled_hybrid_add_varchunk_gated_refs(circ, ctrl, a, b, k, cap);
     } else if branch == 0 {
-        // Plain (full Gidney, ~1 Toffoli/bit) -- the high-headroom branch
-        // (k+2c>=n).
+
         controlled_hybrid_add_refs(circ, ctrl, a, b);
     } else if branch == 255 {
-        // no schedule: fall back to the cost-model knob.
+
         controlled_hybrid_add_knob_capped_refs(circ, ctrl, a, b, k, cap);
     } else {
         controlled_hybrid_add_adaptive_refs(circ, ctrl, a, b, k);
     }
 }
 
-// ============================================================================
-// controlled_hybrid_add_cout_refs  -- `ctrl ? (a += b mod 2^n)` depositing
-// `ctrl AND carry_out(bit n-1)` into the caller-owned transient `cout` (|0> on
-// entry). The apply cofactor-add's q-q core. `k` from the schedule.
-// ============================================================================
 pub fn controlled_hybrid_add_cout_refs(circ: &mut B, ctrl: &QubitId, a: &[&QubitId], b: &[&QubitId], cout: &QubitId, k: usize) {
     let fit = super::take_cout_fit(k);
     let timeline_start = circ.active_timeline.len();

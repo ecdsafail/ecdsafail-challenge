@@ -1,19 +1,3 @@
-//! Modular square-subtract `output -= lambda^2 mod q` (secp256k1) used by the
-//! EC point-add, built on the sibling `super::arith` mod-sub / mod-double
-//! primitives.
-//!
-//! - [`symmetric_square_into_prod`]: the symmetric schoolbook square -- each
-//!   cross-product x_i*x_j once, ~n^2/2 CCX. The row-add is `arith::
-//!   hybrid_add_adaptive`; the cross ANDs are uncomputed by `clear_and` (HMR +
-//!   conditional-Z), the diagonal by `cx`.
-//! - [`mod_square_sub_pm_secp256k1_symmetric`]: the unconditional Stage-2 reduce
-//!   `output -= lo + f*hi mod q`, built from `super::arith::{mod_double,
-//!   mod_sub}`.
-//!
-//! ## secp256k1 constants
-//!   q   = 2^256 - f,   f = 2^32 + 977   (bits {0,4,6,7,8,9,32})
-//!   PAD = 21  (the +f window carry-drop -> ~2^-PAD per-fire approximation,
-//!              inherited from `super::arith`'s mod-sub / mod-double folds).
 
 use super::arith::{self, cuccaro_carry, mod_add_lowpeak, mod_add_shifted_low, mod_sub, mod_sub_shifted_low, F_SECP256K1, LSBS};
 use super::{B, BExt};
@@ -21,18 +5,12 @@ use crate::circuit::{QubitId};
 
 const N: usize = 256;
 
-/// Toffoli-free AND-uncompute (HMR + conditional-Z): `t` holds `a AND b` (here a
-/// square cross-product `x_i AND x_j`); the HMR measures it to |0> and the
-/// `cz_if_bit` cancels the deferred phase. Replaces the explicit reverse `ccx`
-/// (1 Toffoli) with a measurement (0 Toffoli).
 fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     let bit = circ.alloc_bit();
     circ.hmr(*t, bit);
     circ.cz_if_bit(*a, *b, bit);
 }
 
-/// NAF of f = 2^32 + 977:
-/// f = 2^32 + 2^10 - 2^6 + 2^4 + 1.
 const F_NAF_TERMS: [(usize, ShiftOp); 5] = [
     (0, ShiftOp::Sub),
     (4, ShiftOp::Sub),
@@ -93,23 +71,13 @@ fn apply_shifted_hi_term(
     }
 }
 
-/// `slice += row` (mod 2^slice.len) via `arith::hybrid_add_adaptive`. `slice` is
-/// exactly one bit wider than `row` (one carry slot); the row carry rides into that top
-/// slot (or, when this slice is an interior window of a wider accumulator, into
-/// the already-populated high bits of `prod` -- the caller sizes the slice so the
-/// final carry lands in a real |0> or populated slot, never dropped).
-///
-/// One clean zero-pad qubit, freed.
 fn add_into(circ: &mut B, slice: &[QubitId], row: &[QubitId]) {
     let m = row.len();
     assert_eq!(slice.len(), m + 1, "slice must be one wider than row");
     if m == 0 {
         return;
     }
-    // Zero-pad `row` to the slice width and run the UNCONTROLLED exact adaptive add
-    // `slice += row_padded` (mod 2^(m+1)); the row carry rides into slice[m] (the
-    // pad keeps the addend's top bit |0>). The adder's headroom `k` is the value
-    // baked into the row-add schedule (SQ_ROW_K), read via next_sqrow_k().
+
     let pad = circ.alloc_qubit();
     let mut b: Vec<QubitId> = row.to_vec();
     b.push(pad);
@@ -118,44 +86,48 @@ fn add_into(circ: &mut B, slice: &[QubitId], row: &[QubitId]) {
     circ.zero_and_free(pad);
 }
 
-/// Build `prod[0..2n] += value(x[0..n])^2` (integer, no reduction) via the
-/// symmetric schoolbook square: each off-diagonal cross-product x[i]*x[j] (i<j)
-/// is computed once, halving the AND/Toffoli count vs the full schoolbook.
-///
-///   x^2 = sum_i x[i]*2^(2i)  +  sum_{i<j} 2*x[i]*x[j]*2^(i+j)
-///
-/// Row `i` (added at product position 2i):
-///   bit 0      = diagonal x[i]               (pos 2i)         via CX
-///   bit 1      = 0 (gap)
-///   bit k+2    = cross x[i] AND x[i+1+k]      (pos 2i+2+k)     via CCX
-///
-/// `prod` is grown lazily (only up to the highest bit written so far) so the
-/// per-row register recycles the not-yet-allocated high slots. Pass an empty Vec.
 fn symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitId>) {
     let n = x.len();
+    if std::env::var("TLM_SQ_TRACE").ok().as_deref() == Some("1") {
+        eprintln!("SQ_CALL fwd n={n} crosses={}", n * (n - 1) / 2);
+    }
     assert!(prod.is_empty(), "prod is grown lazily; pass an empty Vec");
+
+    if square_addsub_enabled() && !(square_addsub_skip_c() && n == 129) {
+        for _ in 0..(2 * n) {
+            prod.push(circ.alloc_qubit());
+        }
+        if square_addsub_local_diag() {
+            crate::point_add::arith::square_addsub_local(circ, x, prod);
+        } else {
+            crate::point_add::arith::square_addsub_vented(circ, x, prod);
+        }
+        return;
+    }
     for i in 0..n {
-        // Row i has (n-1-i) crosses; the top cross lands at row-bit (n-1-i)+1 =
-        // n-i, so width = n-i+1 (i == n-1: only the diagonal, width 1).
+
         let num_cross = n.saturating_sub(i + 1);
         let width = if i == n - 1 { 1 } else { n - i + 1 };
-        // Row-add writes prod[2i .. 2i+width+1] (one carry slot). Grow prod up to
-        // the highest bit written so far.
+
         let hi = (2 * i + width + 1).min(2 * n);
         while prod.len() < hi {
             prod.push(circ.alloc_qubit());
         }
         let row: Vec<QubitId> = (0..width).map(|_| circ.alloc_qubit()).collect();
-        circ.cx(x[i], row[0]); // diagonal
-        for k in 0..num_cross {
-            circ.ccx(x[i], x[i + 1 + k], row[k + 2]); // cross x[i] & x[i+1+k]
+        circ.cx(x[i], row[0]);
+
+        let skip_and = square_addsub_probe();
+        if !skip_and {
+            for k in 0..num_cross {
+                circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
+            }
         }
         add_into(circ, &prod[2 * i..hi], &row);
-        // Uncompute the row: each cross `row[k+2] = x[i] AND x[i+1+k]` is a clean
-        // AND (add_into restored `row`), so measurement-vent it (clear_and: HMR +
-        // cz, 0 Toffoli) instead of a reverse ccx. The diagonal is a CX.
-        for k in 0..num_cross {
-            clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
+
+        if !skip_and {
+            for k in 0..num_cross {
+                clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
+            }
         }
         circ.cx(x[i], row[0]);
         for q in row {
@@ -165,22 +137,53 @@ fn symmetric_square_into_prod(circ: &mut B, x: &[QubitId], prod: &mut Vec<QubitI
     debug_assert_eq!(prod.len(), 2 * n, "prod must reach 2n after the build");
 }
 
-/// Gate-reverse of [`symmetric_square_into_prod`]: rebuilds each row and
-/// SUBTRACTS it from `prod`, draining `prod` back to |0>. Rows run in reverse
-/// order; `prod` is freed lazily (mirror of the forward lazy growth).
+fn square_addsub_enabled() -> bool {
+    true
+}
+
+fn square_addsub_local_diag() -> bool {
+    std::env::var("TLM_SQUARE_ADDSUB_LOCAL").ok().as_deref() == Some("1")
+}
+
+fn square_addsub_skip_c() -> bool {
+    std::env::var("TLM_SQUARE_ADDSUB_SKIP_C").ok().as_deref() == Some("1")
+}
+
+fn square_addsub_probe() -> bool {
+    std::env::var("TLM_SQUARE_ADDSUB_PROBE").ok().as_deref() == Some("1")
+}
+
 fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec<QubitId>) {
     let n = x.len();
+    if std::env::var("TLM_SQ_TRACE").ok().as_deref() == Some("1") {
+        eprintln!("SQ_CALL rev n={n} crosses={}", n * (n - 1) / 2);
+    }
     assert_eq!(prod.len(), 2 * n);
+
+    if square_addsub_enabled() && !(square_addsub_skip_c() && n == 129) {
+        if square_addsub_local_diag() {
+            crate::point_add::arith::square_addsub_local_inverse(circ, x, &prod);
+        } else {
+            crate::point_add::arith::square_addsub_vented_inverse(circ, x, &prod);
+        }
+        for q in prod {
+            circ.zero_and_free(q);
+        }
+        return;
+    }
     for i in (0..n).rev() {
         let num_cross = n.saturating_sub(i + 1);
         let width = if i == n - 1 { 1 } else { n - i + 1 };
         let row: Vec<QubitId> = (0..width).map(|_| circ.alloc_qubit()).collect();
         circ.cx(x[i], row[0]);
-        for k in 0..num_cross {
-            circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
+        let skip_and = square_addsub_probe();
+        if !skip_and {
+            for k in 0..num_cross {
+                circ.ccx(x[i], x[i + 1 + k], row[k + 2]);
+            }
         }
         let hi = (2 * i + width + 1).min(prod.len());
-        // subtract the row (X-sandwiched add).
+
         for q in &prod[2 * i..hi] {
             circ.x(*q);
         }
@@ -188,16 +191,17 @@ fn symmetric_square_into_prod_reverse(circ: &mut B, x: &[QubitId], mut prod: Vec
         for q in &prod[2 * i..hi] {
             circ.x(*q);
         }
-        // Vent the cross AND-uncompute (clean ANDs; see the forward build).
-        for k in 0..num_cross {
-            clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
+
+        if !skip_and {
+            for k in 0..num_cross {
+                clear_and(circ, &row[k + 2], &x[i], &x[i + 1 + k]);
+            }
         }
         circ.cx(x[i], row[0]);
         for q in row {
             circ.zero_and_free(q);
         }
-        // Rows below i reach at most prod index n+i, so all indices > n+i are now
-        // |0> and can be freed (mirror of the forward lazy growth).
+
         let keep = (n + i + 1).min(2 * n);
         while prod.len() > keep {
             circ.zero_and_free(prod.pop().unwrap());
@@ -370,15 +374,6 @@ fn apply_f_times_value_tagged(circ: &mut B, value: &[QubitId], output_reg: &[Qub
         return;
     }
 
-    // Shifted-low f-fold: instead of physically doubling `value` to each NAF
-    // shift (the old `mod_double` ramp: ~64 doublings of shift-shuffle overhead),
-    // read the 256-bit `value` register at each fixed bit offset and apply the
-    // explicit `+f`/`-f` overflow folds for the `shift` bits that wrap past bit
-    // 255. This is the same value-exact modular-shift technique already used by
-    // `apply_shifted_hi_term` / the shifted-low square route: each shifted term
-    // `±= (value << shift) mod q` is computed by `apply_shifted_hi_term`, which
-    // mirrors the mod_double ramp's per-term result gate-for-gate in value, while
-    // avoiding the doubling shuffle. Requires the full 256-bit register.
     if value.len() == N {
         for &(shift, sub_f_op) in &F_NAF_TERMS {
             let term_op = match op {
@@ -473,35 +468,11 @@ fn unbuild_sum_hi_lo(circ: &mut B, lambda: &[QubitId], sum: Vec<QubitId>) {
     free_zeroes(circ, sum);
 }
 
-/// Unconditional `output_reg -= lambda^2 mod q` (secp256k1), normal throughout.
-///
-/// `lambda` is `n = 256` bits (lambda < q); `output_reg` is `n = 256` bits and
-/// holds a value < q on entry (the EC-add keeps output reduced).
-///
-/// Stage 1: build the 2n-bit integer product `prod = lambda^2`
-/// with [`symmetric_square_into_prod`] (~n(n-1)/2 CCX).
-/// Stage 2 (reduce): `lambda < q < 2^256 => lambda^2 < q^2 < 2^512`,
-/// so `hi = prod>>256 < q`. With `2^256 == f (mod q)`, `lambda^2 == lo + f*hi`.
-/// Subtract `lo` from `output`, then subtract the NAF expansion of `f*hi` by
-/// reading `hi` at fixed bit offsets. This avoids mutating/restoring `hi` via
-/// the old modular-doubling ramp.
-/// Stage 3: uncompute `prod` (gate-reverse of Stage 1).
-///
-/// Value note (carried-over miss probability): each `mod_double` / `mod_sub`
-/// inherits `super::arith`'s `+f`-window carry drop -- a documented ~2^-PAD
-/// (PAD=21) per-fire approximation. The common path is exact; the only legal
-/// divergence is that rare large-input +f-window miss.
 pub fn mod_square_sub_pm_secp256k1_symmetric(circ: &mut B, lambda: &[QubitId], output_reg: &[QubitId]) {
     let n = N;
     assert_eq!(lambda.len(), n, "lambda must be n=256 bits (< q)");
     assert_eq!(output_reg.len(), n, "output must be n=256 bits (< q)");
 
-    // Karatsuba:
-    //   lambda = hi*2^128 + lo
-    //   A=lo^2, B=hi^2, C=(lo+hi)^2
-    //   lambda^2 = A + (C-A-B)*2^128 + B*2^256.
-    // Consume each half-square before building the next to keep the square off
-    // the global peak and avoid the three-product live set.
     circ.set_phase("square_sum_hi_lo");
     let sum = build_sum_hi_lo(circ, lambda);
 
