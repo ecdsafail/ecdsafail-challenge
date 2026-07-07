@@ -280,7 +280,10 @@ fn take_cout_fit(selected: usize) -> ScheduleFit {
         })
     })
 }
-fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
+fn next_sqrow_k() -> usize {
+    let base = SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX));
+    sub_delta(base, "TLM_SQROW_K_DELTA")
+}
 
 /// Load the product-min jump schedule onto the thread-local cursors.
 fn load_schedule() {
@@ -438,6 +441,10 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
 
     let ops = std::mem::take(&mut circ.ops);
 
+    // Flush qubit-lifetime profile (unconditional: ecdsafail run strips env vars,
+    // so this must not gate on any env var). Flush BEFORE constprop rewrites ops
+    // because lifetime_log spans are in pre-constprop ops-index space.
+    super::print_lifetime_summary(&circ);
     // Sound classical constant-propagation peephole: drop CCX with a provably
     // |0> quantum control (no-op but still scored) and fold CCX with a provably
     // |1> control to CX/X. reg0 (x2_init) and reg1 (y2) hold per-shot input data

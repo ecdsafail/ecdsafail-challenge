@@ -168,6 +168,8 @@ pub struct B {
     pub next_bit: u32,
     pub next_register: u32,
     pub free_qubits: Vec<u32>,
+    // Lifetime log: always collected. (qubit_id, op, ops_idx, phase)
+    pub lifetime_log: Vec<(u32, &'static str, usize, &'static str)>,
     pub active_qubits: u32,
     pub peak_qubits: u32,
     pub peak_ops_idx: usize,
@@ -227,6 +229,7 @@ impl B {
             next_bit: 0,
             next_register: 0,
             free_qubits: Vec::new(),
+            lifetime_log: Vec::new(),
             active_qubits: 0,
             peak_qubits: 0,
             peak_ops_idx: 0,
@@ -407,10 +410,13 @@ impl B {
                 .push((self.active_qubits, self.phase, self.current_ops_len()));
         }
         if let Some(q) = self.free_qubits.pop() {
-            QubitId(q.into())
+            let q_u32 = q;
+            self.lifetime_log.push((q_u32, "alloc", self.current_ops_len(), self.phase));
+            QubitId(q_u32.into())
         } else {
             let q = self.next_qubit;
             self.next_qubit += 1;
+            self.lifetime_log.push((q, "alloc", self.current_ops_len(), self.phase));
             QubitId(q.into())
         }
     }
@@ -429,6 +435,8 @@ impl B {
         self.r(q);
         self.free_qubits
             .push(q.0.try_into().expect("qubit id fits in u32"));
+        let q_u32: u32 = q.0.try_into().expect("qubit id fits in u32");
+        self.lifetime_log.push((q_u32, "free", self.current_ops_len(), self.phase));
         if self.active_qubits > 0 {
             self.active_qubits -= 1;
         }
@@ -1769,6 +1777,50 @@ fn configure_ecdsafail_submission_route() {
     // to a CX, and the lane-0 tobitvector add/sub body has no carry/borrow into
     // lane 1, so the body can start at bit 1. Co-tuned with the reroll island.
     set_default_env("DIALOG_GCD_ODD_U_LOWBIT_FASTPATH", "1");
+}
+
+
+/// Print the top-N longest qubit lifetimes accumulated in a builder.
+/// Visible to submodules (trailmix_ludicrous) so they can flush the lifetime
+/// log on the build_circuit / ecdsafail-run path, which never sees B directly
+/// (build() returns Vec<Op>, not B).
+pub(super) fn print_lifetime_summary(b: &B) {
+    use std::collections::HashMap;
+    let log = &b.lifetime_log;
+    eprintln!("LIFETIME: total_entries={}", log.len());
+
+    let mut by_qubit: HashMap<u32, Vec<&(u32, &'static str, usize, &'static str)>> = HashMap::new();
+    for entry in log {
+        by_qubit.entry(entry.0).or_default().push(entry);
+    }
+
+    let mut lifetimes: Vec<(u32, usize, usize, usize)> = by_qubit.iter().map(|(qid, entries)| {
+        // alloc: first occurrence; free: last occurrence (handles reuse)
+        let alloc = entries.iter().filter_map(|e| (e.1 == "alloc").then_some(e.2)).next().unwrap_or(0);
+        let free = entries.iter().filter_map(|e| (e.1 == "free").then_some(e.2)).last().unwrap_or(0);
+        (*qid, alloc, free, free.saturating_sub(alloc))
+    }).collect();
+    lifetimes.sort_by_key(|x| x.3);
+    lifetimes.reverse();
+
+    eprintln!("LIFETIME: top20_longest (qubit, alloc_ops_idx, free_ops_idx, span):");
+    for (qid, alloc, free, span) in lifetimes.iter().take(20) {
+        eprintln!("  q={} alloc={} free={} span={}", qid, alloc, free, span);
+    }
+
+    let spans: Vec<usize> = lifetimes.iter().map(|x| x.3).collect();
+    if !spans.is_empty() {
+        let mx = *spans.iter().max().unwrap_or(&0);
+        let avg: f64 = spans.iter().sum::<usize>() as f64 / spans.len() as f64;
+        eprintln!(
+            "LIFETIME: max_span={} avg_span={:.1} total_qubits={}",
+            mx,
+            avg,
+            spans.len()
+        );
+    } else {
+        eprintln!("LIFETIME: no qubit lifetimes recorded (build path did not exercise alloc/free)");
+    }
 }
 
 pub fn build_builder() -> B {
