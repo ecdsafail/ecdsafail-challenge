@@ -1,22 +1,3 @@
-//! The GCD swap-decision comparator for the product-min secp256k1 EC-add,
-//! built on this crate's `B` builder.
-//!
-//! ## What the schedule needs
-//! At GCD jump step `i` the swap decision compares the GCD cofactors `u`,`v`
-//! over a narrow window, the per-step `GAP_J2[i]`. The comparator scans the
-//! top `k` bits of the operands; it mis-decides the `u <-> v` swap iff the
-//! highest differing bit of `u`,`v` sits below the window, i.e. it returns
-//! "equal -> no swap" when the top-`k` MSBs of the two operands agree. On
-//! uniform operands this happens with probability ~2^-k per call.
-//!
-//! ## Carry handling: chunked Cuccaro + Gidney held carries
-//! The backend is `compare_geq_chunked_middle`. The bottom `[0, n-k)` bits run an
-//! in-place Cuccaro `a >= b` MAJ chain (one live carry, uncomputed exactly by the
-//! self-inverse UMA). The top `[n-k, n)` bits hold `k` Gidney carries that are
-//! measure-erased (MBU) on the reverse, so only `k+1` carries are live when the
-//! caller body runs. The held-carry count `k` is supplied per call from the
-//! schedule (`next_cmp_k`): `k = 0` is pure in-place Cuccaro (peak-safe), `k >= n`
-//! is full Gidney.
 
 use super::{B, BExt};
 use crate::circuit::QubitId;
@@ -202,7 +183,6 @@ fn compare_cin_has_structurally_dead_carry(call_index: usize, bit: usize) -> boo
         .any(|&(call, lo, hi)| call == call_index && (lo..=hi).contains(&bit))
 }
 
-// Generated from /tmp/codex_idx_merged_context_compare_full.txt, rows with drops >= 2.
 const COMPARE_STRUCTURAL_DEAD_TOP_RANGES: &[(usize, usize, usize)] = &[
     (775, 0, 18),
     (776, 0, 18),
@@ -601,7 +581,6 @@ const COMPARE_STRUCTURAL_DEAD_TOP_RANGES: &[(usize, usize, usize)] = &[
     (1525, 32, 33),
     (1539, 32, 33),
 ];
-// tuple_count=396 drop_sum=1301
 
 const COMPARE_DIRECT_REMAINDER_KEYS: &[u32] = &[
     530, 3356, 26405, 29478, 29990, 30502, 32038, 32550, 33574, 34598, 35623, 36135,
@@ -664,10 +643,6 @@ fn compare_call_has_structurally_dead_top(call_index: usize, bit: usize) -> bool
         .any(|&(call, lo, hi)| call == call_index && (lo..=hi).contains(&bit))
 }
 
-/// Direct-final-carry form of the chunked `a >= b` comparator. `k` is the held
-/// carry count (clamped to `n`). `body(circ, carry)` sees
-/// `carry = (a >= b)` and must restore it before returning; `a`/`b` and all
-/// carries are then cleaned.
 fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
     circ: &mut B,
     a: &[QubitId],
@@ -690,19 +665,19 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
     let k = super::target_qubit_headroom(circ)
         .map_or(k, |headroom| k.min(headroom.saturating_sub(1)))
         .min(n);
-    let split = n - k; // bottom [0, split) in-place; top [split, n) held.
+    let split = n - k;
     let mut cy: Vec<Option<QubitId>> = (0..=n).map(|_| None).collect();
     let c = circ.alloc_qubit();
-    circ.x(c); // c_0 = 1
-    // Forward bottom: in-place Cuccaro MAJ (only `c` live).
+    circ.x(c);
+
     for i in 0..split {
         circ.x(b[i]);
         circ.cx(c, b[i]);
         circ.cx(c, a[i]);
-        circ.ccx(a[i], b[i], c); // c = c_{i+1}
+        circ.ccx(a[i], b[i], c);
     }
     cy[split] = Some(c);
-    // Forward top: Gidney held carries.
+
     for i in split..n {
         let next = circ.alloc_qubit();
         {
@@ -717,15 +692,15 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
                 circ.ccx(a[i], b[i], next);
                 crate::point_add::restore_op_trace_context(old_context);
             }
-            circ.cx(*ci, next); // next = c_{i+1}
+            circ.cx(*ci, next);
         }
         cy[i + 1] = Some(next);
     }
     body(circ, cy[n].as_ref().unwrap());
-    // Reverse top: measure-erase the held carries.
+
     for i in (split..n).rev() {
         let next = cy[i + 1].take().unwrap();
-        circ.cx(*cy[i].as_ref().unwrap(), next); // c_{i+1} -> ta&tb
+        circ.cx(*cy[i].as_ref().unwrap(), next);
         let bit = circ.alloc_bit();
         circ.hmr(next, bit);
         circ.zero_and_free(next);
@@ -734,7 +709,7 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
         circ.cx(*cy[i].as_ref().unwrap(), b[i]);
         circ.x(b[i]);
     }
-    // Reverse bottom: in-place UMA.
+
     let c = cy[split].take().unwrap();
     for i in (0..split).rev() {
         circ.ccx(a[i], b[i], c);
@@ -742,7 +717,7 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
         circ.cx(c, b[i]);
         circ.x(b[i]);
     }
-    circ.x(c); // c_0 = 1 -> 0
+    circ.x(c);
     circ.zero_and_free(c);
     if std::env::var_os("TRACE_TLM_COMPARE_DIRECT").is_some() {
         eprintln!(
@@ -758,8 +733,6 @@ fn compare_geq_chunked_middle_direct<F: FnOnce(&mut B, &QubitId)>(
     }
 }
 
-/// Compatibility form for callers that need a persistent predicate qubit.
-/// New middle-only users should use the direct-final-carry form above.
 pub fn compare_geq_chunked_middle<F: FnOnce(&mut B, &QubitId)>(
     circ: &mut B,
     a: &[QubitId],
@@ -792,8 +765,6 @@ pub fn compare_geq_chunked_middle<F: FnOnce(&mut B, &QubitId)>(
     );
 }
 
-/// Controlled form: `target ^= ctrl AND (u_top < v_top)` on the top `k` MSBs.
-/// Used where the swap decision is itself gated.
 pub fn controlled_swap_decision_lt_truncated(
     circ: &mut B,
     ctrl: &QubitId,
@@ -808,9 +779,7 @@ pub fn controlled_swap_decision_lt_truncated(
     );
     let u_top: Vec<QubitId> = u[u.len() - k..].to_vec();
     let v_top: Vec<QubitId> = v[v.len() - k..].to_vec();
-    // The callback consumes the final carry directly, eliminating the old
-    // predicate-copy lane. Spend exactly that lane on one additional held carry;
-    // compare_geq_chunked_middle_direct's target-Q clamp still bounds the same peak.
+
     let ck = super::next_cmp_k().saturating_add(1);
     compare_geq_chunked_middle_direct(
         circ,
@@ -825,16 +794,6 @@ pub fn controlled_swap_decision_lt_truncated(
     );
 }
 
-/// Measurement-vented `a + b + cin` carry chain with a middle callback. Computes
-/// the chain `cy[i+1] = carry of (a + ~b + ~cin)` bit-by-bit, then at the top bit
-/// hands `(ta = a_top ^ c, tb = ~b_top ^ c, c_{n-1})` to `body` -- the final carry
-/// `cy[n] = (ta AND tb) XOR c_{n-1}` is NOT built, so `body` deposits its phase via
-/// a bare Z/CZ/CCZ on those three (no value flip), riding through the reverse
-/// measure-uncompute. Reverse vents each internal carry by `hmr` + `cz_if_bit`.
-/// `a`,`b`,`cin` restored. Equal-width `a`,`b` (the chunked-erase caller).
-///
-/// `carry-out(a + b + cin) = NOT carry-out(a + ~b + ~cin)`, so a caller wanting
-/// to test `[a + b + cin >= 2^n]` reads the complement of the built predicate.
 pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
     circ: &mut B,
     a: &[QubitId],
@@ -849,7 +808,7 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
     let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(n);
     let c0 = circ.alloc_qubit();
     circ.x(c0);
-    circ.cx(*cin, c0); // cy[0] = 1 ^ cin = ~cin (carry-in of a + ~b + ~cin)
+    circ.cx(*cin, c0);
     cy.push(Some(c0));
     for i in 0..n - 1 {
         let next = circ.alloc_qubit();
@@ -867,7 +826,7 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
         circ.cx(*ci, next);
         cy.push(Some(next));
     }
-    // Top bit: fold only, hand (ta, tb, c_{n-1}) to body.
+
     {
         let i = n - 1;
         let ci = cy[i].as_ref().unwrap();
@@ -879,11 +838,11 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
         circ.cx(*ci, b[i]);
         circ.x(b[i]);
     }
-    // Reverse: vent cy[1..n-1] via hmr, restore a/b.
+
     for i in (0..n - 1).rev() {
         let next = cy[i + 1].take().unwrap();
         let ci_raw = cy[i].as_ref().unwrap();
-        circ.cx(*ci_raw, next); // next = ta_i & tb_i
+        circ.cx(*ci_raw, next);
         let bit = circ.alloc_bit();
         circ.hmr(next, bit);
         circ.zero_and_free(next);
@@ -893,20 +852,11 @@ pub fn compare_geq_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, &QubitId)>(
         circ.x(b[i]);
     }
     let c0 = cy[0].take().unwrap();
-    circ.cx(*cin, c0); // ~cin -> 1
-    circ.x(c0); // 1 -> 0
+    circ.cx(*cin, c0);
+    circ.x(c0);
     circ.zero_and_free(c0);
 }
 
-/// Vented uncompute of a GCD swap-decision flag that holds `ctrl AND (v_top <
-/// u_top)` (the forward decision). HMR the flag to |0> (0 Toffoli), then
-/// under the HMR `push_condition` recompute the predicate as a deferred Z, using
-/// the direct-final-carry comparator on `(v_top, u_top)`. `v`,`u` restored. The forward
-/// computes the flag normally (a value); only this reverse clear vents.
-///
-/// `[v >= u] = carryout(v + ~u + 1)` over the top-`k` window; the predicate is
-/// `ctrl AND (v < u) = ctrl AND NOT[v>=u]`. Deposit the phase directly through
-/// the final carry via `X(carry); CZ(ctrl, carry); X(carry)`.
 pub fn swap_decision_uncompute_vented(
     circ: &mut B,
     ctrl: &QubitId,
@@ -921,8 +871,7 @@ pub fn swap_decision_uncompute_vented(
     );
     let v_top: Vec<QubitId> = v[v.len() - k..].to_vec();
     let u_top: Vec<QubitId> = u[u.len() - k..].to_vec();
-    // Match the forward decision: removing the predicate-copy lane funds one
-    // additional held carry without changing peak liveness.
+
     let ck = super::next_cmp_k().saturating_add(1);
     let bit = circ.alloc_bit();
     circ.hmr(*flag, bit);
@@ -932,8 +881,7 @@ pub fn swap_decision_uncompute_vented(
         &v_top,
         &u_top,
         |c, carry| {
-            // Deposit Z^(ctrl AND NOT carry) = Z^(ctrl AND [v < u]), gated by the HMR
-            // condition (push_condition). Same phase as the cin (ta,tb,c_prev) form.
+
             c.x(*carry);
             c.cz(*ctrl, *carry);
             c.x(*carry);

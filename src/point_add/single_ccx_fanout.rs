@@ -181,13 +181,6 @@ fn validate_protected_tail(ops: &[Op], protected: usize) -> Result<Vec<Op>, Stri
     Ok(tail.to_vec())
 }
 
-/// Apply exactly one target-fanout conjugation:
-///
-/// CCX(a,b,t); CX(t,u); CCX(a,b,t) = CX(t,u); CCX(a,b,u).
-///
-/// Dependency epochs permit commuting operations around the sole CX blocker.
-/// Condition-stack transitions are barriers, and the fixed nonce suffix is
-/// checked byte-for-byte after the rewrite.
 pub(crate) fn rewrite_first_target_fanout(
     ops: Vec<Op>,
     protected_tail_ops: usize,

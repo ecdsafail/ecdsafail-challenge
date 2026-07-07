@@ -1,13 +1,7 @@
-//! Multi-controlled X with log*(k) clean ancillae, built on the Khattar-Gidney
-//! prefix-AND ladder. Used by the fold tail of the EC point-add circuit, which
-//! propagates the fold carry into the high bits via a cascade of `mcx_clean_k`
-//! calls.
 
 use super::{B, BExt};
 use crate::circuit::{QubitId};
 
-/// Clear `t = c0 AND c1` back to |0> by measurement (HMR + cz_if_bit, 0
-/// Toffoli). `c0`,`c1` must be alive/unmodified since the AND.
 fn mbu_clear_and(circ: &mut B, t: &QubitId, c0: &QubitId, c1: &QubitId) {
     let bit = circ.alloc_bit();
     circ.hmr(*t, bit);
@@ -33,7 +27,6 @@ fn kg_start_layer(layer_id: usize) -> usize {
     s
 }
 
-/// Clean-ancilla count for the KG prefix layer decomposition.
 #[must_use]
 pub fn kg_prefix_ancilla_count(n: usize) -> usize {
     if n <= 1 {
@@ -194,8 +187,6 @@ fn kg_get_layers_for_prefix_and<'a>(
     ret
 }
 
-/// `target ^= AND(bits)` via the KG prefix-AND ladder (2k-3 Toffoli, log*(k)
-/// clean ancillae).
 fn xor_and_of_khattar_gidney_refs(circ: &mut B, bits: &[&QubitId], target: &QubitId) {
     match bits.len() {
         0 => {
@@ -246,7 +237,6 @@ fn xor_and_of_khattar_gidney_refs(circ: &mut B, bits: &[&QubitId], target: &Qubi
     }
 }
 
-/// Clean `target ^= AND(ctrls)`; `ctrls` restored. log*(k) clean ancillae.
 pub fn mcx_clean_k(circ: &mut B, ctrls: &[&QubitId], target: &QubitId) {
     match ctrls.len() {
         0 => circ.x(*target),
@@ -285,13 +275,11 @@ pub fn mcx_clean_k(circ: &mut B, ctrls: &[&QubitId], target: &QubitId) {
     }
 }
 
-/// Increment `a` modulo `2^a.len()` with the Khattar-Gidney prefix ladder.
 pub fn inc_khattar_gidney(circ: &mut B, a: &[QubitId]) {
     let refs: Vec<&QubitId> = a.iter().collect();
     inc_khattar_gidney_refs_inner(circ, &refs, false);
 }
 
-/// Controlled increment `a += ctrl (mod 2^a.len())`.
 pub fn cinc_khattar_gidney(circ: &mut B, a: &[QubitId], ctrl: &QubitId) {
     if a.is_empty() {
         return;
