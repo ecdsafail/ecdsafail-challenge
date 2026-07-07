@@ -1,41 +1,7 @@
-//! Sound classical constant-propagation / peephole pass over the emitted
-//! op-stream.
-//!
-//! ## What it does
-//! Forward abstract interpretation tracking, for every qubit and classical bit,
-//! a provable constant value in the lattice {Zero, One, Unknown}. The seeds are
-//! the *genuinely* classical initial states of the circuit:
-//!   * every qubit starts at |0> in the simulator's `clear_for_shot`, EXCEPT the
-//!     IO input registers reg0 (P.x) and reg1 (P.y) which `set_register` fills
-//!     with per-shot input data -> those qubits are seeded Unknown;
-//!   * every classical bit starts at 0.
-//!
-//! Propagation is sound by construction: a value is marked `One`/`Zero` only
-//! when it provably holds for EVERY basis input on EVERY shot. The moment any
-//! doubt exists (an unknown control, a conditional write that is not a no-op, a
-//! measurement, a phase op, an input qubit) the value collapses to Unknown.
-//!
-//! ## The peephole, applied only when PROVABLY known
-//!   * CCX with a known-0 quantum control  -> DROP (no-op, still scored).
-//!   * CCX with a known-1 quantum control   -> FOLD to CX on the other control.
-//!   * CCX with both controls known-1       -> FOLD to X on the target.
-//! Dropping a counted CCX removes one executed-Toffoli; folding to CX/X moves it
-//! to the uncounted (Clifford / classically-trackable) tier. Both preserve the
-//! computed unitary on all basis states.
-//!
-//! ## Soundness corroboration (step 2)
-//! `CONSTPROP_VERIFY=<n>` runs the *unmodified* op-stream through the real
-//! `Simulator` over `n` diverse nonces x 9024 shots and records, for every gate
-//! the static analysis flagged, whether its quantum control(s) were ALWAYS the
-//! claimed constant across all those inputs. Any flagged gate that fails this
-//! empirical check is reported (and would indicate a static-analysis bug); the
-//! transform is then restricted to the intersection.
 
 use crate::circuit::{BitId, NO_BIT, NO_QUBIT, Op, OperationType, QubitId};
 use crate::point_add::OpSite;
 
-/// Sentinel "never touched" timestamp for the inverse-pair last-touch arrays.
-/// Treated as strictly before every op index (i.e. touched before all ops).
 const NEVER: usize = usize::MAX;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -47,8 +13,6 @@ enum Val {
 
 use Val::*;
 
-/// Result of the static analysis: per index in the op-stream, what transform (if
-/// any) applies, plus the bookkeeping for reporting.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ConstPropStats {
     pub ccx_total: usize,
@@ -57,31 +21,26 @@ pub struct ConstPropStats {
     pub folded_x: usize,
 }
 
-/// Per-gate transform decision, recorded so the empirical verifier can check the
-/// claimed control constancy on the *original* stream.
 #[derive(Clone, Copy, Debug)]
 enum Decision {
-    /// Keep unchanged.
+
     Keep,
-    /// Drop: the named control qubit is claimed provably Zero.
+
     DropZeroCtrl { ctrl: QubitId },
-    /// Fold CCX -> CX on `keep_ctrl`; `one_ctrl` is claimed provably One.
+
     FoldCx { one_ctrl: QubitId, keep_ctrl: QubitId },
-    /// Fold CCX -> X on target; both controls claimed provably One.
+
     FoldX { c1: QubitId, c2: QubitId },
-    /// Drop: the two controls are provably COMPLEMENTARY (a = NOT b on every
-    /// shot), so a AND b = 0 and the CCX is a no-op. `a`,`b` recorded for the
-    /// empirical verifier.
+
     DropComplementCtrls { a: QubitId, b: QubitId },
-    /// Fold CCX -> CX(keep_ctrl, target): the two controls are provably EQUAL
-    /// (a = b on every shot), so a AND b = a. `a`,`b` recorded for verification.
+
     FoldEqualCtrls { a: QubitId, b: QubitId, keep_ctrl: QubitId },
 }
 
 struct Analyzer {
     q: Vec<Val>,
     b: Vec<Val>,
-    /// condition stack of bits (pushed by PushCondition).
+
     cond_stack: Vec<BitId>,
 }
 
@@ -99,9 +58,6 @@ impl Analyzer {
         self.b[id.0 as usize] = v;
     }
 
-    /// Is the *effective* classical condition for this op provably always-true on
-    /// every shot? That means: every bit on the condition stack is provably One,
-    /// and the op's own `c_condition` (if any) is provably One.
     fn cond_always_true(&self, op: &Op) -> bool {
         for &c in &self.cond_stack {
             if self.bv(c) != One {
@@ -114,14 +70,11 @@ impl Analyzer {
         true
     }
 
-    /// Could the op possibly NOT execute on some shot? (condition not provably
-    /// always-true). If so, a write must be merged with the prior value.
     fn cond_maybe_false(&self, op: &Op) -> bool {
         !self.cond_always_true(op)
     }
 }
 
-/// XOR of two abstract values when both known.
 fn xor_val(a: Val, b: Val) -> Val {
     match (a, b) {
         (Zero, x) | (x, Zero) => x,
@@ -130,7 +83,6 @@ fn xor_val(a: Val, b: Val) -> Val {
     }
 }
 
-/// AND of two abstract values.
 fn and_val(a: Val, b: Val) -> Val {
     match (a, b) {
         (Zero, _) | (_, Zero) => Zero,
@@ -139,14 +91,10 @@ fn and_val(a: Val, b: Val) -> Val {
     }
 }
 
-/// Merge: the target is written with `new` only on *some* shots (condition may be
-/// false), keeping `old` on the rest. Provably constant only if old==new.
 fn merge(old: Val, new: Val) -> Val {
     if old == new { old } else { Unknown }
 }
 
-/// Run the static forward analysis. `input_qubits` lists the qubit ids that are
-/// seeded Unknown (the IO data registers); all other qubit ids are seeded Zero.
 fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> (Vec<Decision>, ConstPropStats) {
     let mut a = Analyzer {
         q: vec![Zero; num_q],
@@ -172,21 +120,19 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 stats.ccx_total += 1;
                 let c1 = a.qv(op.q_control1);
                 let c2 = a.qv(op.q_control2);
-                // Decide the transform from the controls (independent of the
-                // classical condition: if a control is provably Zero the gate is
-                // a no-op on every shot regardless of the condition mask).
+
                 if c1 == Zero {
                     decisions[i] = Decision::DropZeroCtrl { ctrl: op.q_control1 };
                     stats.dropped += 1;
-                    // No state change (no-op).
+
                 } else if c2 == Zero {
                     decisions[i] = Decision::DropZeroCtrl { ctrl: op.q_control2 };
                     stats.dropped += 1;
-                    // No state change.
+
                 } else if c1 == One && c2 == One {
                     decisions[i] = Decision::FoldX { c1: op.q_control1, c2: op.q_control2 };
                     stats.folded_x += 1;
-                    // Effect: target ^= cond. New target value:
+
                     let tgt = a.qv(op.q_target);
                     let nv = xor_val(tgt, One);
                     let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
@@ -194,9 +140,9 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 } else if c1 == One {
                     decisions[i] = Decision::FoldCx { one_ctrl: op.q_control1, keep_ctrl: op.q_control2 };
                     stats.folded_cx += 1;
-                    // Effect: target ^= cond & c2(unknown/one) -> unknown-ish.
+
                     let tgt = a.qv(op.q_target);
-                    let delta = c2; // c2 is One or Unknown here
+                    let delta = c2;
                     let nv = xor_val(tgt, delta);
                     let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
                     a.set_q(op.q_target, res);
@@ -209,8 +155,7 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                     let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
                     a.set_q(op.q_target, res);
                 } else {
-                    // Both controls unknown: target ^= cond & c1 & c2 -> if the
-                    // and is provably Zero target unchanged, else Unknown.
+
                     let delta = and_val(c1, c2);
                     let tgt = a.qv(op.q_target);
                     let nv = xor_val(tgt, delta);
@@ -232,11 +177,11 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 a.set_q(op.q_target, res);
             }
             OperationType::Swap => {
-                // q_control1 <-> q_target, executed where cond is set.
+
                 let va = a.qv(op.q_control1);
                 let vt = a.qv(op.q_target);
                 if a.cond_maybe_false(op) {
-                    // partial swap: each side becomes merge(self, other).
+
                     a.set_q(op.q_control1, merge(va, vt));
                     a.set_q(op.q_target, merge(vt, va));
                 } else {
@@ -245,14 +190,13 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 }
             }
             OperationType::R => {
-                // Reset to |0> where cond set; else unchanged.
+
                 let tgt = a.qv(op.q_target);
                 let res = if a.cond_maybe_false(op) { merge(tgt, Zero) } else { Zero };
                 a.set_q(op.q_target, res);
             }
             OperationType::Hmr => {
-                // Measurement: classical bit becomes a fresh random value
-                // (Unknown), qubit demolished to |0> where cond set.
+
                 let res = if a.cond_maybe_false(op) {
                     merge(a.bv(op.c_target), Unknown)
                 } else {
@@ -279,8 +223,7 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                 let res = if a.cond_maybe_false(op) { merge(cur, nv) } else { nv };
                 a.set_b(op.c_target, res);
             }
-            // Phase-only ops, register metadata, debug: no effect on the
-            // computational basis values we track.
+
             OperationType::Z
             | OperationType::CZ
             | OperationType::CCZ
@@ -294,35 +237,6 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
     (decisions, stats)
 }
 
-// ── Affine GF(2) relation analysis ───────────────────────────────────────────
-//
-// A complementary refinement to the const-prop lattice. It tracks, for every
-// qubit, an EXACT affine form over GF(2):
-//     value(q) = const(q)  XOR  (XOR of the symbolic source variables in set(q))
-// Sources: each input data qubit (reg0/reg1) is its own independent variable;
-// every |0>-seeded ancilla starts as the empty set with const 0. A measurement
-// result (Hmr) and a CCX target (nonlinear) become a FRESH independent variable
-// (a well-defined but unconstrained value) so the relation algebra stays exact.
-//
-// With this we can PROVE two CCX controls a,b are related on EVERY shot:
-//   * set(a)==set(b) AND const(a)==const(b)  ->  a == b always  -> a&b = a
-//        => CCX(a,b,t) == CX(a,t)  (fold; removes a counted Toffoli).
-//   * set(a)==set(b) AND const(a)!=const(b)  ->  a == NOT b      -> a&b = 0
-//        => CCX(a,b,t) is a no-op  (drop; removes a counted Toffoli).
-// Both hold regardless of the CCX's own classical condition (the relationship is
-// proved over all shots), exactly like the constant-control drops.
-//
-// Soundness:
-//   * By construction — a value's affine form is updated only by the exact GF(2)
-//     transfer of each gate, and any write that might NOT happen (a possibly-
-//     false condition) collapses the target to a fresh variable (precision loss
-//     only, never an unsound claim). A set exceeding CAP_SET also collapses to a
-//     fresh variable.
-//   * Empirically — the CONSTPROP_VERIFY harness checks, for every flagged CCX,
-//     that the controls were ALWAYS equal (or always complementary) across many
-//     nonces x 9024 shots, reverting any that ever fail.
-
-/// Cap on affine-set size; beyond it a qubit collapses to a fresh variable.
 const CAP_SET: usize = 2048;
 
 struct Affine {
@@ -330,12 +244,10 @@ struct Affine {
     set: Vec<Vec<u32>>,
     nextvar: u32,
     cond_stack: Vec<BitId>,
-    // bit values reuse the const-prop {Zero,One,Unknown} lattice so we know when
-    // a condition is provably always-true.
+
     b: Vec<Val>,
 }
 
-/// Symmetric difference (XOR) of two sorted, de-duplicated u32 sets.
 fn xor_set(a: &[u32], b: &[u32]) -> Vec<u32> {
     let mut out = Vec::with_capacity(a.len() + b.len());
     let (mut i, mut j) = (0usize, 0usize);
@@ -365,7 +277,7 @@ impl Affine {
     fn bv(&self, id: BitId) -> Val {
         if id == NO_BIT { Unknown } else { self.b[id.0 as usize] }
     }
-    /// Could this op fail to execute on some shot?
+
     fn cond_maybe_false(&self, op: &Op) -> bool {
         for &c in &self.cond_stack {
             if self.bv(c) != One {
@@ -379,18 +291,13 @@ impl Affine {
     }
 }
 
-/// Forward affine-relation analysis. Returns per-op Decisions only for CCX gates
-/// whose controls are provably equal/complementary (Keep otherwise) plus counts.
 fn analyze_affine(
     ops: &[Op],
     num_q: usize,
     num_b: usize,
     input_qubits: &[QubitId],
 ) -> (Vec<Decision>, usize, usize) {
-    // Bits are seeded Unknown (the classical input registers reg2/reg3 carry
-    // per-shot data, and we make no assumption about any bit). This only ever
-    // makes a condition "maybe false", collapsing the affected qubit write to a
-    // fresh variable — strictly conservative, never an unsound relation claim.
+
     let mut af = Affine {
         cst: vec![false; num_q],
         set: vec![Vec::new(); num_q],
@@ -443,8 +350,7 @@ fn analyze_affine(
                 let a = op.q_control1.0 as usize;
                 let b = op.q_control2.0 as usize;
                 let t = op.q_target.0 as usize;
-                // Prove the control relationship (independent of this CCX's own
-                // condition: the relation holds on every shot).
+
                 if af.set[a] == af.set[b] {
                     if af.cst[a] == af.cst[b] {
                         decisions[i] = Decision::FoldEqualCtrls {
@@ -454,9 +360,6 @@ fn analyze_affine(
                         };
                         fold_eq += 1;
 
-                        // The rewritten gate is CX(a,t). Propagate that exact
-                        // affine transfer now so equal-control chains close in
-                        // this sweep instead of one whole-stream pass per link.
                         if af.cond_maybe_false(op) {
                             af.set[t] = af.fresh();
                             af.cst[t] = false;
@@ -476,11 +379,10 @@ fn analyze_affine(
                             b: op.q_control2,
                         };
                         drop_comp += 1;
-                        // Complementary controls cannot both be one. The
-                        // rewritten gate is a no-op, so retain the target form.
+
                     }
                 } else {
-                    // An unresolved CCX is nonlinear in its controls.
+
                     af.set[t] = af.fresh();
                     af.cst[t] = false;
                 }
@@ -516,8 +418,7 @@ fn analyze_affine(
                     af.b[op.c_target.0 as usize] = Unknown;
                 }
             }
-            // Bit lattice tracking so condition-always-true is known. Mirror the
-            // const-prop bit transfer (conservative).
+
             OperationType::BitStore0 => {
                 if op.c_target != NO_BIT {
                     let cur = af.bv(op.c_target);
@@ -540,7 +441,7 @@ fn analyze_affine(
                         if af.cond_maybe_false(op) { merge(cur, nv) } else { nv };
                 }
             }
-            // Phase-only / metadata: no effect on computational-basis values.
+
             OperationType::Z
             | OperationType::CZ
             | OperationType::CCZ
@@ -554,13 +455,12 @@ fn analyze_affine(
     (decisions, fold_eq, drop_comp)
 }
 
-/// Apply the static decisions, rewriting the op-stream. Returns the new stream.
 fn apply_decisions(ops: &[Op], decisions: &[Decision]) -> Vec<Op> {
     let mut out = Vec::with_capacity(ops.len());
     for (i, op) in ops.iter().enumerate() {
         match decisions[i] {
             Decision::Keep => out.push(*op),
-            Decision::DropZeroCtrl { .. } => { /* drop entirely */ }
+            Decision::DropZeroCtrl { .. } => {  }
             Decision::FoldCx { keep_ctrl, .. } => {
                 let mut nop = Op::empty();
                 nop.kind = OperationType::CX;
@@ -576,9 +476,9 @@ fn apply_decisions(ops: &[Op], decisions: &[Decision]) -> Vec<Op> {
                 nop.c_condition = op.c_condition;
                 out.push(nop);
             }
-            Decision::DropComplementCtrls { .. } => { /* a&b==0: drop entirely */ }
+            Decision::DropComplementCtrls { .. } => {  }
             Decision::FoldEqualCtrls { keep_ctrl, .. } => {
-                // a==b so a&b==a: CCX(a,b,t) == CX(a,t).
+
                 let mut nop = Op::empty();
                 nop.kind = OperationType::CX;
                 nop.q_control1 = keep_ctrl;
@@ -614,63 +514,98 @@ fn filter_sites(sites: &[OpSite], kill: &[bool]) -> Vec<OpSite> {
         .collect()
 }
 
-// ── Inverse-pair (self-inverse) CCX cancellation ─────────────────────────────
-//
-// CCX is self-inverse. Two CCX gates G1@i, G2@j (i<j) with the SAME target `t`
-// and the SAME (unordered) control pair {a,b} compose to identity on every shot
-// PROVIDED that, at the instant each executes, the contribution
-//     v = cond & q[a] & q[b]
-// they XOR into the target is identical AND nothing in between observes the
-// half-applied target. The simulator applies CCX as `q[t] ^= cond & q[a] & q[b]`
-// (sim.rs), so the pair is a true identity when, for every op strictly between i
-// and j:
-//   (1) `t` is neither written NOR read  — removing both XORs must not change any
-//       intermediate value that depends on q[t];
-//   (2) `a` and `b` are not WRITTEN       — so q[a],q[b] reaching G2 equal those
-//       reaching G1 (reads of a/b are fine: we don't alter them);
-//   (3) the effective condition mask is identical at i and j — guaranteed by
-//       requiring no PushCondition/PopCondition between them (condition-stack
-//       epoch unchanged), the identical `c_condition` field, and no write to that
-//       `c_condition` bit in between.
-// Under (1)-(3) the two gates cancel exactly and BOTH are removed, eliminating
-// two counted Toffolis (the scorer counts each CCX by its classical condition
-// mask, sim.rs:86, regardless of the quantum control values).
-//
-// Soundness is by construction; it is additionally corroborated empirically by
-// the CONSTPROP_VERIFY harness, which replays the ORIGINAL stream and asserts
-// that for every cancelled pair the live target register is bit-identical just
-// before G1 and just before G2 (so the XOR'd contribution is provably equal) and
-// that no intervening op touched the shared qubits.
-
-/// One self-inverse CCX-pair cancellation: both ops at the given indices are
-/// dropped.
 #[derive(Clone, Copy, Debug)]
 struct PairKill {
     first: usize,
     second: usize,
 }
 
-/// Forward scan that finds sound adjacent-in-dependency self-inverse CCX pairs.
-/// Returns the list of (first,second) index pairs to drop and the count.
-fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
-    // Monotonic op index doubles as a timestamp. For each qubit we record the
-    // last index that WROTE it and the last that READ it; for each bit the last
-    // index that WROTE it. A pending CCX recorded at index `p` survives as a
-    // cancellation candidate only while its operands' last-touch stamps stay <=p.
-    let mut wlast_q = vec![usize::MAX; num_q]; // MAX sentinel = "written at init"? no
+#[derive(Clone, Copy)]
+struct WEvent {
+    idx: u32,
+    src: u32,
+    cond: u32,
+    epoch: u32,
+}
+
+#[inline]
+fn wev_written_between(ev: &[WEvent], lo: u32, hi: u32) -> bool {
+    if hi <= lo + 1 {
+        return false;
+    }
+    let start = ev.partition_point(|e| e.idx <= lo);
+    start < ev.len() && ev[start].idx < hi
+}
+
+#[inline]
+fn bit_written_between(ev: &[u32], lo: u32, hi: u32) -> bool {
+    if hi <= lo + 1 {
+        return false;
+    }
+    let start = ev.partition_point(|&x| x <= lo);
+    start < ev.len() && ev[start] < hi
+}
+
+fn control_net_restored(
+    ctrl: u64,
+    p_idx: usize,
+    cur_epoch: u64,
+    cond_stack: &[u64],
+    wev_q: &[Vec<WEvent>],
+    wev_b: &[Vec<u32>],
+) -> bool {
+    let events = &wev_q[ctrl as usize];
+    let p = p_idx as u32;
+    let start = events.partition_point(|e| e.idx <= p);
+    let suffix = &events[start..];
+    if suffix.is_empty() {
+        return true;
+    }
+    let mut stack: Vec<WEvent> = Vec::new();
+    for &e in suffix {
+        if e.src != u32::MAX {
+            if let Some(&top) = stack.last() {
+
+                let same = top.src == e.src
+                    && top.cond == e.cond
+                    && top.epoch == e.epoch
+                    && e.epoch as u64 == cur_epoch;
+                if same {
+                    let src_ok =
+                        !wev_written_between(&wev_q[e.src as usize], top.idx, e.idx);
+                    let cond_ok = e.cond == u32::MAX
+                        || !bit_written_between(&wev_b[e.cond as usize], top.idx, e.idx);
+                    let stack_ok = cond_stack.iter().all(|&sb| {
+                        sb == u64::MAX
+                            || !bit_written_between(&wev_b[sb as usize], top.idx, e.idx)
+                    });
+                    if src_ok && cond_ok && stack_ok {
+                        stack.pop();
+                        continue;
+                    }
+                }
+            }
+        }
+        stack.push(e);
+    }
+    stack.is_empty()
+}
+
+fn find_inverse_pairs(
+    ops: &[Op],
+    num_q: usize,
+    num_b: usize,
+    straddle: bool,
+) -> (Vec<PairKill>, usize) {
+
+    let mut wlast_q = vec![usize::MAX; num_q];
     let mut rlast_q = vec![usize::MAX; num_q];
     let mut wlast_b = vec![usize::MAX; num_b];
-    // Use 0 as "never touched"; shift indices by +1 so a real touch is >=1 and
-    // the MAX sentinel is unreachable. Simpler: init to a value that is never a
-    // valid "between" — use a separate "never" marker of usize::MAX meaning the
-    // qubit has not been touched yet, treated as <= any p (touched before all).
+
     for v in wlast_q.iter_mut() { *v = NEVER; }
     for v in rlast_q.iter_mut() { *v = NEVER; }
     for v in wlast_b.iter_mut() { *v = NEVER; }
 
-    // Pending CCX candidate per target qubit: the most recent CCX whose target is
-    // this qubit and which has not yet been touched/invalidated. Keyed by target.
-    // Stored: (index, ctrl_a, ctrl_b sorted, c_condition, cond_epoch).
     #[derive(Clone, Copy)]
     struct Pending {
         idx: usize,
@@ -682,15 +617,24 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
     let mut pending: Vec<Option<Pending>> = vec![None; num_q];
 
     let mut cond_epoch: u64 = 0;
-    // Bit ids currently on the condition stack. The effective condition mask is
-    // (AND of these bits' live values) & c_condition. Even with the epoch
-    // unchanged, a write to any of these bits BETWEEN the pair would change the
-    // mask, so we additionally require none of them was written after `p`.
+
     let mut cond_stack: Vec<u64> = Vec::new();
     let mut killed = vec![false; ops.len()];
     let mut pairs = Vec::new();
 
-    // helper: is stamp s strictly AFTER p? (touched between p and now)
+    let mut wev_q: Vec<Vec<WEvent>> = if straddle {
+        vec![Vec::new(); num_q]
+    } else {
+        Vec::new()
+    };
+    let mut wev_b: Vec<Vec<u32>> = if straddle {
+        vec![Vec::new(); num_b]
+    } else {
+        Vec::new()
+    };
+
+    let mut straddle_extra = 0usize;
+
     #[inline]
     fn touched_after(s: usize, p: usize) -> bool {
         s != NEVER && s > p
@@ -713,43 +657,61 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
                 let (a, b) = if c1 <= c2 { (c1, c2) } else { (c2, c1) };
                 let cb = op.c_condition.0;
 
-                // Try to cancel against a pending CCX on the same target.
                 let mut cancelled = false;
                 if let Some(p) = pending[t as usize] {
                     let same_gate = p.a == a && p.b == b && p.cb == cb;
                     let same_epoch = p.epoch == cond_epoch;
-                    // controls not written between; target not touched between;
-                    // condition bit not written between.
+
                     let ctrls_clean = !touched_after(wlast_q[a as usize], p.idx)
                         && !touched_after(wlast_q[b as usize], p.idx);
+
+                    let ctrls_ok = if ctrls_clean {
+                        true
+                    } else if straddle {
+                        control_net_restored(a, p.idx, cond_epoch, &cond_stack, &wev_q, &wev_b)
+                            && control_net_restored(
+                                b, p.idx, cond_epoch, &cond_stack, &wev_q, &wev_b,
+                            )
+                    } else {
+                        false
+                    };
                     let tgt_clean = !touched_after(wlast_q[t as usize], p.idx)
                         && !touched_after(rlast_q[t as usize], p.idx);
                     let cond_clean = cb == u64::MAX
                         || !touched_after(wlast_b[cb as usize], p.idx);
-                    // No condition-stack bit written between p and i. (same_epoch
-                    // already guarantees the stack membership is identical.)
+
                     let stack_clean = same_epoch
                         && cond_stack
                             .iter()
                             .all(|&sb| sb == u64::MAX || !touched_after(wlast_b[sb as usize], p.idx));
-                    if same_gate && same_epoch && ctrls_clean && tgt_clean && cond_clean && stack_clean {
+                    if same_gate && same_epoch && ctrls_ok && tgt_clean && cond_clean && stack_clean {
                         killed[p.idx] = true;
                         killed[i] = true;
                         pairs.push(PairKill { first: p.idx, second: i });
                         pending[t as usize] = None;
                         cancelled = true;
+                        if !ctrls_clean {
+                            straddle_extra += 1;
+                        }
                     }
                 }
 
                 if !cancelled {
-                    // This CCX reads a,b and writes t. Record touches AND make it
-                    // the new pending candidate for target t.
-                    // (Record touches for the operands as of this op.)
+
                     rlast_q[a as usize] = i;
                     rlast_q[b as usize] = i;
                     wlast_q[t as usize] = i;
                     if cb != u64::MAX {
-                        // condition bit is read, not written — no wlast update.
+
+                    }
+                    if straddle {
+
+                        wev_q[t as usize].push(WEvent {
+                            idx: i as u32,
+                            src: u32::MAX,
+                            cond: u32::MAX,
+                            epoch: cond_epoch as u32,
+                        });
                     }
                     pending[t as usize] = Some(Pending {
                         idx: i,
@@ -759,21 +721,35 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
                         epoch: cond_epoch,
                     });
                 } else {
-                    // Both gates removed. The operands were untouched between, so
-                    // their last-touch stamps remain whatever they were before p
-                    // (the removed pair contributes no surviving touch). Leave the
-                    // stamps as-is; conservative correctness is preserved because
-                    // any future op still sees stamps <= p which is fine.
+
                 }
             }
             OperationType::CX => {
                 rlast_q[op.q_control1.0 as usize] = i;
                 wlast_q[op.q_target.0 as usize] = i;
-                pending[op.q_target.0 as usize] = None; // target overwritten
+                pending[op.q_target.0 as usize] = None;
+                if straddle {
+
+                    wev_q[op.q_target.0 as usize].push(WEvent {
+                        idx: i as u32,
+                        src: op.q_control1.0 as u32,
+                        cond: op.c_condition.0 as u32,
+                        epoch: cond_epoch as u32,
+                    });
+                }
             }
             OperationType::X => {
                 wlast_q[op.q_target.0 as usize] = i;
                 pending[op.q_target.0 as usize] = None;
+                if straddle {
+
+                    wev_q[op.q_target.0 as usize].push(WEvent {
+                        idx: i as u32,
+                        src: u32::MAX,
+                        cond: u32::MAX,
+                        epoch: cond_epoch as u32,
+                    });
+                }
             }
             OperationType::Swap => {
                 let x = op.q_control1.0 as usize;
@@ -782,19 +758,29 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
                 wlast_q[x] = i; wlast_q[y] = i;
                 pending[x] = None;
                 pending[y] = None;
+                if straddle {
+                    wev_q[x].push(WEvent { idx: i as u32, src: u32::MAX, cond: u32::MAX, epoch: cond_epoch as u32 });
+                    wev_q[y].push(WEvent { idx: i as u32, src: u32::MAX, cond: u32::MAX, epoch: cond_epoch as u32 });
+                }
             }
             OperationType::R => {
                 wlast_q[op.q_target.0 as usize] = i;
                 pending[op.q_target.0 as usize] = None;
+                if straddle {
+                    wev_q[op.q_target.0 as usize].push(WEvent { idx: i as u32, src: u32::MAX, cond: u32::MAX, epoch: cond_epoch as u32 });
+                }
             }
             OperationType::Hmr => {
                 wlast_q[op.q_target.0 as usize] = i;
                 if op.c_target.0 != u64::MAX { wlast_b[op.c_target.0 as usize] = i; }
                 pending[op.q_target.0 as usize] = None;
+                if straddle {
+                    wev_q[op.q_target.0 as usize].push(WEvent { idx: i as u32, src: u32::MAX, cond: u32::MAX, epoch: cond_epoch as u32 });
+                    if op.c_target.0 != u64::MAX { wev_b[op.c_target.0 as usize].push(i as u32); }
+                }
             }
             OperationType::CCZ => {
-                // Reads three qubits (phase only, no write). Reads invalidate the
-                // target-untouched requirement, so mark all three as read.
+
                 rlast_q[op.q_control1.0 as usize] = i;
                 rlast_q[op.q_control2.0 as usize] = i;
                 rlast_q[op.q_target.0 as usize] = i;
@@ -810,6 +796,9 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
             | OperationType::BitStore0
             | OperationType::BitStore1 => {
                 if op.c_target.0 != u64::MAX { wlast_b[op.c_target.0 as usize] = i; }
+                if straddle && op.c_target.0 != u64::MAX {
+                    wev_b[op.c_target.0 as usize].push(i as u32);
+                }
             }
             OperationType::Neg
             | OperationType::Register
@@ -818,30 +807,19 @@ fn find_inverse_pairs(ops: &[Op], num_q: usize, num_b: usize) -> Vec<PairKill> {
         }
     }
 
-    pairs
+    (pairs, straddle_extra)
 }
 
-/// Public entry: run the sound const-prop peephole over `ops`.
-///
-/// `input_qubits` = the qubit ids that hold per-shot input data (reg0 + reg1);
-/// every other qubit id is a |0>-seeded ancilla.
 pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
     let (num_q, num_b) = dims(&ops);
     let nonces_verify = std::env::var("CONSTPROP_VERIFY")
         .ok()
         .and_then(|s| s.parse::<usize>().ok());
-    // When set, skip the (already board-verified) first-wave const-prop
-    // verification and only empirically check the NEW transforms: cascade
-    // const-prop drops (iter>=2) and all affine relations. Lets a focused
-    // verification run quickly.
+
     let verify_new_only = std::env::var("CONSTPROP_VERIFY_NEW_ONLY").ok().as_deref() == Some("1");
 
-    // Fixpoint loop: const-prop, then inverse-pair cancellation. Either pass can
-    // expose new opportunities for the other (a dropped/folded gate can make a
-    // downstream qubit provably constant; removing a CCX can bring an earlier and
-    // later CCX into cancellation adjacency). Iterate until a full sweep makes no
-    // transform. Each individual pass is sound on its current input by
-    // construction, so the composition is sound.
+    let straddle = std::env::var("TLM_CONSTPROP_STRADDLE").ok().as_deref() == Some("1");
+
     let mut cur_sites = crate::point_add::take_op_site_trace_for_constprop(ops.len());
     let mut cur = ops;
     let mut iter = 0usize;
@@ -851,6 +829,7 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
     let mut tot_pairs = 0usize;
     let mut tot_aff_drop = 0usize;
     let mut tot_aff_fold = 0usize;
+    let mut tot_straddle_extra = 0usize;
     let affine_disabled = std::env::var("CONSTPROP_AFFINE_DISABLE").ok().as_deref() == Some("1");
     let max_iters = std::env::var("CONSTPROP_MAX_ITERS")
         .ok()
@@ -860,13 +839,8 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
     loop {
         iter += 1;
 
-        // ── const-prop pass ──
         let (mut decisions, stats) = analyze(&cur, num_q, num_b, input_qubits);
 
-        // Empirical corroboration of the const-prop decisions on the CURRENT
-        // (this-iteration input) stream, run on every iteration that produces any
-        // transform — so cascade drops exposed by later iterations are verified
-        // too, not just the first wave.
         if let Some(nonces) = nonces_verify {
             if stats.dropped + stats.folded_cx + stats.folded_x > 0
                 && !(verify_new_only && iter == 1)
@@ -904,11 +878,16 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         }
         cur = apply_decisions(&cur, &decisions);
 
-        // ── inverse-pair cancellation pass ──
         let (nq2, nb2) = dims(&cur);
-        let pairs = find_inverse_pairs(&cur, nq2, nb2);
+        let (pairs, straddle_extra) = find_inverse_pairs(&cur, nq2, nb2, straddle);
+        tot_straddle_extra += straddle_extra;
+        if straddle && straddle_extra > 0 {
+            eprintln!(
+                "CONSTPROP_STRADDLE iter={} extra_pairs={} (extra toffoli removed = {})",
+                iter, straddle_extra, 2 * straddle_extra
+            );
+        }
 
-        // Empirical corroboration of the pair cancellations on this stream.
         if let Some(nonces) = nonces_verify {
             if !pairs.is_empty() {
                 let bad = verify_inverse_pairs(&cur, &pairs, nq2, nb2, nonces);
@@ -949,14 +928,12 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
             cur = out;
         }
 
-        // ── affine-relation pass (equal/complementary controls) ──
         let (mut aff_drop, mut aff_fold) = (0usize, 0usize);
         if !affine_disabled {
             let (nq3, nb3) = dims(&cur);
             let (mut adec, fold_eq, drop_comp) =
                 analyze_affine(&cur, nq3, nb3, input_qubits);
 
-            // Empirical corroboration of the affine relationship claims.
             if let Some(nonces) = nonces_verify {
                 if fold_eq + drop_comp > 0 {
                     let surviving =
@@ -986,7 +963,6 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
                 }
             }
 
-            // Recount after any reversion and rewrite.
             for d in &adec {
                 match d {
                     Decision::DropComplementCtrls { .. } => aff_drop += 1,
@@ -1038,6 +1014,12 @@ pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
         tot_aff_fold,
         tot_dropped + tot_folded_cx + tot_folded_x + 2 * tot_pairs + tot_aff_drop + tot_aff_fold,
     );
+    if straddle {
+        eprintln!(
+            "CONSTPROP_STRADDLE TOTAL straddle_extra_pairs={} (of inverse_pairs={})",
+            tot_straddle_extra, tot_pairs
+        );
+    }
 
     if let Some(sites) = cur_sites {
         crate::point_add::set_op_site_trace_from_constprop(sites);
@@ -1064,14 +1046,6 @@ fn dims(ops: &[Op]) -> (usize, usize) {
     (nq as usize, nb as usize)
 }
 
-/// Empirically verify, over `nonces` diverse Fiat-Shamir seeds x 9024 shots,
-/// that every transformed gate's claimed-constant control(s) are ALWAYS that
-/// constant. Returns a per-op bool: true = the static claim held on all inputs
-/// (or the op was Keep), false = a counter-example was observed (UNSOUND claim).
-///
-/// We re-derive the verifier's exact input distribution and run the *original*
-/// op-stream through the real `Simulator`, snapshotting the relevant qubit
-/// register just before each flagged op.
 fn verify_control_constancy(
     ops: &[Op],
     decisions: &[Decision],
@@ -1097,8 +1071,6 @@ fn verify_control_constancy(
     let (_tq, _tb, _nr, regs) = analyze_ops(ops.iter());
     assert_eq!(regs.len(), 4, "expected 4 IO registers");
 
-    // Indices of flagged ops and the control qubit(s) + claimed value to verify.
-    // claim: Vec<(qubit, expected_val_bit)>  (expected 0 or 1)
     let mut flagged: Vec<(usize, Vec<(QubitId, u64)>)> = Vec::new();
     for (i, d) in decisions.iter().enumerate() {
         match *d {
@@ -1106,8 +1078,7 @@ fn verify_control_constancy(
             Decision::DropZeroCtrl { ctrl } => flagged.push((i, vec![(ctrl, 0)])),
             Decision::FoldCx { one_ctrl, .. } => flagged.push((i, vec![(one_ctrl, 1)])),
             Decision::FoldX { c1, c2 } => flagged.push((i, vec![(c1, 1), (c2, 1)])),
-            // Affine-relation decisions are verified separately by
-            // verify_affine_relations; not produced for this verifier.
+
             Decision::DropComplementCtrls { .. } | Decision::FoldEqualCtrls { .. } => {}
         }
     }
@@ -1116,8 +1087,6 @@ fn verify_control_constancy(
         return ok;
     }
 
-    // Flat op-index -> position-in-`flagged` (u32::MAX = not flagged). A flat
-    // array index is far cheaper than a HashMap on the 10.7M-op hot path.
     let mut flag_pos = vec![u32::MAX; ops.len()];
     for (p, (i, _)) in flagged.iter().enumerate() {
         flag_pos[*i] = p as u32;
@@ -1127,11 +1096,11 @@ fn verify_control_constancy(
     const BATCH: usize = 64;
 
     for nonce in 0..nonces {
-        // Diverse seed per nonce: mix the official domain tag with the nonce.
+
         let mut hasher = Shake256::default();
         hasher.update(b"quantum_ecc-fiat-shamir-v2");
         hasher.update(&(ops.len() as u64).to_le_bytes());
-        // Perturb with nonce so each run draws a different input population.
+
         hasher.update(b"CONSTPROP_VERIFY");
         hasher.update(&(nonce as u64).to_le_bytes());
         let mut xof = hasher.finalize_xof();
@@ -1168,8 +1137,6 @@ fn verify_control_constancy(
             }
             let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
 
-            // Step the simulator op by op, checking claimed controls just before
-            // each flagged op executes.
             step_and_check(&mut sim, ops, &flag_pos, &flagged, &mut ok, cond_mask);
         }
         let bad = ok.iter().filter(|b| !**b).count();
@@ -1178,12 +1145,10 @@ fn verify_control_constancy(
             nonce + 1, nonces, n, bad
         );
     }
-    let _ = QubitOrBit::Bit; // silence potential unused import lints
+    let _ = QubitOrBit::Bit;
     ok
 }
 
-/// Single-batch op-by-op driver that mirrors `Simulator::apply_iter` exactly,
-/// but snapshots the claimed control qubit values just before each flagged op.
 fn step_and_check<R: sha3::digest::XofReader>(
     sim: &mut crate::sim::Simulator<R>,
     ops: &[Op],
@@ -1192,23 +1157,22 @@ fn step_and_check<R: sha3::digest::XofReader>(
     ok: &mut [bool],
     cond_mask: u64,
 ) {
-    // We cannot reuse apply_iter (it consumes the whole iter), so replicate the
-    // condition-stack machinery and check before each op.
+
     let mut condition_stack: Vec<u64> = Vec::new();
     let mut current_base_condition = u64::MAX;
 
     for (idx, op) in ops.iter().enumerate() {
-        // Check claim BEFORE executing this op.
+
         let fp = flag_pos[idx];
         if fp != u32::MAX {
             let p = fp as usize;
             for &(qid, expected) in &flagged[p].1 {
                 let live = sim.qubit(qid) & cond_mask;
                 let claim_ok = if expected == 0 {
-                    // claimed Zero: no live shot has the bit set.
+
                     live == 0
                 } else {
-                    // claimed One: every live shot has the bit set.
+
                     live == cond_mask
                 };
                 if !claim_ok {
@@ -1217,7 +1181,6 @@ fn step_and_check<R: sha3::digest::XofReader>(
             }
         }
 
-        // Now replicate the simulator step for this single op.
         let mut cond = current_base_condition;
         if op.c_condition != NO_BIT {
             cond &= sim.bit(op.c_condition);
@@ -1353,15 +1316,6 @@ mod affine_transfer_tests {
     }
 }
 
-/// Empirically corroborate inverse-pair cancellations over `nonces` x 9024 shots.
-/// For each cancelled pair (G1@first, G2@second) we replay the ORIGINAL stream
-/// and assert, across all live shots, that:
-///   (a) the XOR contribution `cond & q[a] & q[b]` is bit-identical at G1 and G2
-///       (so the two CCX truly XOR the same value into the target), AND
-///   (b) the target register q[t] is bit-identical just before G1 and just before
-///       G2 (so no intervening op observed a half-applied target).
-/// Either failing on ANY shot marks the pair unsound. Returns the count of
-/// unsound pairs (must be 0).
 fn verify_inverse_pairs(
     ops: &[Op],
     pairs: &[PairKill],
@@ -1387,9 +1341,7 @@ fn verify_inverse_pairs(
     let (_tq, _tb, _nr, regs) = analyze_ops(ops.iter());
     assert_eq!(regs.len(), 4, "expected 4 IO registers");
 
-    // For each op index that is a pair endpoint, record (pair_pos, is_first).
-    // We snapshot the pair's contribution & target at each endpoint.
-    let mut endpoint: Vec<u32> = vec![u32::MAX; ops.len()]; // pair index
+    let mut endpoint: Vec<u32> = vec![u32::MAX; ops.len()];
     let mut is_first_at: Vec<bool> = vec![false; ops.len()];
     for (p, pk) in pairs.iter().enumerate() {
         endpoint[pk.first] = p as u32;
@@ -1398,7 +1350,6 @@ fn verify_inverse_pairs(
         is_first_at[pk.second] = false;
     }
 
-    // Per-pair accumulated mismatch flag across all batches/nonces.
     let mut bad_pair = vec![false; pairs.len()];
 
     const NUM_TESTS: usize = 9024;
@@ -1432,8 +1383,7 @@ fn verify_inverse_pairs(
         let num_batches = (n + BATCH - 1) / BATCH;
 
         let mut sim = Simulator::new(num_q, num_b, &mut xof);
-        // Per-pair snapshot of the FIRST endpoint, valid within the current
-        // batch: (contribution mask, target value). Indexed by pair position.
+
         let mut snap_contrib = vec![0u64; pairs.len()];
         let mut snap_tgt = vec![0u64; pairs.len()];
         let mut snap_seen = vec![false; pairs.len()];
@@ -1474,9 +1424,6 @@ fn verify_inverse_pairs(
     bad_pair.iter().filter(|b| **b).count()
 }
 
-/// Single-batch driver mirroring `Simulator::apply_iter`, snapshotting each
-/// inverse pair's contribution `cond & q[a] & q[b]` and target value at its two
-/// endpoints and flagging any mismatch (across live shots) into `bad_pair`.
 fn step_and_check_pairs<R: sha3::digest::XofReader>(
     sim: &mut crate::sim::Simulator<R>,
     ops: &[Op],
@@ -1493,11 +1440,11 @@ fn step_and_check_pairs<R: sha3::digest::XofReader>(
     let mut current_base_condition = u64::MAX;
 
     for (idx, op) in ops.iter().enumerate() {
-        // Snapshot/compare BEFORE executing this op if it is a pair endpoint.
+
         let pp = endpoint[idx];
         if pp != u32::MAX {
             let p = pp as usize;
-            // Recompute the effective condition mask for this op.
+
             let mut cond = current_base_condition;
             if op.c_condition != NO_BIT {
                 cond &= sim.bit(op.c_condition);
@@ -1509,20 +1456,19 @@ fn step_and_check_pairs<R: sha3::digest::XofReader>(
             let tgt = sim.qubit(t) & cond_mask;
             if is_first_at[idx] {
                 snap_contrib[p] = contrib;
-                snap_tgt[p] = tgt;
+
+                snap_tgt[p] = tgt ^ contrib;
                 snap_seen[p] = true;
             } else if snap_seen[p] {
                 if contrib != snap_contrib[p] || tgt != snap_tgt[p] {
                     bad_pair[p] = true;
                 }
             } else {
-                // Second endpoint seen without a first in this batch: should not
-                // happen (both are in the same stream); flag conservatively.
+
                 bad_pair[p] = true;
             }
         }
 
-        // Replicate the simulator step for this op.
         let mut cond = current_base_condition;
         if op.c_condition != NO_BIT {
             cond &= sim.bit(op.c_condition);
@@ -1605,11 +1551,6 @@ fn step_and_check_pairs<R: sha3::digest::XofReader>(
     let _ = pairs;
 }
 
-/// Empirically corroborate affine-relation claims over `nonces` x 9024 shots.
-/// For each flagged CCX, replays the ORIGINAL stream and asserts that, across all
-/// live shots, the two controls are ALWAYS equal (FoldEqualCtrls) or ALWAYS
-/// complementary (DropComplementCtrls). Returns a per-op bool (true = claim held
-/// on all inputs, or Keep). Any false marks an UNSOUND claim.
 fn verify_affine_relations(
     ops: &[Op],
     decisions: &[Decision],
@@ -1635,8 +1576,6 @@ fn verify_affine_relations(
     let (_tq, _tb, _nr, regs) = analyze_ops(ops.iter());
     assert_eq!(regs.len(), 4, "expected 4 IO registers");
 
-    // For each flagged op: (a, b, want_equal). want_equal=true -> assert a==b on
-    // every live shot; false -> assert a==NOT b (a^b all-ones) on every live shot.
     let mut want_equal = vec![false; ops.len()];
     let mut flagged_idx: Vec<usize> = Vec::new();
     let mut is_flagged = vec![false; ops.len()];
@@ -1720,8 +1659,6 @@ fn verify_affine_relations(
     ok
 }
 
-/// Single-batch driver: checks affine relationship claims just before each
-/// flagged CCX executes, then replicates the simulator step.
 fn step_and_check_affine<R: sha3::digest::XofReader>(
     sim: &mut crate::sim::Simulator<R>,
     ops: &[Op],
@@ -1735,8 +1672,7 @@ fn step_and_check_affine<R: sha3::digest::XofReader>(
 
     for (idx, op) in ops.iter().enumerate() {
         if is_flagged[idx] {
-            // Check across ALL shots (the relationship is claimed to hold on every
-            // shot regardless of the gate's own condition).
+
             let va = sim.qubit(op.q_control1) & cond_mask;
             let vb = sim.qubit(op.q_control2) & cond_mask;
             let claim_ok = if want_equal[idx] {

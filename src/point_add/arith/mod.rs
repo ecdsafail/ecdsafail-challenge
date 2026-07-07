@@ -1,5 +1,4 @@
-//! Arithmetic primitive layer: ripple-carry adders, n-bit add/sub,
-//! constant arithmetic, comparators, modular reduction, and multiplication.
+
 use super::*;
 
 mod adder;
