@@ -1912,7 +1912,14 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_FFG_INVERSE_TOP29_MAX_CALL", "180");
     set_default_env("TLM_FUSED_CLEAN_FOLD_SKIP_TOP31", "1");
     set_default_env("TLM_GIDNEY_SKIP_SMALL_RESIDUAL_DEAD", "1");
-    let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
+
+    let mut ops = if std::env::var("USE_DIALOG_ROUTE").ok().as_deref() == Some("1") {
+        let builder = build_builder();
+        let ops = builder.ops;
+        ops
+    } else {
+        trailmix_ludicrous::build_trailmix_ludicrous_ops()
+    };
 
     if let Ok(k) = std::env::var("TLM_SEED_PERTURB").unwrap_or_default().parse::<usize>() {
         for _ in 0..k {
@@ -1931,6 +1938,7 @@ pub fn build() -> Vec<Op> {
         .ok()
         .as_deref()
         == Some("1")
+        || std::env::var("POINT_ADD_COUNT_ONLY").ok().as_deref() == Some("1")
     {
         return ops;
     }

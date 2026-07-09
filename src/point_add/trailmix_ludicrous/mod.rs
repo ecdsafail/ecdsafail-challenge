@@ -336,6 +336,10 @@ fn route_swaps(src: &[QubitId], dst: &[QubitId]) -> Vec<(QubitId, QubitId)> {
 }
 
 fn install_q1153_submission_defaults() {
+    // Use set_default_env-style logic so ALL defaults respect existing env vars,
+    // not just DIALOG_TAIL_NONCE and TLM_TARGET_Q. This enables tuning
+    // TLM_FFG_MAX_G, TLM_FOLD_CHUNK_ZERO_CIN, TLM_APPLY_ADD_SKIP_LASTK from the
+    // environment.
     for (name, value) in [
         ("TLM_TARGET_Q", "1152"),
         ("TLM_FOLD_CHUNK_ZERO_CIN", "1"),
@@ -343,12 +347,7 @@ fn install_q1153_submission_defaults() {
         ("TLM_APPLY_ADD_SKIP_LASTK", "1"),
         ("DIALOG_TAIL_NONCE", "2430844"),
     ] {
-
-        if (name == "DIALOG_TAIL_NONCE" || name == "TLM_TARGET_Q")
-            && std::env::var_os(name).is_some()
-        {
-            continue;
-        } else {
+        if std::env::var_os(name).is_none() {
             std::env::set_var(name, value);
         }
     }
@@ -356,7 +355,11 @@ fn install_q1153_submission_defaults() {
 
 pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
     install_q1153_submission_defaults();
-    let mut circ = B::new();
+    let mut circ = if std::env::var("POINT_ADD_COUNT_ONLY").ok().as_deref() == Some("1") {
+        B::new_count_only()
+    } else {
+        B::new()
+    };
     load_schedule();
 
     let x2 = circ.alloc_qubits(N);
@@ -489,9 +492,20 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         eprintln!("TLM_CCX_TOTAL {grand} phases={}", v.len());
     }
 
+    if circ.count_only {
+        let ccx = circ.counted_kind_ops[crate::circuit::OperationType::CCX as usize]
+            + circ.counted_kind_ops[crate::circuit::OperationType::CCZ as usize];
+        eprintln!(
+            "COUNT_ONLY ccx={} peak_qubits={} total_ops={}",
+            ccx,
+            circ.peak_qubits,
+            circ.counted_ops
+        );
+    }
+
     let ops = std::mem::take(&mut circ.ops);
 
-    if std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
+    if circ.count_only || std::env::var("CONSTPROP_DISABLE").ok().as_deref() == Some("1") {
         return ops;
     }
     let mut input_qubits = x2_init.clone();
