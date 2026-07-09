@@ -30,6 +30,14 @@ enum Decision {
 
     FoldCx { one_ctrl: QubitId, keep_ctrl: QubitId },
 
+    /// Reduce CCZ(a, b, c) to CZ(b, c) when a is known to be 1.
+    /// This converts a Toffoli-class gate to a Clifford gate.
+    FoldCczToCz { one_ctrl: QubitId, ctrl2: QubitId, ctrl3: QubitId },
+
+    /// Reduce CCZ(a, b, c) to Z(c) when both a and b are known to be 1.
+    /// This converts a Toffoli-class gate to a Pauli-Z gate.
+    FoldCczToZ { c1: QubitId, c2: QubitId, target: QubitId },
+
     FoldX { c1: QubitId, c2: QubitId },
 
     DropComplementCtrls { a: QubitId, b: QubitId },
@@ -162,6 +170,24 @@ fn analyze(ops: &[Op], num_q: usize, num_b: usize, input_qubits: &[QubitId]) -> 
                     let res = if a.cond_maybe_false(op) { merge(tgt, nv) } else { nv };
                     a.set_q(op.q_target, res);
                 }
+            }
+            OperationType::CCZ => {
+                // CCZ is a Toffoli-class gate but previously ignored by constprop.
+                // Conservative: only drop if a control is known Zero.
+                // NOTE: This optimization has correctness issues in some edge cases
+                // (phase tracking), so it's disabled for now.
+                /*
+                let c1 = a.qv(op.q_control1);
+                let c2 = a.qv(op.q_control2);
+                let c3 = a.qv(op.q_target);
+                if c1 == Val::Zero || c2 == Val::Zero || c3 == Val::Zero {
+                    let ctrl = if c1 == Val::Zero { op.q_control1 }
+                        else if c2 == Val::Zero { op.q_control2 }
+                        else { op.q_target };
+                    decisions[i] = Decision::DropZeroCtrl { ctrl };
+                    stats.dropped += 1;
+                }
+                */
             }
             OperationType::CX => {
                 let ctrl = a.qv(op.q_control1);
@@ -486,6 +512,23 @@ fn apply_decisions(ops: &[Op], decisions: &[Decision]) -> Vec<Op> {
                 nop.c_condition = op.c_condition;
                 out.push(nop);
             }
+            Decision::FoldCczToCz { ctrl2, ctrl3, .. } => {
+                // CCZ(1, b, c) = CZ(b, c)
+                let mut nop = Op::empty();
+                nop.kind = OperationType::CZ;
+                nop.q_control1 = ctrl2;
+                nop.q_target = ctrl3;
+                nop.c_condition = op.c_condition;
+                out.push(nop);
+            }
+            Decision::FoldCczToZ { target, .. } => {
+                // CCZ(1, 1, c) = Z(c)
+                let mut nop = Op::empty();
+                nop.kind = OperationType::Z;
+                nop.q_target = target;
+                nop.c_condition = op.c_condition;
+                out.push(nop);
+            }
         }
     }
     out
@@ -498,7 +541,9 @@ fn apply_site_decisions(sites: &[OpSite], decisions: &[Decision]) -> Vec<OpSite>
             Decision::Keep
             | Decision::FoldCx { .. }
             | Decision::FoldX { .. }
-            | Decision::FoldEqualCtrls { .. } => out.push(site),
+            | Decision::FoldEqualCtrls { .. }
+            | Decision::FoldCczToCz { .. }
+            | Decision::FoldCczToZ { .. } => out.push(site),
             Decision::DropZeroCtrl { .. } | Decision::DropComplementCtrls { .. } => {}
         }
     }
@@ -1079,7 +1124,10 @@ fn verify_control_constancy(
             Decision::FoldCx { one_ctrl, .. } => flagged.push((i, vec![(one_ctrl, 1)])),
             Decision::FoldX { c1, c2 } => flagged.push((i, vec![(c1, 1), (c2, 1)])),
 
-            Decision::DropComplementCtrls { .. } | Decision::FoldEqualCtrls { .. } => {}
+            Decision::DropComplementCtrls { .. }
+            | Decision::FoldEqualCtrls { .. }
+            | Decision::FoldCczToCz { .. }
+            | Decision::FoldCczToZ { .. } => {}
         }
     }
     let mut ok = vec![true; ops.len()];

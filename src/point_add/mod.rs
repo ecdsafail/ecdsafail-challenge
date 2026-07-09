@@ -5,7 +5,7 @@ use sha3::{
     Shake256,
 };
 
-use crate::circuit::{analyze_ops, BitId, Op, OperationType, QubitId, QubitOrBit, RegisterId};
+use crate::circuit::{analyze_ops, BitId, NO_BIT, Op, OperationType, QubitId, QubitOrBit, RegisterId};
 use crate::sim::Simulator;
 use crate::weierstrass_elliptic_curve::WeierstrassEllipticCurve;
 
@@ -1912,7 +1912,14 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_FFG_INVERSE_TOP29_MAX_CALL", "180");
     set_default_env("TLM_FUSED_CLEAN_FOLD_SKIP_TOP31", "1");
     set_default_env("TLM_GIDNEY_SKIP_SMALL_RESIDUAL_DEAD", "1");
-    let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
+
+    let mut ops = if std::env::var("USE_DIALOG_ROUTE").ok().as_deref() == Some("1") {
+        let builder = build_builder();
+        let ops = builder.ops;
+        ops
+    } else {
+        trailmix_ludicrous::build_trailmix_ludicrous_ops()
+    };
 
     if let Ok(k) = std::env::var("TLM_SEED_PERTURB").unwrap_or_default().parse::<usize>() {
         for _ in 0..k {
@@ -1931,6 +1938,7 @@ pub fn build() -> Vec<Op> {
         .ok()
         .as_deref()
         == Some("1")
+        || std::env::var("POINT_ADD_COUNT_ONLY").ok().as_deref() == Some("1")
     {
         return ops;
     }
@@ -1961,7 +1969,87 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
+
+    // Second constprop pass: the fanout pass may have created new
+    // constant-foldable patterns (e.g., by merging/quasi-const controls).
+    // Running constprop again can catch these.
+    if std::env::var("CONSTPROP_DISABLE").ok().as_deref() != Some("1") {
+        let input_qubits: Vec<QubitId> = (0..512).map(QubitId).collect();
+        let pre_ops = ops.len();
+        ops = trailmix_ludicrous::constprop::run(ops, &input_qubits);
+        if ops.len() != pre_ops {
+            eprintln!(
+                "SECOND_CONSTPROP: {} -> {} ops (removed {})",
+                pre_ops,
+                ops.len(),
+                pre_ops - ops.len()
+            );
+        }
+    }
+
+    // Adjacent identical Toffoli cancellation pass.
+    // CCX and CCZ are self-inverse, so two consecutive identical gates cancel.
+    // This catches patterns missed by constprop (which only handles X/CX folding)
+    // and single_ccx_fanout (which targets fanout rewriting specifically).
+    let mut cancel_passes = 0usize;
+    loop {
+        let mut removed = 0usize;
+        let mut next: Vec<Op> = Vec::with_capacity(ops.len());
+        let mut i = 0;
+        while i < ops.len() {
+            if i + 1 < ops.len() {
+                let a = &ops[i];
+                let b = &ops[i + 1];
+                if is_self_inverse_gate(&a)
+                    && a.kind == b.kind
+                    && a.c_condition == NO_BIT
+                    && b.c_condition == NO_BIT
+                    && qubits_match_self_inverse(a, b)
+                {
+                    // Cancel the pair
+                    removed += 2;
+                    i += 2;
+                    continue;
+                }
+            }
+            next.push(ops[i]);
+            i += 1;
+        }
+        if removed == 0 {
+            break;
+        }
+        ops = next;
+        cancel_passes += 1;
+        eprintln!("CCX_CANCEL: pass={} removed={}", cancel_passes, removed);
+    }
+    if cancel_passes > 0 {
+        eprintln!("CCX_CANCEL: TOTAL passes={} removed={}", cancel_passes, ops.len());
+    }
+
     ops
+}
+
+fn is_self_inverse_gate(op: &Op) -> bool {
+    matches!(
+        op.kind,
+        OperationType::CCX | OperationType::CCZ | OperationType::Swap
+    )
+}
+
+fn qubits_match_self_inverse(a: &Op, b: &Op) -> bool {
+    match a.kind {
+        // CCX/CCZ: require exact match (conservative)
+        OperationType::CCX | OperationType::CCZ => {
+            a.q_control1 == b.q_control1
+                && a.q_control2 == b.q_control2
+                && a.q_target == b.q_target
+        }
+        // SWAP: exact match only (a,b) followed by (a,b)
+        OperationType::Swap => {
+            a.q_control1 == b.q_control1 && a.q_target == b.q_target
+        }
+        _ => false,
+    }
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
