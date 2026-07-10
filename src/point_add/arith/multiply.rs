@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[allow(dead_code)]
@@ -42,7 +41,12 @@ pub(crate) fn mod_mul_write_into_zero_acc_schoolbook_lowq(
     b.free_vec(&tmp_ext);
 }
 
-pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
+pub(crate) fn controlled_add_subtract_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+) {
     let n = x.len();
     debug_assert_eq!(acc.len(), n + 1);
 
@@ -70,7 +74,12 @@ pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[Qubi
     b.free(pad);
 }
 
-pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
+pub(crate) fn controlled_add_subtract_lowq_inverse(
+    b: &mut B,
+    x: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+) {
     let n = x.len();
     debug_assert_eq!(acc.len(), n + 1);
 
@@ -98,7 +107,12 @@ pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc
     b.free(pad);
 }
 
-pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: &[QubitId]) {
+pub(crate) fn schoolbook_mul_into_addsub_lowq(
+    b: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
     let n = x.len();
     debug_assert_eq!(y.len(), n);
     debug_assert_eq!(tmp_ext.len(), 2 * n);
@@ -218,7 +232,12 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
     b.free(low);
 }
 
-pub(crate) fn karatsuba_half_sum_compute(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
+pub(crate) fn karatsuba_half_sum_compute(
+    b: &mut B,
+    lo: &[QubitId],
+    hi: &[QubitId],
+    acc: &[QubitId],
+) {
     let h = lo.len();
     debug_assert_eq!(h, hi.len());
     debug_assert_eq!(acc.len(), h + 1);
@@ -232,7 +251,12 @@ pub(crate) fn karatsuba_half_sum_compute(b: &mut B, lo: &[QubitId], hi: &[QubitI
     b.free(hi_pad);
 }
 
-pub(crate) fn karatsuba_half_sum_uncompute(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
+pub(crate) fn karatsuba_half_sum_uncompute(
+    b: &mut B,
+    lo: &[QubitId],
+    hi: &[QubitId],
+    acc: &[QubitId],
+) {
     let h = lo.len();
     let hi_pad = b.alloc_qubit();
     let mut hi_ext = hi.to_vec();
@@ -248,7 +272,6 @@ pub(crate) fn schoolbook_square_symmetric(b: &mut B, x: &[QubitId], tmp_ext: &[Q
     let n = x.len();
     debug_assert_eq!(tmp_ext.len(), 2 * n);
     for i in 0..n {
-
         let width = if i == n - 1 { 1 } else { n - i + 1 };
         let num_cross = if i + 1 < n { n - i - 1 } else { 0 };
 
@@ -332,7 +355,11 @@ pub(crate) fn schoolbook_square_symmetric_lowq(b: &mut B, x: &[QubitId], tmp_ext
     }
 }
 
-pub(crate) fn schoolbook_square_symmetric_lowq_inverse(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
+pub(crate) fn schoolbook_square_symmetric_lowq_inverse(
+    b: &mut B,
+    x: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
     let n = x.len();
     for i in (0..n).rev() {
         let width = if i == n - 1 { 1 } else { n - i + 1 };
@@ -381,7 +408,6 @@ pub(crate) fn schoolbook_square_symmetric_hosted(
         }
         let slice: Vec<QubitId> = tmp_ext[2 * i..2 * i + width + 1].to_vec();
         if square_selfhost_safe_lane_reuse_enabled() {
-
             assert!(host.len() > width);
             cuccaro_add_fast_low_to_ext_borrowed_carries(
                 b,
@@ -521,11 +547,7 @@ fn square_cleanup_direction(raw: &str) -> Option<bool> {
     }
 }
 
-fn square_row_window_clean_compare_bits(
-    row: usize,
-    window: usize,
-    reverse: bool,
-) -> usize {
+fn square_row_window_clean_compare_bits(row: usize, window: usize, reverse: bool) -> usize {
     let default_bits = std::env::var("SQUARE_ROW_WINDOW_CLEAN_COMPARE_BITS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
@@ -580,7 +602,6 @@ fn square_row_bit_set(b: &mut B, x: &[QubitId], i: usize, j: usize, t: QubitId) 
     if j == 0 {
         b.cx(x[i], t);
     } else if j == 1 {
-
     } else {
         b.ccx(x[i], x[i + 1 + (j - 2)], t);
     }
@@ -590,7 +611,6 @@ fn square_row_bit_clear_hmr(b: &mut B, x: &[QubitId], i: usize, j: usize, t: Qub
     if j == 0 {
         b.cx(x[i], t);
     } else if j == 1 {
-
     } else {
         let m = b.alloc_bit();
         b.hmr(t, m);
@@ -635,10 +655,8 @@ fn square_row_windowed_apply(
     };
 
     let row_top = base + width + 1;
-    let borrow_lane = |b: &mut B, _need: usize| -> Vec<QubitId> {
-
-        tmp_ext[row_top..row_top + _need].to_vec()
-    };
+    let borrow_lane =
+        |b: &mut B, _need: usize| -> Vec<QubitId> { tmp_ext[row_top..row_top + _need].to_vec() };
 
     let mut carry_in = b.alloc_qubit();
     let first_carry = carry_in;
@@ -652,7 +670,6 @@ fn square_row_windowed_apply(
         let mut a_block = seg.clone();
         a_block.push(pad);
         let high = if last {
-
             tmp_ext[base + hi]
         } else {
             b.alloc_qubit()
@@ -668,7 +685,6 @@ fn square_row_windowed_apply(
         }
         b.free(pad);
         if last {
-
         } else {
             couts.push((high, lo, hi, carry_in, wi));
             carry_in = high;
@@ -679,8 +695,7 @@ fn square_row_windowed_apply(
     let slow_cmp = std::env::var("SQUARE_ROW_WINDOW_SLOW_CMP").ok().as_deref() == Some("1");
     let measured_clear = square_row_window_measured_carry_clear_enabled();
     for &(cout, lo, hi, cin, window) in couts.iter().rev() {
-        let clean_cmp_bits =
-            square_row_window_clean_compare_bits(i, window, !forward);
+        let clean_cmp_bits = square_row_window_clean_compare_bits(i, window, !forward);
         let seg_w = hi - lo;
         let trunc_w = if clean_cmp_bits == 0 {
             seg_w
@@ -749,7 +764,6 @@ fn square_row_windowed_apply(
             let seg = build_seg(b, lo, hi);
             let carries = tmp_ext[row_top..row_top + seg_w].to_vec();
             if forward {
-
                 if measured_clear {
                     let phase = b.alloc_bit();
                     b.hmr(cout, phase);
@@ -765,11 +779,15 @@ fn square_row_windowed_apply(
                     cmp_lt_into_with_cin_slow(b, &tmp_ext[base + lo..base + hi], &seg, cin, cout);
                 } else {
                     cmp_lt_into_fast_with_cin_borrowed_carries(
-                        b, &tmp_ext[base + lo..base + hi], &seg, cin, cout, &carries,
+                        b,
+                        &tmp_ext[base + lo..base + hi],
+                        &seg,
+                        cin,
+                        cout,
+                        &carries,
                     );
                 }
             } else {
-
                 for k in 0..seg_w {
                     b.x(seg[k]);
                 }
@@ -788,7 +806,12 @@ fn square_row_windowed_apply(
                     cmp_lt_into_with_cin_slow(b, &seg, &tmp_ext[base + lo..base + hi], cin, cout);
                 } else {
                     cmp_lt_into_fast_with_cin_borrowed_carries(
-                        b, &seg, &tmp_ext[base + lo..base + hi], cin, cout, &carries,
+                        b,
+                        &seg,
+                        &tmp_ext[base + lo..base + hi],
+                        cin,
+                        cout,
+                        &carries,
                     );
                 }
                 for k in 0..seg_w {
@@ -802,7 +825,11 @@ fn square_row_windowed_apply(
     b.free(first_carry);
 }
 
-pub(crate) fn schoolbook_square_symmetric_lowq_selfhosted(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
+pub(crate) fn schoolbook_square_symmetric_lowq_selfhosted(
+    b: &mut B,
+    x: &[QubitId],
+    tmp_ext: &[QubitId],
+) {
     schoolbook_square_symmetric_lowq_selfhosted_with_clean_supplement(b, x, tmp_ext, &[]);
 }
 
@@ -1028,10 +1055,7 @@ fn round84_inplace_quotient_carry_trunc_window() -> usize {
 }
 
 fn round84_inplace_vent_carry_enabled() -> bool {
-    std::env::var("ROUND84_INPLACE_VENT_CARRY")
-        .ok()
-        .as_deref()
-        == Some("1")
+    std::env::var("ROUND84_INPLACE_VENT_CARRY").ok().as_deref() == Some("1")
 }
 
 fn round84_correction_wrap_borrow_quotient_top_enabled() -> bool {
@@ -1109,8 +1133,11 @@ fn round84_update_fold_quotient(
     }
 }
 
-fn round84_compute_quotient_c_product(b: &mut B, quotient: &[QubitId], dirty: &[QubitId]) -> Vec<QubitId> {
-
+fn round84_compute_quotient_c_product(
+    b: &mut B,
+    quotient: &[QubitId],
+    dirty: &[QubitId],
+) -> Vec<QubitId> {
     let q = &quotient[..33];
     let product = b.alloc_qubits(66);
     for i in 0..q.len() {
@@ -1160,7 +1187,12 @@ fn round84_compute_quotient_c_product(b: &mut B, quotient: &[QubitId], dirty: &[
     product
 }
 
-fn round84_uncompute_quotient_c_product(b: &mut B, quotient: &[QubitId], product: &[QubitId], dirty: &[QubitId]) {
+fn round84_uncompute_quotient_c_product(
+    b: &mut B,
+    quotient: &[QubitId],
+    product: &[QubitId],
+    dirty: &[QubitId],
+) {
     let q = &quotient[..33];
     if round84_qprod_naf_enabled() {
         for (shift, add) in [(10usize, true), (32, true), (5, false), (4, false)]
@@ -1170,7 +1202,6 @@ fn round84_uncompute_quotient_c_product(b: &mut B, quotient: &[QubitId], product
             if round84_qprod_vent_pad_enabled()
                 && (product.len() - shift - q.len()) >= round84_qprod_vent_pad_min_width()
             {
-
                 round84_qprod_shifted_addsub_vented(b, q, product, shift, !add, dirty);
                 continue;
             }
@@ -1328,8 +1359,8 @@ fn round84_fold_hi_into_lo_aggregate(
     }
 
     let product = round84_compute_quotient_c_product(b, &quotient, dirty);
-    let borrowed_correction_wrap = round84_correction_wrap_borrow_quotient_top_enabled()
-        .then_some(quotient[33]);
+    let borrowed_correction_wrap =
+        round84_correction_wrap_borrow_quotient_top_enabled().then_some(quotient[33]);
     let (correction_wrap, correction_wrap_owned) =
         round84_add_narrow_correction(b, lo, &product, dirty, borrowed_correction_wrap);
     let product = if round84_keep_quotient_product_enabled() {
@@ -1453,7 +1484,6 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
     {
         let slice: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
         if z02_lowq {
-
             let host: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
             schoolbook_square_symmetric_hosted(b, &x_lo, &slice, &host);
         } else {
@@ -1465,7 +1495,6 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         if z02_lowq {
             if kara_z2_selfhost_enabled() {
                 if square_selfhost_safe_lane_reuse_enabled() {
-
                     let clean_square_bits = [z1_reg[1], tmp_ext[1]];
                     schoolbook_square_symmetric_lowq_selfhosted_with_clean_supplement(
                         b,
@@ -1573,7 +1602,6 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         .as_deref()
         == Some("1");
     if shift_dirty {
-
         b.set_phase("r84k_sol_dbl22");
         for _ in 0..22 {
             mod_dbl(b, &hi);
@@ -1640,7 +1668,6 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         if z02_lowq {
             if kara_z2_selfhost_enabled() {
                 if square_selfhost_safe_lane_reuse_enabled() {
-
                     let clean_square_bits = [z1_reg[1], tmp_ext[1]];
                     schoolbook_square_symmetric_lowq_selfhosted_inverse_with_clean_supplement(
                         b,
@@ -1661,7 +1688,6 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
     {
         let slice: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
         if z02_lowq {
-
             let host: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
             schoolbook_square_symmetric_hosted_inverse(b, &x_lo, &slice, &host);
         } else {
@@ -1744,7 +1770,12 @@ pub(crate) fn squaring_sub_from_acc_schoolbook_lowq_shift22(
     b.free_vec(&tmp_ext);
 }
 
-pub(crate) fn squaring_sub_from_acc_walk_controls_lowq(b: &mut B, acc: &[QubitId], x: &[QubitId], p: U256) {
+pub(crate) fn squaring_sub_from_acc_walk_controls_lowq(
+    b: &mut B,
+    acc: &[QubitId],
+    x: &[QubitId],
+    p: U256,
+) {
     let n = acc.len();
     debug_assert_eq!(n, 256);
     debug_assert_eq!(x.len(), n);
@@ -1816,7 +1847,6 @@ fn round84_qprod_shifted_addsub_vented(
     let high = &product[shift + m..];
 
     if add {
-
         let c_in = b.alloc_qubit();
         cuccaro_add_low_to_ext_clean(b, q, &low_ext, c_in);
         b.free(c_in);
@@ -1836,7 +1866,6 @@ fn round84_qprod_shifted_addsub_vented(
 
         cmp_lt_into(b, &product[shift..shift + m], q, wrap);
     } else {
-
         let c_in = b.alloc_qubit();
         cuccaro_sub_low_to_ext_clean(b, q, &low_ext, c_in);
         b.free(c_in);
@@ -2203,8 +2232,8 @@ pub(crate) fn square_addsub_vented_inverse(b: &mut B, x: &[QubitId], prod: &[Qub
 
 pub(crate) mod square_addsub_selftest {
     use super::*;
-    use crate::sim::Simulator;
     use crate::circuit::OperationType;
+    use crate::sim::Simulator;
     use sha3::digest::{ExtendableOutput, Update, XofReader};
 
     fn count_tof(ops: &[crate::circuit::Op]) -> usize {

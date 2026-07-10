@@ -1,4 +1,3 @@
-
 use alloy_primitives::U256;
 use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
@@ -20,8 +19,8 @@ pub(crate) use arith::*;
 mod rounds;
 pub(crate) use rounds::*;
 
-pub mod trailmix_ludicrous;
 mod single_ccx_fanout;
+pub mod trailmix_ludicrous;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -1224,10 +1223,7 @@ fn configure_ecdsafail_submission_route() {
         "DIALOG_GCD_COMPARE_STEP_BITS",
         "181:48,194:48,199:48,202:48,207:48,212:48,216:48",
     );
-    set_default_env(
-        "DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS",
-        "",
-    );
+    set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_STEP_WINDOWS", "");
     set_default_env("DIALOG_GCD_FOLD_CARRY_TRUNC_W", "17");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL", "1");
     set_default_env("DIALOG_GCD_FOLD_FREED_TAIL_ED", "1");
@@ -1251,10 +1247,7 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_K5_HEAD11_STREAM_PAIR_APPLY", "1");
     set_default_env("DIALOG_GCD_K5_HEAD11_SPLIT_PAIR_SHIFT_APPLY", "1");
     set_default_env("DIALOG_GCD_K5_HEAD11_PAIR01_S2_PERMUTE_APPLY", "1");
-    set_default_env(
-        "DIALOG_GCD_K5_HEAD11_PAIR23_S2_BORROW_PAIR01_APPLY",
-        "1",
-    );
+    set_default_env("DIALOG_GCD_K5_HEAD11_PAIR23_S2_BORROW_PAIR01_APPLY", "1");
     set_default_env("DIALOG_GCD_K5_PARTIAL_RAW_RELEASE", "8");
     set_default_env("DIALOG_GCD_K5_RELEASE_SCALE_BITS", "5");
     set_default_env("DIALOG_GCD_K5_STREAM_PAIR_APPLY", "1");
@@ -1278,10 +1271,7 @@ fn configure_ecdsafail_submission_route() {
         "10:19,11:19,21:20,63:19,74:19,100:19,107:19,110:19,118:19,135:19,136:19,137:19,188:20,204:19,227:20,241:19",
     );
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES", "16");
-    set_default_env(
-        "DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP",
-        "",
-    );
+    set_default_env("DIALOG_GCD_SPECIAL_FOLD_PARK_LOW_CARRIES_STEP_MAP", "");
     set_default_env("DIALOG_GCD_SPECIAL_FOLD_RELEASE_SCRATCH", "1");
     set_default_env(
         "DIALOG_GCD_SPECIAL_OVERFLOW_CLEAN_STEP_BITS",
@@ -1346,7 +1336,10 @@ fn configure_ecdsafail_submission_route() {
 
     set_default_env("DIALOG_GCD_APPLY_CLEAN_COMPARE_BITS", "18");
     set_default_env("DIALOG_GCD_APPLY_BOUNDARY_CONDITIONAL_REPLAY", "1");
-    set_default_env("DIALOG_GCD_SELECTED_BODY_STREAM_SUFFIX_MAP", "3:2,4:3,5:5,6:6,7:7,8:5,9:7,10:5,11:7,12:6,13:7,14:5,15:6,16:3,17:5,18:1,19:3,21:1");
+    set_default_env(
+        "DIALOG_GCD_SELECTED_BODY_STREAM_SUFFIX_MAP",
+        "3:2,4:3,5:5,6:6,7:7,8:5,9:7,10:5,11:7,12:6,13:7,14:5,15:6,16:3,17:5,18:1,19:3,21:1",
+    );
 
     set_default_env("DIALOG_GCD_REVERSE_BRANCH_CONDITIONAL_REPLAY", "1");
     set_default_env("DIALOG_GCD_SPECIAL_CLEAN_CONDITIONAL_REPLAY", "1");
@@ -1402,7 +1395,10 @@ fn configure_ecdsafail_submission_route() {
     set_default_env("DIALOG_GCD_BODY_HOST_CIN", "1");
     set_default_env("DIALOG_GCD_LATE_BORROW_UV_HIGH", "1");
 
-    set_default_env("DIALOG_GCD_BODY_CARRY_BAND_TRIMS", "0,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3");
+    set_default_env(
+        "DIALOG_GCD_BODY_CARRY_BAND_TRIMS",
+        "0,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3",
+    );
     set_default_env("DIALOG_GCD_TOBITVECTOR_CSWAP_BODY_TRIM", "0");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_STEPS", "8,9,10");
     set_default_env("DIALOG_GCD_BINDER_NOTCH_EXTRA", "3");
@@ -1548,7 +1544,6 @@ pub fn build_builder() -> B {
     }
 
     if !b.count_only && std::env::var("TRACE_PHASES").is_ok() {
-
         let trans = &b.phase_transitions;
         let n_ops = b.ops.len();
 
@@ -1779,7 +1774,9 @@ pub fn build() -> Vec<Op> {
     }
     if std::env::var("FOLD_FREED_TAIL_SELFTEST").is_ok() {
         match fold_freed_tail_selftest() {
-            Ok(()) => eprintln!("FOLD_FREED_TAIL_SELFTEST: PASS (freed-tail ≡ baseline, ancilla & phase clean)"),
+            Ok(()) => eprintln!(
+                "FOLD_FREED_TAIL_SELFTEST: PASS (freed-tail ≡ baseline, ancilla & phase clean)"
+            ),
             Err(e) => panic!("FOLD_FREED_TAIL_SELFTEST: FAIL: {e}"),
         }
         if std::env::var("FOLD_FREED_TAIL_SELFTEST_ONLY")
@@ -1914,7 +1911,10 @@ pub fn build() -> Vec<Op> {
     set_default_env("TLM_GIDNEY_SKIP_SMALL_RESIDUAL_DEAD", "1");
     let mut ops = trailmix_ludicrous::build_trailmix_ludicrous_ops();
 
-    if let Ok(k) = std::env::var("TLM_SEED_PERTURB").unwrap_or_default().parse::<usize>() {
+    if let Ok(k) = std::env::var("TLM_SEED_PERTURB")
+        .unwrap_or_default()
+        .parse::<usize>()
+    {
         for _ in 0..k {
             ops.push(crate::circuit::Op {
                 kind: crate::circuit::OperationType::DebugPrint,
@@ -1927,11 +1927,7 @@ pub fn build() -> Vec<Op> {
             });
         }
     }
-    if std::env::var("SINGLE_CCX_FANOUT_DISABLE")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("SINGLE_CCX_FANOUT_DISABLE").ok().as_deref() == Some("1") {
         return ops;
     }
     let input_ops = ops.len();
@@ -1954,7 +1950,10 @@ pub fn build() -> Vec<Op> {
             }
         }
     }
-    assert!(fanout_passes >= 1, "single-fanout rewrite failed to find first pass");
+    assert!(
+        fanout_passes >= 1,
+        "single-fanout rewrite failed to find first pass"
+    );
     eprintln!(
         "SINGLE_CCX_FANOUT: SUMMARY input_ops={} output_ops={} passes={}",
         input_ops,
@@ -1974,8 +1973,16 @@ pub fn square_window_selftest() -> Result<(), String> {
     assert!(nbits > 0);
     let packed_value_check = 2 * nbits < 64;
     let wide_value_check = nbits <= 256;
-    let mask = if packed_value_check { (1u64 << nbits) - 1 } else { u64::MAX };
-    let out_mask = if packed_value_check { (1u64 << (2 * nbits)) - 1 } else { u64::MAX };
+    let mask = if packed_value_check {
+        (1u64 << nbits) - 1
+    } else {
+        u64::MAX
+    };
+    let out_mask = if packed_value_check {
+        (1u64 << (2 * nbits)) - 1
+    } else {
+        u64::MAX
+    };
     let xs: Vec<u64> = (0..SHOTS as u64)
         .map(|s| {
             let r = s
@@ -2076,9 +2083,8 @@ pub fn square_window_selftest() -> Result<(), String> {
                     if idx >= out_limbs {
                         break;
                     }
-                    let cur = product[idx] as u128
-                        + (x_limbs[i] as u128) * (x_limbs[j] as u128)
-                        + carry;
+                    let cur =
+                        product[idx] as u128 + (x_limbs[i] as u128) * (x_limbs[j] as u128) + carry;
                     product[idx] = cur as u64;
                     carry = cur >> 64;
                 }
@@ -2124,16 +2130,11 @@ pub fn fold_freed_tail_selftest() -> Result<(), String> {
     let hi_c = 32usize;
     let nbits = 64usize;
     for &windowed in &[true, false] {
-        let last = if windowed {
-            hi_delta + 19
-        } else {
-            nbits - 2
-        };
+        let last = if windowed { hi_delta + 19 } else { nbits - 2 };
         for ed in 0u64..4 {
             let e_val = ed & 1;
             let d_val = (ed >> 1) & 1;
             for &is_add in &[true, false] {
-
                 let build_one = |freed: bool| -> (Vec<Op>, Vec<QubitId>, usize, usize) {
                     let mut b = B::new();
                     let y = b.alloc_qubits(nbits);
@@ -2181,8 +2182,7 @@ pub fn fold_freed_tail_selftest() -> Result<(), String> {
                             is_add,
                         );
                     } else {
-                        let controls =
-                            secp_fold_controls(e, d, h, xed, eord, n10, hi_delta, hi_c);
+                        let controls = secp_fold_controls(e, d, h, xed, eord, n10, hi_delta, hi_c);
                         if is_add {
                             cadd_per_position_controls_trunc(&mut b, &y, &controls, last);
                         } else {
@@ -2215,7 +2215,11 @@ pub fn fold_freed_tail_selftest() -> Result<(), String> {
                 let (ops_base, y_b, nq_b, nb_b) = build_one(false);
                 let (ops_freed, y_f, nq_f, nb_f) = build_one(true);
 
-                let mask: u64 = if nbits >= 64 { u64::MAX } else { (1u64 << nbits) - 1 };
+                let mask: u64 = if nbits >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << nbits) - 1
+                };
                 let ys: Vec<u64> = (0..64u64)
                     .map(|s| {
                         let r = s
@@ -2235,41 +2239,45 @@ pub fn fold_freed_tail_selftest() -> Result<(), String> {
                     })
                     .collect();
 
-                let run = |ops: &[Op], y: &[QubitId], nq: usize, nb: usize| -> (Vec<u64>, bool, u64) {
-                    let mut s2 = sha3::Shake128::default();
-                    s2.update(b"fold-sim");
-                    let mut xof2 = s2.finalize_xof();
-                    let mut sim = Simulator::new(nq, nb, &mut xof2);
-                    sim.clear_for_shot();
-                    for (shot, &yv) in ys.iter().enumerate() {
-                        for k in 0..nbits {
-                            if (yv >> k) & 1 != 0 {
-                                *sim.qubit_mut(y[k]) |= 1u64 << shot;
+                let run =
+                    |ops: &[Op], y: &[QubitId], nq: usize, nb: usize| -> (Vec<u64>, bool, u64) {
+                        let mut s2 = sha3::Shake128::default();
+                        s2.update(b"fold-sim");
+                        let mut xof2 = s2.finalize_xof();
+                        let mut sim = Simulator::new(nq, nb, &mut xof2);
+                        sim.clear_for_shot();
+                        for (shot, &yv) in ys.iter().enumerate() {
+                            for k in 0..nbits {
+                                if (yv >> k) & 1 != 0 {
+                                    *sim.qubit_mut(y[k]) |= 1u64 << shot;
+                                }
                             }
                         }
-                    }
-                    sim.apply_iter(ops.iter());
-                    let outs: Vec<u64> = (0..64)
-                        .map(|shot| {
-                            let mut v = 0u64;
-                            for k in 0..nbits {
-                                v |= ((sim.qubit(y[k]) >> shot) & 1) << k;
-                            }
-                            v
-                        })
-                        .collect();
-                    let anc_clean =
-                        (nbits..nq).all(|q| sim.qubit(QubitId(q as u64)) == 0);
-                    (outs, anc_clean, sim.phase)
-                };
+                        sim.apply_iter(ops.iter());
+                        let outs: Vec<u64> = (0..64)
+                            .map(|shot| {
+                                let mut v = 0u64;
+                                for k in 0..nbits {
+                                    v |= ((sim.qubit(y[k]) >> shot) & 1) << k;
+                                }
+                                v
+                            })
+                            .collect();
+                        let anc_clean = (nbits..nq).all(|q| sim.qubit(QubitId(q as u64)) == 0);
+                        (outs, anc_clean, sim.phase)
+                    };
                 let (out_b, clean_b, phase_b) = run(&ops_base, &y_b, nq_b, nb_b);
                 let (out_f, clean_f, phase_f) = run(&ops_freed, &y_f, nq_f, nb_f);
 
                 if !clean_b {
-                    return Err(format!("baseline left ancilla dirty (ed={ed} add={is_add} win={windowed})"));
+                    return Err(format!(
+                        "baseline left ancilla dirty (ed={ed} add={is_add} win={windowed})"
+                    ));
                 }
                 if !clean_f {
-                    return Err(format!("freed-tail left ancilla dirty (ed={ed} add={is_add} win={windowed})"));
+                    return Err(format!(
+                        "freed-tail left ancilla dirty (ed={ed} add={is_add} win={windowed})"
+                    ));
                 }
                 if phase_f != 0 {
                     return Err(format!("freed-tail left phase garbage 0x{phase_f:x} (ed={ed} add={is_add} win={windowed})"));
@@ -2376,8 +2384,7 @@ pub fn special_fold_park_selftest() -> Result<(), String> {
                 (outputs, clean, sim.phase)
             };
 
-            let (base_out, base_clean, base_phase) =
-                run(&base_ops, &base_acc, base_nq, base_nb);
+            let (base_out, base_clean, base_phase) = run(&base_ops, &base_acc, base_nq, base_nb);
             let (parked_out, parked_clean, parked_phase) =
                 run(&parked_ops, &parked_acc, parked_nq, parked_nb);
             if !base_clean || base_phase != 0 {

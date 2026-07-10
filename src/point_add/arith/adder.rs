@@ -1,7 +1,6 @@
 use super::*;
 
 pub(crate) fn bit(c: U256, i: usize) -> bool {
-
     c.bit(i)
 }
 
@@ -121,7 +120,6 @@ pub(crate) fn cuccaro_add(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: Qubit
         return;
     }
     if n == 1 {
-
         b.cx(c_in, acc[0]);
         b.cx(a[0], acc[0]);
         return;
@@ -148,7 +146,6 @@ pub(crate) fn cuccaro_sub(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: Qubit
         return;
     }
     if n == 1 {
-
         b.cx(a[0], acc[0]);
         b.cx(c_in, acc[0]);
         return;
@@ -177,7 +174,6 @@ pub(crate) fn cuccaro_add_low_to_ext_clean(
     let n = a.len();
     assert_eq!(acc_ext.len(), n + 1);
     if n == 0 {
-
         b.cx(c_in, acc_ext[0]);
         return;
     }
@@ -244,7 +240,6 @@ pub(crate) fn load_bits(b: &mut B, bits: &[BitId]) -> Vec<QubitId> {
     let n = bits.len();
     let qs = b.alloc_qubits(n);
     for i in 0..n {
-
         b.x_if(qs[i], bits[i]);
     }
     qs
@@ -315,7 +310,12 @@ pub(crate) fn cuccaro_sub_fast(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: 
     b.free_vec(&carries);
 }
 
-pub(crate) fn cuccaro_add_fast_low_to_ext(b: &mut B, a: &[QubitId], acc_ext: &[QubitId], c_in: QubitId) {
+pub(crate) fn cuccaro_add_fast_low_to_ext(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+) {
     let n = a.len();
     assert_eq!(acc_ext.len(), n + 1);
     if n == 0 {
@@ -356,7 +356,12 @@ pub(crate) fn cuccaro_add_fast_low_to_ext(b: &mut B, a: &[QubitId], acc_ext: &[Q
     b.free_vec(&carries);
 }
 
-pub(crate) fn cuccaro_sub_fast_low_to_ext(b: &mut B, a: &[QubitId], acc_ext: &[QubitId], c_in: QubitId) {
+pub(crate) fn cuccaro_sub_fast_low_to_ext(
+    b: &mut B,
+    a: &[QubitId],
+    acc_ext: &[QubitId],
+    c_in: QubitId,
+) {
     let n = a.len();
     assert_eq!(acc_ext.len(), n + 1);
     if n == 0 {
@@ -1056,7 +1061,6 @@ pub(crate) fn cuccaro_add_fast_borrowed_carries_no_cin(
         return;
     }
     if n == 1 {
-
         b.cx(a[0], acc[0]);
         return;
     }
@@ -1102,7 +1106,6 @@ pub(crate) fn cuccaro_sub_fast_borrowed_carries_no_cin(
         return;
     }
     if n == 1 {
-
         b.cx(a[0], acc[0]);
         return;
     }
@@ -1136,14 +1139,12 @@ pub(crate) fn cuccaro_sub_fast_borrowed_carries_no_cin(
 }
 
 pub(crate) fn inv_maj(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
-
     b.ccx(x, y, w);
     b.cx(w, x);
     b.cx(w, y);
 }
 
 pub(crate) fn inv_uma(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
-
     b.cx(x, y);
     b.cx(w, x);
     b.ccx(x, y, w);
@@ -1196,25 +1197,53 @@ pub(crate) fn mcx3_polar(
     }
 }
 
-pub(crate) fn ctrl_maj(b: &mut B, ctrl: QubitId, x: QubitId, y: QubitId, w: QubitId, scratch: QubitId) {
+pub(crate) fn ctrl_maj(
+    b: &mut B,
+    ctrl: QubitId,
+    x: QubitId,
+    y: QubitId,
+    w: QubitId,
+    scratch: QubitId,
+) {
     b.ccx(ctrl, w, y);
     b.ccx(ctrl, w, x);
     mcx3_polar(b, ctrl, true, x, true, y, true, w, scratch);
 }
 
-pub(crate) fn ctrl_uma(b: &mut B, ctrl: QubitId, x: QubitId, y: QubitId, w: QubitId, scratch: QubitId) {
+pub(crate) fn ctrl_uma(
+    b: &mut B,
+    ctrl: QubitId,
+    x: QubitId,
+    y: QubitId,
+    w: QubitId,
+    scratch: QubitId,
+) {
     mcx3_polar(b, ctrl, true, x, true, y, true, w, scratch);
     b.ccx(ctrl, w, x);
     b.ccx(ctrl, x, y);
 }
 
-pub(crate) fn ctrl_inv_maj(b: &mut B, ctrl: QubitId, x: QubitId, y: QubitId, w: QubitId, scratch: QubitId) {
+pub(crate) fn ctrl_inv_maj(
+    b: &mut B,
+    ctrl: QubitId,
+    x: QubitId,
+    y: QubitId,
+    w: QubitId,
+    scratch: QubitId,
+) {
     mcx3_polar(b, ctrl, true, x, true, y, true, w, scratch);
     b.ccx(ctrl, w, x);
     b.ccx(ctrl, w, y);
 }
 
-pub(crate) fn ctrl_inv_uma(b: &mut B, ctrl: QubitId, x: QubitId, y: QubitId, w: QubitId, scratch: QubitId) {
+pub(crate) fn ctrl_inv_uma(
+    b: &mut B,
+    ctrl: QubitId,
+    x: QubitId,
+    y: QubitId,
+    w: QubitId,
+    scratch: QubitId,
+) {
     b.ccx(ctrl, x, y);
     b.ccx(ctrl, w, x);
     mcx3_polar(b, ctrl, true, x, true, y, true, w, scratch);
@@ -1287,39 +1316,67 @@ pub(crate) fn cuccaro_sub_ctrl_lowq(
 }
 
 pub(crate) fn cuccaro_add_ctrl_vented(
-    b: &mut B, addend: &[QubitId], acc: &[QubitId], ctrl: QubitId, vent_pool: &[QubitId],
+    b: &mut B,
+    addend: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+    vent_pool: &[QubitId],
 ) {
     let n = addend.len();
     assert_eq!(n, acc.len());
-    if n == 0 { return; }
-    if n == 1 { b.ccx(ctrl, addend[0], acc[0]); return; }
-    assert!(vent_pool.len() >= n - 1, "vented body needs n-1 borrowed vent lanes");
-    for i in 1..n { b.cx(addend[i], acc[i]); }
-    for i in (1..n-1).rev() { b.cx(addend[i], addend[i+1]); }
-    for i in 0..n-1 {
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        b.ccx(ctrl, addend[0], acc[0]);
+        return;
+    }
+    assert!(
+        vent_pool.len() >= n - 1,
+        "vented body needs n-1 borrowed vent lanes"
+    );
+    for i in 1..n {
+        b.cx(addend[i], acc[i]);
+    }
+    for i in (1..n - 1).rev() {
+        b.cx(addend[i], addend[i + 1]);
+    }
+    for i in 0..n - 1 {
         let anc = vent_pool[i];
         b.ccx(acc[i], addend[i], anc);
-        b.cx(anc, addend[i+1]);
+        b.cx(anc, addend[i + 1]);
     }
-    for i in (0..n-1).rev() {
-        b.ccx(ctrl, addend[i+1], acc[i+1]);
+    for i in (0..n - 1).rev() {
+        b.ccx(ctrl, addend[i + 1], acc[i + 1]);
         let anc = vent_pool[i];
-        b.cx(anc, addend[i+1]);
+        b.cx(anc, addend[i + 1]);
         let m = b.alloc_bit();
         b.hmr(anc, m);
         b.cz_if(acc[i], addend[i], m);
     }
-    for i in 1..n-1 { b.cx(addend[i], addend[i+1]); }
+    for i in 1..n - 1 {
+        b.cx(addend[i], addend[i + 1]);
+    }
     b.ccx(ctrl, addend[0], acc[0]);
-    for i in 1..n { b.cx(addend[i], acc[i]); }
+    for i in 1..n {
+        b.cx(addend[i], acc[i]);
+    }
 }
 
 pub(crate) fn cuccaro_sub_ctrl_vented(
-    b: &mut B, subtrahend: &[QubitId], acc: &[QubitId], ctrl: QubitId, vent_pool: &[QubitId],
+    b: &mut B,
+    subtrahend: &[QubitId],
+    acc: &[QubitId],
+    ctrl: QubitId,
+    vent_pool: &[QubitId],
 ) {
-    for &q in acc { b.x(q); }
+    for &q in acc {
+        b.x(q);
+    }
     cuccaro_add_ctrl_vented(b, subtrahend, acc, ctrl, vent_pool);
-    for &q in acc { b.x(q); }
+    for &q in acc {
+        b.x(q);
+    }
 }
 
 pub(crate) fn cucc_add_ctrl_lowq(b: &mut B, a: &[QubitId], acc: &[QubitId], ctrl: QubitId) {

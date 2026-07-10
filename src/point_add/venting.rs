@@ -1,4 +1,3 @@
-
 use super::{BitId, QubitId, B};
 use crate::circuit::{Op, OperationType};
 
@@ -53,7 +52,6 @@ pub(crate) fn xor_right_shifted_carries_into_classical(
 
     let carry_in_xor_offset0 = carry_in ^ bit(0);
     if carry_in_xor_offset0 {
-
         if bit(0) {
             b.x(q_src[0]);
         }
@@ -135,10 +133,8 @@ pub(crate) fn add_vented_2clean_classical_cxt(
     };
 
     for k in 0..n - 1 {
-
         if k < n - 2 {
             if let Some(q) = get_carry_qubit(k + 1) {
-
                 let mut op = Op::empty();
                 op.kind = OperationType::R;
                 op.q_target = q;
@@ -149,7 +145,6 @@ pub(crate) fn add_vented_2clean_classical_cxt(
         if k == 0 {
             let eff_carry = carry_in ^ bit(0);
             if eff_carry {
-
                 if let Some(q) = get_carry_qubit(1) {
                     b.cx(q_target[0], q);
                 }
@@ -236,7 +231,6 @@ pub(crate) fn iadd_linear_clean_classical(
     }
 
     if n == 2 {
-
         if bit(0) {
             b.x(q_target[1]);
         }
@@ -290,10 +284,8 @@ pub(crate) fn iadd_linear_clean_classical(
     }
 
     for k in 0..n - 1 {
-
         let next = get_carry(k + 1).expect("k+1 in bounds");
         if k == 0 {
-
             let eff = carry_in ^ bit(0);
             if eff {
                 b.cx(q_target[0], next);
@@ -311,7 +303,6 @@ pub(crate) fn iadd_linear_clean_classical(
     }
 
     for k in (0..n - 2).rev() {
-
         let next = get_carry(k + 1).expect("k+1 in bounds");
         b.cx(next, q_target[k + 1]);
 
@@ -326,10 +317,8 @@ pub(crate) fn iadd_linear_clean_classical(
         }
 
         if k == 0 {
-
             let eff = carry_in ^ bit(0);
             if eff {
-
                 let mut op = Op::empty();
                 op.kind = OperationType::Z;
                 op.q_target = q_target[k];
@@ -431,7 +420,6 @@ pub(crate) fn ciadd_dirty_2clean_classical(
     ctrl: QubitId,
     carry_in: bool,
 ) {
-
     assert!(
         !carry_in,
         "ciadd_dirty_2clean_classical requires carry_in=false; pre-process if needed"
@@ -441,7 +429,6 @@ pub(crate) fn ciadd_dirty_2clean_classical(
         return;
     }
     if n <= 4 {
-
         let a: Vec<QubitId> = (0..n).map(|_| b.alloc_qubit()).collect();
         for i in 0..n {
             if (offset_bits >> i) & 1 != 0 {
@@ -486,11 +473,9 @@ pub(crate) fn ciadd_dirty_2clean_classical(
     );
 
     for k in 0..n {
-
         b.cx(ctrl, q_target[k]);
     }
     for k in 0..n - 2 {
-
         let mut op = Op::empty();
         op.kind = OperationType::Z;
         op.q_target = q_dirty[k];
@@ -530,7 +515,6 @@ fn c_add_vented_2clean_inline(
 ) {
     let n = q_target.len();
     if n < 2 {
-
         if n == 1 {
             if carry_in {
                 b.cx(ctrl, q_target[0]);
@@ -567,7 +551,6 @@ fn c_add_vented_2clean_inline(
     };
 
     for k in 0..n - 1 {
-
         if k < n - 2 {
             if let Some(q) = get_carry_qubit(k + 1) {
                 let mut op = Op::empty();
@@ -581,9 +564,7 @@ fn c_add_vented_2clean_inline(
             let next = get_carry_qubit(1);
             if let Some(next_q) = next {
                 if bit(0) {
-
                     if carry_in {
-
                         b.x(ctrl);
                         b.ccx(q_target[0], ctrl, next_q);
                         b.x(ctrl);
@@ -591,16 +572,13 @@ fn c_add_vented_2clean_inline(
                         b.ccx(q_target[0], ctrl, next_q);
                     }
                 } else if carry_in {
-
                     b.cx(q_target[0], next_q);
                 }
-
             }
         } else {
             let cur = get_carry_qubit(k).expect("non-boundary carry");
             let next = get_carry_qubit(k + 1).expect("non-boundary next carry");
             if bit(k) {
-
                 b.cx(ctrl, cur);
                 b.ccx(q_target[k], cur, next);
                 b.cx(ctrl, cur);
@@ -944,27 +922,21 @@ fn c_xor_right_shifted_carries_into_classical(
     let cin_eff_uses_ctrl = bit(0);
     let cin_classical_part = carry_in ^ false;
     if cin_eff_uses_ctrl {
-
         if carry_in {
-
             b.cx(ctrl, q_src[0]);
             b.x(ctrl);
             b.ccx(q_src[0], ctrl, q_dst[0]);
             b.x(ctrl);
             b.cx(ctrl, q_src[0]);
         } else {
-
             b.cx(ctrl, q_src[0]);
             b.ccx(q_src[0], ctrl, q_dst[0]);
             b.cx(ctrl, q_src[0]);
         }
     } else {
-
         if cin_classical_part {
-
             b.cx(q_src[0], q_dst[0]);
         }
-
     }
     for k in 1..n {
         ccx_ctrl_mix(b, q_src[k], bit(k), q_dst[k - 1], bit(k), q_dst[k]);
@@ -984,10 +956,7 @@ pub(crate) fn cisub_dirty_2clean_classical(
     for k in 0..n {
         b.cx(ctrl, q_target[k]);
     }
-    ciadd_dirty_2clean_classical(
-        b, q_target, q_dirty, q_clean2, c_bits, ctrl,
-        false,
-    );
+    ciadd_dirty_2clean_classical(b, q_target, q_dirty, q_clean2, c_bits, ctrl, false);
     for k in 0..n {
         b.cx(ctrl, q_target[k]);
     }
@@ -1041,7 +1010,6 @@ mod tests {
     }
 
     fn carry_save_product_bits_for_phase_test(n: usize, x: u64, y: u64) -> Vec<u8> {
-
         let mut cols = vec![Vec::<u8>::new(); 2 * n + 8];
         for i in 0..n {
             for j in 0..n {
@@ -1096,7 +1064,6 @@ mod tests {
 
     #[test]
     fn raw_product_measurement_phase_is_dense_not_free_kickmix() {
-
         for &n in &[4usize, 6, 8, 10] {
             let full_mask = if 2 * n == 64 {
                 u64::MAX
@@ -1127,7 +1094,6 @@ mod tests {
 
     #[test]
     fn carry_save_product_scratch_mbu_still_has_dense_phases() {
-
         for &n in &[4usize, 6, 8] {
             let (deg_all, dens_all) = carry_save_product_phase_anf_degree_density(n, false);
             let (deg_top, dens_top) = carry_save_product_phase_anf_degree_density(n, true);
@@ -1150,7 +1116,6 @@ mod tests {
     }
 
     fn classical_carry(x: u64, d: u64, cin: bool, n: usize) -> u64 {
-
         let mut c: u64 = 0;
         let mut prev = cin;
         for k in 0..n {
@@ -1772,7 +1737,6 @@ mod tests {
 
     #[test]
     fn test_cisub_dirty_kaliski_pattern() {
-
         let n = 256;
         let c_low = 0x1_0000_03D1u64;
         let trials = 50;
@@ -2049,7 +2013,6 @@ mod tests {
 
     #[test]
     fn test_iadd_qoffset_narrow_small() {
-
         for n in 5..=12 {
             for m in 1..n {
                 let (ok, bad) = run_iadd_qoffset_narrow(n, m, 12);
@@ -2060,7 +2023,6 @@ mod tests {
 
     #[test]
     fn test_iadd_qoffset_narrow_wide() {
-
         let (ok, bad) = run_iadd_qoffset_narrow(256, 22, 40);
         assert_eq!(bad, 0, "n=256 m=22: {ok}/{} passed", ok + bad);
     }

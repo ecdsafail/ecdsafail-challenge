@@ -1,6 +1,5 @@
-
-use super::{B, BExt};
-use crate::circuit::{QubitId};
+use super::{BExt, B};
+use crate::circuit::QubitId;
 
 fn mbu_clear_and(circ: &mut B, t: &QubitId, c0: &QubitId, c1: &QubitId) {
     let bit = circ.alloc_bit();
@@ -45,7 +44,10 @@ fn kg_apply_prefix_controlled_x(circ: &mut B, ctrls: &[&QubitId], target: &Qubit
         [] => circ.x(*target),
         [c] => circ.cx(**c, *target),
         [a, b] => circ.ccx(**a, **b, *target),
-        _ => panic!("kg_apply_prefix_controlled_x: expected <=2 ctrls, got {}", ctrls.len()),
+        _ => panic!(
+            "kg_apply_prefix_controlled_x: expected <=2 ctrls, got {}",
+            ctrls.len()
+        ),
     }
 }
 
@@ -82,11 +84,20 @@ fn kg_get_layers_for_prefix_and<'a>(
     q: &[&'a QubitId],
     inp_anc: &[&'a QubitId],
 ) -> Vec<KgPrefixLayer<'a>> {
-    assert!(!q.is_empty(), "kg_get_layers_for_prefix_and: q must be non-empty");
+    assert!(
+        !q.is_empty(),
+        "kg_get_layers_for_prefix_and: q must be non-empty"
+    );
     if q.len() == 1 {
         return vec![
-            KgPrefixLayer { ctrls: Vec::new(), ops: Vec::new() },
-            KgPrefixLayer { ctrls: vec![q[0]], ops: Vec::new() },
+            KgPrefixLayer {
+                ctrls: Vec::new(),
+                ops: Vec::new(),
+            },
+            KgPrefixLayer {
+                ctrls: vec![q[0]],
+                ops: Vec::new(),
+            },
         ];
     }
     assert!(
@@ -99,7 +110,10 @@ fn kg_get_layers_for_prefix_and<'a>(
 
     let n = q.len();
     let n_layers = kg_get_layer_id(q.len() - 1);
-    let mut ret = vec![KgPrefixLayer { ctrls: Vec::new(), ops: Vec::new() }];
+    let mut ret = vec![KgPrefixLayer {
+        ctrls: Vec::new(),
+        ops: Vec::new(),
+    }];
     let mut targets: Vec<&'a QubitId> = Vec::new();
     let mut anc: Vec<&'a QubitId> = vec![inp_anc[0]];
 
@@ -109,7 +123,10 @@ fn kg_get_layers_for_prefix_and<'a>(
 
         let mut layer_ctrls = targets.clone();
         layer_ctrls.push(q[st]);
-        ret.push(KgPrefixLayer { ctrls: layer_ctrls, ops: Vec::new() });
+        ret.push(KgPrefixLayer {
+            ctrls: layer_ctrls,
+            ops: Vec::new(),
+        });
 
         for i in (st + 1)..en {
             let offset = i - st;
@@ -149,7 +166,10 @@ fn kg_get_layers_for_prefix_and<'a>(
         return ret;
     }
 
-    ret.push(KgPrefixLayer { ctrls: Vec::new(), ops: Vec::new() });
+    ret.push(KgPrefixLayer {
+        ctrls: Vec::new(),
+        ops: Vec::new(),
+    });
     let target_prefix_layers = kg_get_layers_for_prefix_and(&targets, &inp_anc[2..]);
     for layer_id in 1..=n_layers {
         let st = kg_start_layer(layer_id);

@@ -1,7 +1,6 @@
 use super::*;
 
 pub(crate) fn cmp_lt_into_fast(b: &mut B, u: &[QubitId], v: &[QubitId], flag: QubitId) {
-
     if kal_vent_modadd_enabled() {
         cmp_lt_into(b, u, v, flag);
         return;
@@ -146,7 +145,13 @@ pub(crate) fn cmp_lt_into_fast_with_cin_borrowed_carries(
     }
 }
 
-pub(crate) fn ccx_cmp_lt_into_fast(b: &mut B, u: &[QubitId], v: &[QubitId], ctrl: QubitId, target: QubitId) {
+pub(crate) fn ccx_cmp_lt_into_fast(
+    b: &mut B,
+    u: &[QubitId],
+    v: &[QubitId],
+    ctrl: QubitId,
+    target: QubitId,
+) {
     if kal_vent_modadd_enabled() {
         let flag = b.alloc_qubit();
         cmp_lt_into(b, u, v, flag);
@@ -418,12 +423,7 @@ pub(crate) fn cmp_lt_phase_conditioned_with_cin_borrowed_carries(
     b.pop_condition();
 }
 
-pub(crate) fn cmp_lt_phase_conditioned(
-    b: &mut B,
-    u: &[QubitId],
-    v: &[QubitId],
-    phase: BitId,
-) {
+pub(crate) fn cmp_lt_phase_conditioned(b: &mut B, u: &[QubitId], v: &[QubitId], phase: BitId) {
     let n = u.len();
     assert_eq!(v.len(), n);
     assert!(n > 0);

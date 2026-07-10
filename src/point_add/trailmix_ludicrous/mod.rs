@@ -1,4 +1,3 @@
-
 mod arith;
 mod codec;
 mod comparator;
@@ -202,7 +201,9 @@ fn target_qubit_headroom(circ: &B) -> Option<usize> {
         .map(|target| target.saturating_sub(circ.active_qubits as usize))
 }
 
-fn next_gcd_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX)) }
+fn next_gcd_k() -> usize {
+    SCHED.with(|s| step(&mut s.borrow_mut().gcd_k, usize::MAX))
+}
 fn next_cout_k() -> usize {
     let base = SCHED.with(|s| step(&mut s.borrow_mut().cout_k, usize::MAX));
     let fit = fit_schedule_value(
@@ -213,7 +214,10 @@ fn next_cout_k() -> usize {
         "TLM_COUT_K_CALL_OVERRIDES",
     );
     PENDING_COUT_FIT.with(|pending| {
-        debug_assert!(pending.get().is_none(), "previous COUT schedule call was not consumed");
+        debug_assert!(
+            pending.get().is_none(),
+            "previous COUT schedule call was not consumed"
+        );
         pending.set(Some(fit));
     });
     fit.selected
@@ -229,9 +233,15 @@ fn next_fold() -> i32 {
         }
     })
 }
-fn next_gcd_branch() -> u8 { SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255)) }
-fn next_cmp_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX)) }
-fn next_ffg() -> usize { SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().ffg, usize::MAX), "TLM_FFG_DELTA")) }
+fn next_gcd_branch() -> u8 {
+    SCHED.with(|s| step(&mut s.borrow_mut().gcd_branch, 255))
+}
+fn next_cmp_k() -> usize {
+    SCHED.with(|s| step(&mut s.borrow_mut().cmp_k, usize::MAX))
+}
+fn next_ffg() -> usize {
+    SCHED.with(|s| sub_delta(step(&mut s.borrow_mut().ffg, usize::MAX), "TLM_FFG_DELTA"))
+}
 fn next_hyb_v_fit() -> ScheduleFit {
     let base = SCHED.with(|s| step(&mut s.borrow_mut().hyb_v, usize::MAX));
     fit_schedule_value(
@@ -256,7 +266,9 @@ fn take_cout_fit(selected: usize) -> ScheduleFit {
         })
     })
 }
-fn next_sqrow_k() -> usize { SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX)) }
+fn next_sqrow_k() -> usize {
+    SCHED.with(|s| step(&mut s.borrow_mut().sqrow_k, usize::MAX))
+}
 
 fn load_schedule() {
     reset_schedule_fit_call_indices();
@@ -283,10 +295,7 @@ fn load_schedule() {
         let fold_g = |v: &[usize]| -> Vec<usize> {
             v.iter()
                 .map(|&x| {
-                    if extra_fold_vents > 0
-                        && x >= extra_fold_min_g
-                        && x <= extra_fold_max_g
-                    {
+                    if extra_fold_vents > 0 && x >= extra_fold_min_g && x <= extra_fold_max_g {
                         x.saturating_add(extra_fold_vents).min(53)
                     } else {
                         x
@@ -343,7 +352,6 @@ fn install_q1153_submission_defaults() {
         ("TLM_APPLY_ADD_SKIP_LASTK", "1"),
         ("DIALOG_TAIL_NONCE", "2430844"),
     ] {
-
         if (name == "DIALOG_TAIL_NONCE" || name == "TLM_TARGET_Q")
             && std::env::var_os(name).is_some()
         {
@@ -382,7 +390,11 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         .and_then(|s| s.parse::<u64>().ok())
     {
         for i in 0..48u32 {
-            let q = if (nonce >> i) & 1 == 1 { x2_init[1] } else { x2_init[0] };
+            let q = if (nonce >> i) & 1 == 1 {
+                x2_init[1]
+            } else {
+                x2_init[0]
+            };
             circ.x(q);
             circ.x(q);
         }
@@ -409,7 +421,6 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
     if std::env::var("TLM_TIMELINE_DUMP").is_ok() {
         let trans = &circ.phase_transitions;
         let phase_at = |op: usize| -> &'static str {
-
             let mut lo = 0usize;
             let mut hi = trans.len();
             let mut ans = "init";
@@ -470,8 +481,15 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
         let mut by: BTreeMap<&'static str, usize> = BTreeMap::new();
         for w in 0..bounds.len() {
             let s = bounds[w].0.min(total);
-            let e = if w + 1 < bounds.len() { bounds[w + 1].0.min(total) } else { total };
-            let c = circ.ops[s..e].iter().filter(|op| op.kind as u32 == 13).count();
+            let e = if w + 1 < bounds.len() {
+                bounds[w + 1].0.min(total)
+            } else {
+                total
+            };
+            let c = circ.ops[s..e]
+                .iter()
+                .filter(|op| op.kind as u32 == 13)
+                .count();
             *by.entry(bounds[w].1).or_insert(0) += c;
         }
         let grand: usize = by.values().sum();
@@ -498,3 +516,11 @@ pub fn build_trailmix_ludicrous_ops() -> Vec<Op> {
     input_qubits.extend_from_slice(&y2);
     constprop::run(ops, &input_qubits)
 }
+
+// ---------------------------------------------------------------------------
+// NAF (Non-Adjacent Form) encoder — Schrottenloher 2026 optimization
+// Reduces nonzero digit density: binary 50% → NAF ~33%
+// For 256-bit operands in GCD: ~43 fewer nonzero digits = ~43 fewer carry chains
+// ---------------------------------------------------------------------------
+pub mod naf_encoder;
+pub mod cuccaro_3n;
