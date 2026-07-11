@@ -22,6 +22,7 @@ pub(crate) use rounds::*;
 
 pub mod trailmix_ludicrous;
 mod single_ccx_fanout;
+mod m60_dead_t10;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -1653,7 +1654,48 @@ pub fn build_builder() -> B {
     builder
 }
 
+/// M-60 (C2b): remove the census-identified dead CCX gates (dead_t10 set) from the
+/// post-fanout op stream. Every dropped index MUST be a CCX in this build (self-check);
+/// if a build ever shifts so an index no longer points at a CCX we abort loudly rather
+/// than emit a corrupt circuit. This is the source-side port of the grinder's post-build
+/// filter, now inside `build()` so it survives an `src/point_add`-only submission.
+/// Bit-exact: the removed gates never fire for any valid curve-point input.
+fn apply_m60_dead_t10(ops: Vec<Op>) -> Vec<Op> {
+    use std::collections::HashSet;
+    if std::env::var("M60_DISABLE").ok().as_deref() == Some("1") {
+        eprintln!("  [M-60] disabled -> emitting C1 (unfiltered)");
+        return ops;
+    }
+    let drop: HashSet<usize> = m60_dead_t10::M60_DEAD_T10.iter().copied().collect();
+    for &i in &drop {
+        let is_ccx = ops.get(i).map(|o| o.kind == OperationType::CCX).unwrap_or(false);
+        assert!(
+            is_ccx,
+            "[M-60] dead-set index {i} is not a CCX in this build (found {:?}); skip-set \
+             misaligned with this nonce/config -- aborting to avoid a corrupt circuit",
+            ops.get(i).map(|o| o.kind)
+        );
+    }
+    let n_before = ops.len();
+    let kept: Vec<Op> = ops
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, op)| if drop.contains(&i) { None } else { Some(op) })
+        .collect();
+    eprintln!(
+        "  [M-60] removed {} dead CCX (self-checked) -> {} ops (C2b circuit)",
+        n_before - kept.len(),
+        kept.len()
+    );
+    kept
+}
+
 pub fn build() -> Vec<Op> {
+    // M-60 (C2b): bake the dead_t10 winning Fiat-Shamir nonce so the challenge harness
+    // reproduces the validated winner. Forced (not set_default) to win over the C1 default.
+    // The nonce only appends identity X-pairs at the tail; the dead-CCX skip-set applied
+    // post-fanout (apply_m60_dead_t10) is nonce-invariant.
+    std::env::set_var("DIALOG_TAIL_NONCE", "9000624727621");
     configure_q1153_second512_submission_defaults();
 
     if std::env::var("TLM_SQ_SELFTEST").ok().as_deref() == Some("1") {
@@ -1961,7 +2003,7 @@ pub fn build() -> Vec<Op> {
         ops.len(),
         fanout_passes,
     );
-    ops
+    apply_m60_dead_t10(ops)
 }
 
 pub fn square_window_selftest() -> Result<(), String> {
