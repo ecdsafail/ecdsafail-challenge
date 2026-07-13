@@ -1,13 +1,12 @@
-
 use super::arith::{
     mod_add, mod_add_exact, mod_neg, mod_rsub_vented_loaded, mod_sub_classical_low3,
     mod_sub_shifted_low, mod_sub_vented,
 };
 use super::gcd::{mod_mul_inverse_in_place, Direction};
 use super::square::mod_square_sub_pm_secp256k1_symmetric;
-use super::{B, BExt};
-use crate::point_add::{arith::mod_const_minus_reg_qb, SECP256K1_P};
+use super::{BExt, B};
 use crate::circuit::{BitId, QubitId};
+use crate::point_add::{arith::mod_const_minus_reg_qb, SECP256K1_P};
 
 const N: usize = 256;
 
@@ -111,7 +110,6 @@ fn classical_times3_mod_q(circ: &mut B, coord: &[BitId]) -> Vec<BitId> {
     }
     circ.bit_store0(tmp[N + 1]);
     {
-
         let cbits: Vec<BitId> = circ.alloc_bits(av_bits);
         classical_set_const(circ, &cbits, C);
         classical_add_into(circ, &tmp, &cbits);
@@ -165,7 +163,13 @@ fn classical_set_const(circ: &mut B, dst: &[BitId], k: u128) {
     }
 }
 
-fn classical_set_const_times_bit(circ: &mut B, dst: &[BitId], k: u128, gate: BitId, _accumulate: bool) {
+fn classical_set_const_times_bit(
+    circ: &mut B,
+    dst: &[BitId],
+    k: u128,
+    gate: BitId,
+    _accumulate: bool,
+) {
     for (i, &b) in dst.iter().enumerate() {
         circ.bit_store0(b);
         let bit = i < 128 && ((k >> i) & 1) == 1;
@@ -250,11 +254,7 @@ fn coord_rsub(circ: &mut B, x: &[QubitId], coord: &[BitId]) {
         }
         return;
     }
-    if std::env::var("TLM_FUSE_X_RESTORE")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("TLM_FUSE_X_RESTORE").ok().as_deref() == Some("1") {
         mod_const_minus_reg_qb(circ, x, coord, SECP256K1_P);
         return;
     }
@@ -272,13 +272,7 @@ fn coord_rsub(circ: &mut B, x: &[QubitId], coord: &[BitId]) {
     mod_neg(circ, x);
 }
 
-pub fn ec_add(
-    circ: &mut B,
-    x2: &mut Vec<QubitId>,
-    y2: &[QubitId],
-    ox: &[BitId],
-    oy: &[BitId],
-) {
+pub fn ec_add(circ: &mut B, x2: &mut Vec<QubitId>, y2: &[QubitId], ox: &[BitId], oy: &[BitId]) {
     assert_eq!(x2.len(), N, "x2 is 256 bits");
     assert_eq!(y2.len(), N, "y2 is 256 bits");
     assert_eq!(ox.len(), N, "ox is 256 classical bits");

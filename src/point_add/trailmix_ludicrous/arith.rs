@@ -1,5 +1,4 @@
-
-use super::{B, BExt};
+use super::{BExt, B};
 use crate::circuit::{BitId, QubitId};
 use std::cell::Cell;
 
@@ -66,18 +65,16 @@ fn next_add_const_call_index() -> usize {
 }
 
 fn env_index_value(name: &str, index: usize) -> Option<usize> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| {
-            value
-                .split(',')
-                .filter_map(|item| item.trim().split_once(':'))
-                .find_map(|(call, value)| {
-                    (call.parse::<usize>().ok()? == index)
-                        .then(|| value.parse::<usize>().ok())
-                        .flatten()
-                })
-        })
+    std::env::var(name).ok().and_then(|value| {
+        value
+            .split(',')
+            .filter_map(|item| item.trim().split_once(':'))
+            .find_map(|(call, value)| {
+                (call.parse::<usize>().ok()? == index)
+                    .then(|| value.parse::<usize>().ok())
+                    .flatten()
+            })
+    })
 }
 
 fn env_index_list_contains(name: &str, index: usize) -> bool {
@@ -225,12 +222,11 @@ fn ffg_call_has_structurally_dead_hybrid_carry(call_index: usize, bit: usize, ph
 }
 
 const FFG_TOP29_REMAINDER_KEYS: &[u32] = &[
-    1821, 2333, 3869, 6685, 7197, 7453, 13341, 15901, 19741, 19997, 20253, 22044,
-    25885, 26397, 27933, 31517, 32796, 34077, 36125, 36380, 38173, 38941, 40989,
-    41757, 42525, 44316, 46621, 50205, 54045, 54557, 68893, 72221, 74781, 79133,
-    85277, 85789, 86557, 102685, 103453, 104989, 108061, 110365, 112669, 115741,
-    117789, 120861, 121117, 123165, 126493, 126749, 127260, 128797, 129053,
-    130844, 131101, 137245, 144157, 144669, 147741, 149021, 149533, 151069,
+    1821, 2333, 3869, 6685, 7197, 7453, 13341, 15901, 19741, 19997, 20253, 22044, 25885, 26397,
+    27933, 31517, 32796, 34077, 36125, 36380, 38173, 38941, 40989, 41757, 42525, 44316, 46621,
+    50205, 54045, 54557, 68893, 72221, 74781, 79133, 85277, 85789, 86557, 102685, 103453, 104989,
+    108061, 110365, 112669, 115741, 117789, 120861, 121117, 123165, 126493, 126749, 127260, 128797,
+    129053, 130844, 131101, 137245, 144157, 144669, 147741, 149021, 149533, 151069,
 ];
 
 const CONST_CHUNK_DEAD_RANGES: &[(usize, usize, usize)] = &[
@@ -348,34 +344,30 @@ const CONST_CHUNK_DEAD_RANGES: &[(usize, usize, usize)] = &[
 ];
 
 const CONST_CHUNK_REMAINDER_KEYS: &[u32] = &[
-    1281, 5376, 5377, 6913, 8449, 8960, 9473, 10496, 15616, 16641, 17153, 19201,
-    19713, 20736, 22785, 23809, 27905, 29440, 38656, 40705, 43777, 49921, 51457,
-    57089, 58113, 59649, 64257, 66305, 66816, 68865, 70400, 70401, 70913, 77569,
-    79361, 80898, 99074, 113408, 116224, 117248, 118016, 118017, 119043, 120064,
-    120065, 121090, 121091, 122115, 125189, 126467, 127492, 127493, 128772, 128774,
-    130308, 130309, 131589, 131590, 135936, 136711, 136960, 136961, 137990, 137991,
-    139015, 139264, 140035, 140545, 141315, 141575, 141824, 142855, 143105, 144385,
-    144386, 145155, 145415, 145665, 146946, 149761, 149762, 152579, 152581, 153861,
-    154112, 155137, 156166, 156417, 157447, 157696, 157697, 158466, 158978, 159746,
-    161794, 161796, 164354, 165120, 166915, 167680, 168960, 168961, 169475, 174339,
-    174848, 174849, 176132, 176133, 177922, 177923, 178432, 178433, 178952, 179456,
-    179457, 181506, 181507, 182272, 182273, 185344, 185345, 185856, 185857, 186368,
-    186369, 186880, 186881, 187392, 187393, 188928, 188929, 189440, 189441, 189952,
-    189953, 190464, 190465, 190976, 190977, 192000, 192001, 192512, 192513, 193024,
-    193025, 193536, 193537, 194048, 194049, 196609, 199680, 200192, 200193, 214017,
-    217089, 223233, 226822, 226824, 227328, 227329, 230151, 232453, 234242, 234243,
-    236035, 236806, 236807, 237826, 237827, 240128, 240129, 241414, 241415, 242435,
-    244225, 245761, 245762, 247296, 248579, 252419, 252930, 254214, 255491, 255493,
-    257027, 257028, 258050, 258566, 259840, 260354, 260355, 263172, 264707, 268546,
-    269825, 271105, 271106, 272385, 273154, 273155, 273415, 273664, 274689, 275968,
-    276743, 277767, 278016, 278789, 278791, 279812, 279814, 281089, 281348, 281350,
-    282373, 282374, 285188, 285190, 286723, 286725, 288003, 288004, 289284, 289285,
-    290306, 290562, 290564, 291842, 292865, 292868, 295170, 296195, 297217, 297218,
-    299265, 299266, 300288, 301312, 302081, 303104, 304897, 305152, 323329, 328194,
-    330499, 341761, 345857, 346369, 346881, 347905, 352512, 354049, 359168, 361217,
-    361729, 362241, 367873, 368385, 369920, 371457, 374529, 375040, 375041, 376577,
-    378625, 380672, 380673, 381697, 385281, 386817, 391937, 393985, 395008, 398593,
-    400641, 402689, 405761, 407809, 411393, 415488, 415489, 416001, 416513,
+    1281, 5376, 5377, 6913, 8449, 8960, 9473, 10496, 15616, 16641, 17153, 19201, 19713, 20736,
+    22785, 23809, 27905, 29440, 38656, 40705, 43777, 49921, 51457, 57089, 58113, 59649, 64257,
+    66305, 66816, 68865, 70400, 70401, 70913, 77569, 79361, 80898, 99074, 113408, 116224, 117248,
+    118016, 118017, 119043, 120064, 120065, 121090, 121091, 122115, 125189, 126467, 127492, 127493,
+    128772, 128774, 130308, 130309, 131589, 131590, 135936, 136711, 136960, 136961, 137990, 137991,
+    139015, 139264, 140035, 140545, 141315, 141575, 141824, 142855, 143105, 144385, 144386, 145155,
+    145415, 145665, 146946, 149761, 149762, 152579, 152581, 153861, 154112, 155137, 156166, 156417,
+    157447, 157696, 157697, 158466, 158978, 159746, 161794, 161796, 164354, 165120, 166915, 167680,
+    168960, 168961, 169475, 174339, 174848, 174849, 176132, 176133, 177922, 177923, 178432, 178433,
+    178952, 179456, 179457, 181506, 181507, 182272, 182273, 185344, 185345, 185856, 185857, 186368,
+    186369, 186880, 186881, 187392, 187393, 188928, 188929, 189440, 189441, 189952, 189953, 190464,
+    190465, 190976, 190977, 192000, 192001, 192512, 192513, 193024, 193025, 193536, 193537, 194048,
+    194049, 196609, 199680, 200192, 200193, 214017, 217089, 223233, 226822, 226824, 227328, 227329,
+    230151, 232453, 234242, 234243, 236035, 236806, 236807, 237826, 237827, 240128, 240129, 241414,
+    241415, 242435, 244225, 245761, 245762, 247296, 248579, 252419, 252930, 254214, 255491, 255493,
+    257027, 257028, 258050, 258566, 259840, 260354, 260355, 263172, 264707, 268546, 269825, 271105,
+    271106, 272385, 273154, 273155, 273415, 273664, 274689, 275968, 276743, 277767, 278016, 278789,
+    278791, 279812, 279814, 281089, 281348, 281350, 282373, 282374, 285188, 285190, 286723, 286725,
+    288003, 288004, 289284, 289285, 290306, 290562, 290564, 291842, 292865, 292868, 295170, 296195,
+    297217, 297218, 299265, 299266, 300288, 301312, 302081, 303104, 304897, 305152, 323329, 328194,
+    330499, 341761, 345857, 346369, 346881, 347905, 352512, 354049, 359168, 361217, 361729, 362241,
+    367873, 368385, 369920, 371457, 374529, 375040, 375041, 376577, 378625, 380672, 380673, 381697,
+    385281, 386817, 391937, 393985, 395008, 398593, 400641, 402689, 405761, 407809, 411393, 415488,
+    415489, 416001, 416513,
 ];
 
 fn const_chunk_call_has_structurally_dead_carry(call_index: usize, bit: usize) -> bool {
@@ -398,7 +390,6 @@ fn cuccaro_call_has_structurally_dead_carry(call_index: usize, bit: usize) -> bo
         return false;
     }
     match call_index {
-
         12 | 25 => (1..=127).contains(&bit),
         37 => bit <= 135,
         19 => (1..=127).contains(&bit),
@@ -457,7 +448,11 @@ pub fn cuccaro_carry(
     let ops_start = circ.current_ops_len();
     let s = y.len();
     assert_eq!(x.len(), s, "cuccaro_carry: x,y width mismatch");
-    let fresh = if cin.is_none() { Some(circ.alloc_qubit()) } else { None };
+    let fresh = if cin.is_none() {
+        Some(circ.alloc_qubit())
+    } else {
+        None
+    };
     let c: &QubitId = cin.unwrap_or_else(|| fresh.as_ref().unwrap());
     let sum = |circ: &mut B, xi: &QubitId, yi: &QubitId| match ctrl {
         Some(ct) => circ.ccx(*ct, *xi, *yi),
@@ -472,7 +467,6 @@ pub fn cuccaro_carry(
             gated_carry(circ, co);
         }
     } else {
-
         for i in 0..s {
             circ.cx(*c, y[i]);
             circ.cx(*c, x[i]);
@@ -572,7 +566,6 @@ fn clean_add_threaded_opt(
 
     for i in (0..s).rev() {
         if !produces(i) {
-
             let ci: Option<&QubitId> = if i == 0 { cin } else { inner[i - 1].as_ref() };
             if let Some(ci) = ci {
                 circ.cx(*ci, x[i]);
@@ -632,7 +625,6 @@ pub(crate) fn erase_carry_gated_opt(
     };
     match cap {
         Some(k) if k < s => {
-
             let lo = s - k;
             let zcin = circ.alloc_qubit();
             super::comparator::compare_geq_cin_middle(circ, &a[lo..], &b[lo..], &zcin, deposit);
@@ -795,8 +787,9 @@ pub(crate) fn hybrid_add_adaptive(circ: &mut B, a: &[QubitId], b: &[QubitId], k:
     if k < n.div_ceil(c) + c + super::gidney::ADAPTIVE_RES {
         let cov = (k.saturating_mul(k.saturating_sub(1)) / 2).min(n);
         if cov > 2 * k {
-
-            unreachable!("square adaptive add hit the tight chunked_then_cuccaro branch (n={n}, k={k})");
+            unreachable!(
+                "square adaptive add hit the tight chunked_then_cuccaro branch (n={n}, k={k})"
+            );
         }
         hybrid_add_plain(circ, a, b, k);
         return;
@@ -865,29 +858,79 @@ fn add_vented_chunked_opt_capped(
     emit_chunked_capped(circ, ctrl, x, y, &bounds, plain_len, cout, cap);
 }
 
-fn ccx_cond(circ: &mut B, ctrl: &QubitId, c1: &QubitId, c2: &QubitId, t: &QubitId, b0: bool, b1: bool) {
-    if b0 { circ.cx(*ctrl, *c1); }
-    if b1 { circ.cx(*ctrl, *c2); }
+fn ccx_cond(
+    circ: &mut B,
+    ctrl: &QubitId,
+    c1: &QubitId,
+    c2: &QubitId,
+    t: &QubitId,
+    b0: bool,
+    b1: bool,
+) {
+    if b0 {
+        circ.cx(*ctrl, *c1);
+    }
+    if b1 {
+        circ.cx(*ctrl, *c2);
+    }
     circ.ccx(*c1, *c2, *t);
-    if b0 { circ.cx(*ctrl, *c1); }
-    if b1 { circ.cx(*ctrl, *c2); }
+    if b0 {
+        circ.cx(*ctrl, *c1);
+    }
+    if b1 {
+        circ.cx(*ctrl, *c2);
+    }
 }
 
-fn xor_carries_off_cin(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], off: usize, out: &[QubitId], cin: &QubitId) {
+fn xor_carries_off_cin(
+    circ: &mut B,
+    ctrl: &QubitId,
+    a: &[QubitId],
+    c: &[u8],
+    off: usize,
+    out: &[QubitId],
+    cin: &QubitId,
+) {
     let n = a.len();
     for i in (1..n - 1).rev() {
-        ccx_cond(circ, ctrl, &a[i], &out[i - 1], &out[i], cbit(c, off + i), false);
+        ccx_cond(
+            circ,
+            ctrl,
+            &a[i],
+            &out[i - 1],
+            &out[i],
+            cbit(c, off + i),
+            false,
+        );
     }
     for i in 0..n - 1 {
-        if cbit(c, off + i) { circ.cx(*ctrl, out[i]); }
+        if cbit(c, off + i) {
+            circ.cx(*ctrl, out[i]);
+        }
     }
     ccx_cond(circ, ctrl, cin, &a[0], &out[0], cbit(c, off), cbit(c, off));
     for i in 1..n - 1 {
-        ccx_cond(circ, ctrl, &a[i], &out[i - 1], &out[i], cbit(c, off + i), cbit(c, off + i));
+        ccx_cond(
+            circ,
+            ctrl,
+            &a[i],
+            &out[i - 1],
+            &out[i],
+            cbit(c, off + i),
+            cbit(c, off + i),
+        );
     }
 }
 
-fn dirty_carryin(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], off: usize, dirty: &[QubitId], cin: &QubitId) {
+fn dirty_carryin(
+    circ: &mut B,
+    ctrl: &QubitId,
+    a: &[QubitId],
+    c: &[u8],
+    off: usize,
+    dirty: &[QubitId],
+    cin: &QubitId,
+) {
     let n = a.len();
     debug_assert!(n >= 2 && dirty.len() >= n - 1);
     let mut bits: Vec<BitId> = Vec::with_capacity(n - 1);
@@ -896,15 +939,23 @@ fn dirty_carryin(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], off: usi
         let new = circ.alloc_qubit();
         let anc = circ.alloc_qubit();
         let on = cbit(c, off + i);
-        let cyref: QubitId = match cy_owned { Some(q) => q, None => *cin };
-        if on { circ.cx(*ctrl, anc); }
+        let cyref: QubitId = match cy_owned {
+            Some(q) => q,
+            None => *cin,
+        };
+        if on {
+            circ.cx(*ctrl, anc);
+        }
         circ.cx(cyref, anc);
         circ.cx(cyref, a[i]);
         circ.ccx(a[i], anc, new);
         circ.cx(cyref, new);
         circ.cx(new, dirty[i]);
         circ.cx(cyref, anc);
-        if on { circ.cx(*ctrl, anc); circ.cx(*ctrl, a[i]); }
+        if on {
+            circ.cx(*ctrl, anc);
+            circ.cx(*ctrl, a[i]);
+        }
         circ.zero_and_free(anc);
         if let Some(old) = cy_owned.take() {
             let b = circ.alloc_bit();
@@ -915,7 +966,9 @@ fn dirty_carryin(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], off: usi
         cy_owned = Some(new);
     }
     let cy_top = cy_owned.take().unwrap();
-    if cbit(c, off + n - 1) { circ.cx(*ctrl, a[n - 1]); }
+    if cbit(c, off + n - 1) {
+        circ.cx(*ctrl, a[n - 1]);
+    }
     circ.cx(cy_top, a[n - 1]);
     {
         let b = circ.alloc_bit();
@@ -923,11 +976,19 @@ fn dirty_carryin(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], off: usi
         bits.push(b);
     }
     circ.zero_and_free(cy_top);
-    for i in 0..(n - 1) { circ.z_if_bit(dirty[i], bits[i]); }
-    for q in a { circ.x(*q); }
+    for i in 0..(n - 1) {
+        circ.z_if_bit(dirty[i], bits[i]);
+    }
+    for q in a {
+        circ.x(*q);
+    }
     xor_carries_off_cin(circ, ctrl, a, c, off, dirty, cin);
-    for q in a { circ.x(*q); }
-    for i in 0..(n - 1) { circ.z_if_bit(dirty[i], bits[i]); }
+    for q in a {
+        circ.x(*q);
+    }
+    for i in 0..(n - 1) {
+        circ.z_if_bit(dirty[i], bits[i]);
+    }
 }
 
 fn graduated_const_fits(n: usize, k: usize) -> bool {
@@ -937,18 +998,21 @@ fn graduated_const_kmin(n: usize) -> usize {
     (4..).find(|&k| graduated_const_fits(n, k)).unwrap()
 }
 
-fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, cout: &QubitId) {
+fn const_chunk_add_clean(
+    circ: &mut B,
+    ctrl: &QubitId,
+    a: &[QubitId],
+    c: &[u8],
+    coff: usize,
+    cin: &QubitId,
+    cout: &QubitId,
+) {
     let call_index = next_const_chunk_call_index();
     let s = a.len();
     if std::env::var_os("TRACE_TLM_CONST_CHUNK").is_some() {
         eprintln!(
             "CONST_CHUNK call={} phase={} width={} coff={} cin={} cout={}",
-            call_index,
-            circ.phase,
-            s,
-            coff,
-            cin.0,
-            cout.0,
+            call_index, circ.phase, s, coff, cin.0, cout.0,
         );
     }
     if s == 0 {
@@ -957,8 +1021,16 @@ fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], 
     let mut int: Vec<Option<QubitId>> = (0..s - 1).map(|_| Some(circ.alloc_qubit())).collect();
     for i in 0..s {
         let on = cbit(c, coff + i);
-        let cin_ref: QubitId = if i == 0 { *cin } else { *int[i - 1].as_ref().unwrap() };
-        let cout_ref: QubitId = if i == s - 1 { *cout } else { *int[i].as_ref().unwrap() };
+        let cin_ref: QubitId = if i == 0 {
+            *cin
+        } else {
+            *int[i - 1].as_ref().unwrap()
+        };
+        let cout_ref: QubitId = if i == s - 1 {
+            *cout
+        } else {
+            *int[i].as_ref().unwrap()
+        };
         circ.cx(cin_ref, a[i]);
         if on {
             circ.cx(*ctrl, cin_ref);
@@ -983,7 +1055,11 @@ fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], 
     for i in (0..s - 1).rev() {
         let on = cbit(c, coff + i);
         let int_i = int[i].take().unwrap();
-        let cin_ref: QubitId = if i == 0 { *cin } else { *int[i - 1].as_ref().unwrap() };
+        let cin_ref: QubitId = if i == 0 {
+            *cin
+        } else {
+            *int[i - 1].as_ref().unwrap()
+        };
         if on {
             circ.cx(*ctrl, a[i]);
         }
@@ -1002,7 +1078,14 @@ fn const_chunk_add_clean(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], 
     }
 }
 
-fn const_chunk_add_clean_drop_cout(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId) {
+fn const_chunk_add_clean_drop_cout(
+    circ: &mut B,
+    ctrl: &QubitId,
+    a: &[QubitId],
+    c: &[u8],
+    coff: usize,
+    cin: &QubitId,
+) {
     let s = a.len();
     if s == 0 {
         return;
@@ -1017,7 +1100,11 @@ fn const_chunk_add_clean_drop_cout(circ: &mut B, ctrl: &QubitId, a: &[QubitId], 
     let mut int: Vec<Option<QubitId>> = (0..s - 1).map(|_| Some(circ.alloc_qubit())).collect();
     for i in 0..s - 1 {
         let on = cbit(c, coff + i);
-        let cin_ref: QubitId = if i == 0 { *cin } else { *int[i - 1].as_ref().unwrap() };
+        let cin_ref: QubitId = if i == 0 {
+            *cin
+        } else {
+            *int[i - 1].as_ref().unwrap()
+        };
         let cout_ref: QubitId = *int[i].as_ref().unwrap();
         circ.cx(cin_ref, a[i]);
         if on {
@@ -1041,7 +1128,11 @@ fn const_chunk_add_clean_drop_cout(circ: &mut B, ctrl: &QubitId, a: &[QubitId], 
     for i in (0..s - 1).rev() {
         let on = cbit(c, coff + i);
         let int_i = int[i].take().unwrap();
-        let cin_ref: QubitId = if i == 0 { *cin } else { *int[i - 1].as_ref().unwrap() };
+        let cin_ref: QubitId = if i == 0 {
+            *cin
+        } else {
+            *int[i - 1].as_ref().unwrap()
+        };
         if on {
             circ.cx(*ctrl, a[i]);
         }
@@ -1060,7 +1151,14 @@ fn const_chunk_add_clean_drop_cout(circ: &mut B, ctrl: &QubitId, a: &[QubitId], 
     }
 }
 
-fn compare_geq_const_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, bool)>(circ: &mut B, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, body: F) {
+fn compare_geq_const_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, bool)>(
+    circ: &mut B,
+    a: &[QubitId],
+    c: &[u8],
+    coff: usize,
+    cin: &QubitId,
+    body: F,
+) {
     let s = a.len();
     let mut cy: Vec<Option<QubitId>> = Vec::with_capacity(s);
     let c0 = circ.alloc_qubit();
@@ -1103,14 +1201,21 @@ fn compare_geq_const_cin_middle<F: FnOnce(&mut B, &QubitId, &QubitId, bool)>(cir
     circ.zero_and_free(c0);
 }
 
-fn controlled_erase_carry_gated_const(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, carry: QubitId) {
+fn controlled_erase_carry_gated_const(
+    circ: &mut B,
+    ctrl: &QubitId,
+    a: &[QubitId],
+    c: &[u8],
+    coff: usize,
+    cin: &QubitId,
+    carry: QubitId,
+) {
     let bit = circ.alloc_bit();
     circ.hmr(carry, bit);
 
     circ.loan_zero_qubit(carry);
     circ.push_condition(bit);
     compare_geq_const_cin_middle(circ, a, c, coff, cin, |cc, a_top, cy_top, ctop| {
-
         cc.z(*ctrl);
         cc.ccz(*ctrl, *a_top, *cy_top);
         if !ctop {
@@ -1121,7 +1226,15 @@ fn controlled_erase_carry_gated_const(circ: &mut B, ctrl: &QubitId, a: &[QubitId
     circ.pop_condition();
 }
 
-fn controlled_add_const_chunked_graduated_off(circ: &mut B, ctrl: &QubitId, a: &[QubitId], c: &[u8], coff: usize, cin: &QubitId, k: usize) {
+fn controlled_add_const_chunked_graduated_off(
+    circ: &mut B,
+    ctrl: &QubitId,
+    a: &[QubitId],
+    c: &[u8],
+    coff: usize,
+    cin: &QubitId,
+    k: usize,
+) {
     let n = a.len();
     if n == 0 {
         return;
@@ -1137,7 +1250,9 @@ fn controlled_add_const_chunked_graduated_off(circ: &mut B, ctrl: &QubitId, a: &
     assert_eq!(lo, n, "graduated staircase (k={k}) covers {lo} < n={n}");
     let mut carries: Vec<QubitId> = Vec::with_capacity(bounds.len());
     for (j, &(clo, chi)) in bounds.iter().enumerate() {
-        if std::env::var("TLM_GRAD_FINAL_NO_COUT").ok().as_deref() == Some("1") && j + 1 == bounds.len() {
+        if std::env::var("TLM_GRAD_FINAL_NO_COUT").ok().as_deref() == Some("1")
+            && j + 1 == bounds.len()
+        {
             let cin_ref: QubitId = if j == 0 { *cin } else { carries[j - 1] };
             const_chunk_add_clean_drop_cout(circ, ctrl, &a[clo..chi], c, coff + clo, &cin_ref);
             break;
@@ -1151,7 +1266,15 @@ fn controlled_add_const_chunked_graduated_off(circ: &mut B, ctrl: &QubitId, a: &
         let (clo, chi) = bounds[j];
         let carry = carries.pop().expect("carry present");
         let cin_ref: QubitId = if j == 0 { *cin } else { carries[j - 1] };
-        controlled_erase_carry_gated_const(circ, ctrl, &a[clo..chi], c, coff + clo, &cin_ref, carry);
+        controlled_erase_carry_gated_const(
+            circ,
+            ctrl,
+            &a[clo..chi],
+            c,
+            coff + clo,
+            &cin_ref,
+            carry,
+        );
     }
 }
 
@@ -1168,16 +1291,23 @@ fn add_f_window_hybrid(
     let n = lsbs;
     let a: Vec<QubitId> = reg[..n].to_vec();
     let suf_dirty = n - k - 1;
-    assert!(reg.len() >= lsbs + suf_dirty, "+f hybrid: not enough high bits to borrow");
+    assert!(
+        reg.len() >= lsbs + suf_dirty,
+        "+f hybrid: not enough high bits to borrow"
+    );
     let dirty: Vec<QubitId> = (lsbs..lsbs + suf_dirty).map(|i| reg[i]).collect();
     let mut cy: Vec<Option<QubitId>> = (0..k).map(|_| Some(circ.alloc_qubit())).collect();
 
-    if cbit(c, 0) { circ.ccx(*ctrl, a[0], *cy[0].as_ref().unwrap()); }
+    if cbit(c, 0) {
+        circ.ccx(*ctrl, a[0], *cy[0].as_ref().unwrap());
+    }
     for i in 1..k {
         let ci = *cy[i - 1].as_ref().unwrap();
         let next = *cy[i].as_ref().unwrap();
         circ.cx(ci, a[i]);
-        if cbit(c, i) { circ.cx(*ctrl, ci); }
+        if cbit(c, i) {
+            circ.cx(*ctrl, ci);
+        }
         if !ffg_call_has_structurally_dead_hybrid_carry(trace_call_index, i, circ.phase) {
             let old_context = crate::point_add::set_op_trace_context(
                 0x0100_0000 | (((trace_call_index as u32) & 0xffff) << 8) | (i as u32 & 0xff),
@@ -1185,20 +1315,25 @@ fn add_f_window_hybrid(
             circ.ccx(a[i], ci, next);
             crate::point_add::restore_op_trace_context(old_context);
         }
-        if cbit(c, i) { circ.cx(*ctrl, ci); }
+        if cbit(c, i) {
+            circ.cx(*ctrl, ci);
+        }
         circ.cx(ci, next);
     }
 
-    for i in 0..k { if cbit(c, i) { circ.cx(*ctrl, a[i]); } }
-    let release_cy0_during_suffix =
-        std::env::var("TLM_FFG_RELEASE_CY0_DURING_SUFFIX")
-            .ok()
-            .as_deref()
-            == Some("1")
-            && (std::env::var_os("TLM_FFG_RELEASE_CY0_CALLS").is_none()
-                || env_index_list_contains("TLM_FFG_RELEASE_CY0_CALLS", trace_call_index))
-            && k > 1
-            && cbit(c, 0);
+    for i in 0..k {
+        if cbit(c, i) {
+            circ.cx(*ctrl, a[i]);
+        }
+    }
+    let release_cy0_during_suffix = std::env::var("TLM_FFG_RELEASE_CY0_DURING_SUFFIX")
+        .ok()
+        .as_deref()
+        == Some("1")
+        && (std::env::var_os("TLM_FFG_RELEASE_CY0_CALLS").is_none()
+            || env_index_list_contains("TLM_FFG_RELEASE_CY0_CALLS", trace_call_index))
+        && k > 1
+        && cbit(c, 0);
     if release_cy0_during_suffix {
         let cy0 = *cy[0].as_ref().unwrap();
 
@@ -1214,7 +1349,15 @@ fn add_f_window_hybrid(
         let sn = n - k;
 
         if sn >= 2 {
-            controlled_add_const_chunked_graduated_off(circ, ctrl, &a_hi, c, k, &cin, graduated_const_kmin(sn));
+            controlled_add_const_chunked_graduated_off(
+                circ,
+                ctrl,
+                &a_hi,
+                c,
+                k,
+                &cin,
+                graduated_const_kmin(sn),
+            );
         } else {
             dirty_carryin(circ, ctrl, &a_hi, c, k, &dirty, &cin);
         }
@@ -1228,17 +1371,24 @@ fn add_f_window_hybrid(
     }
 
     for i in (1..k).rev() {
-        if cbit(c, i) { circ.cx(*ctrl, a[i]); }
+        if cbit(c, i) {
+            circ.cx(*ctrl, a[i]);
+        }
         let ci = *cy[i - 1].as_ref().unwrap();
         let next = *cy[i].as_ref().unwrap();
         circ.cx(ci, next);
-        if cbit(c, i) { circ.cx(*ctrl, ci); }
+        if cbit(c, i) {
+            circ.cx(*ctrl, ci);
+        }
         let nq = cy[i].take().unwrap();
         let b = circ.alloc_bit();
         circ.hmr(nq, b);
         circ.zero_and_free(nq);
         circ.cz_if_bit(a[i], ci, b);
-        if cbit(c, i) { circ.cx(*ctrl, ci); circ.cx(*ctrl, a[i]); }
+        if cbit(c, i) {
+            circ.cx(*ctrl, ci);
+            circ.cx(*ctrl, a[i]);
+        }
     }
 
     let cy0 = cy[0].take().unwrap();
@@ -1254,14 +1404,25 @@ fn add_f_window_hybrid(
     }
 }
 
-fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], g_sched: Option<usize>) {
+fn add_f_window(
+    circ: &mut B,
+    ctrl: &QubitId,
+    reg: &[QubitId],
+    lsbs: usize,
+    c: &[u8],
+    g_sched: Option<usize>,
+) {
     let call_index = next_ffg_call_index();
     let timeline_start = circ.active_timeline.len();
     let n = lsbs;
     assert!(n <= reg.len(), "register too short for +f window");
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     if n == 1 {
-        if cbit(c, 0) { circ.cx(*ctrl, reg[0]); }
+        if cbit(c, 0) {
+            circ.cx(*ctrl, reg[0]);
+        }
         return;
     }
 
@@ -1270,9 +1431,7 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(4);
-        if let Some(call_reserve) =
-            env_index_value("TLM_TARGET_FFG_CALL_RESERVES", call_index)
-        {
+        if let Some(call_reserve) = env_index_value("TLM_TARGET_FFG_CALL_RESERVES", call_index) {
             reserve = call_reserve;
         } else if std::env::var("TLM_TARGET_FFG_RESERVE8_CALLS")
             .ok()
@@ -1294,7 +1453,10 @@ fn add_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
         headroom.saturating_sub(reserve)
     });
     let scheduled_g = g_sched
-        .map_or_else(|| CEILING.saturating_sub(circ.active_qubits as usize), |g| g)
+        .map_or_else(
+            || CEILING.saturating_sub(circ.active_qubits as usize),
+            |g| g,
+        )
         .min(target_g.unwrap_or(usize::MAX))
         .min(n - 1);
     let capped_g = std::env::var("TLM_FFG_MAX_G")
@@ -1414,7 +1576,6 @@ fn add_f_window_clean(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize
         circ.cz_if_bit(a[0], *ctrl, mbit);
         circ.cx(*ctrl, a[0]);
     } else {
-
         circ.zero_and_free(cy1);
     }
 }
@@ -1429,7 +1590,14 @@ fn sub_f_window(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &
     }
 }
 
-fn controlled_lt_msbs_conditional(circ: &mut B, ctrl: Option<&QubitId>, a: &[QubitId], b: &[QubitId], k: usize, target: QubitId) {
+fn controlled_lt_msbs_conditional(
+    circ: &mut B,
+    ctrl: Option<&QubitId>,
+    a: &[QubitId],
+    b: &[QubitId],
+    k: usize,
+    target: QubitId,
+) {
     let a_top: Vec<QubitId> = a[a.len() - k..].to_vec();
     let b_top: Vec<QubitId> = b[b.len() - k..].to_vec();
     let bit = circ.alloc_bit();
@@ -1459,7 +1627,14 @@ fn controlled_lt_msbs_conditional(circ: &mut B, ctrl: Option<&QubitId>, a: &[Qub
     circ.pop_condition();
 }
 
-fn controlled_add_carry_msbs_conditional(circ: &mut B, ctrl: Option<&QubitId>, a: &[QubitId], b: &[QubitId], k: usize, target: &QubitId) {
+fn controlled_add_carry_msbs_conditional(
+    circ: &mut B,
+    ctrl: Option<&QubitId>,
+    a: &[QubitId],
+    b: &[QubitId],
+    k: usize,
+    target: &QubitId,
+) {
     let a_top: Vec<QubitId> = a[a.len() - k..].to_vec();
     let b_top: Vec<QubitId> = b[b.len() - k..].to_vec();
     let bit = circ.alloc_bit();
@@ -1471,14 +1646,21 @@ fn controlled_add_carry_msbs_conditional(circ: &mut B, ctrl: Option<&QubitId>, a
 
     let ctrl = ctrl.copied();
     let lt_flag = circ.alloc_qubit();
-    super::comparator::compare_geq_chunked_middle(circ, &b_top, &a_top, &lt_flag, |c, flag| {
-        c.x(*flag);
-        match &ctrl {
-            Some(ct) => c.cz(*ct, *flag),
-            None => c.z(*flag),
-        }
-        c.x(*flag);
-    }, k);
+    super::comparator::compare_geq_chunked_middle(
+        circ,
+        &b_top,
+        &a_top,
+        &lt_flag,
+        |c, flag| {
+            c.x(*flag);
+            match &ctrl {
+                Some(ct) => c.cz(*ct, *flag),
+                None => c.z(*flag),
+            }
+            c.x(*flag);
+        },
+        k,
+    );
     circ.zero_and_free(lt_flag);
     for q in &b_top {
         circ.x(*q);
@@ -1486,7 +1668,14 @@ fn controlled_add_carry_msbs_conditional(circ: &mut B, ctrl: Option<&QubitId>, a
     circ.pop_condition();
 }
 
-pub fn controlled_mod_add_k(circ: &mut B, ctrl: &QubitId, x: &[QubitId], y: &[QubitId], sched_k: Option<usize>, ffg_g: Option<usize>) {
+pub fn controlled_mod_add_k(
+    circ: &mut B,
+    ctrl: &QubitId,
+    x: &[QubitId],
+    y: &[QubitId],
+    sched_k: Option<usize>,
+    ffg_g: Option<usize>,
+) {
     let n = x.len();
     assert_eq!(y.len(), n, "x,y must both be n=256 bits");
     assert_eq!(n, 256, "secp256k1 controlled_mod_add expects n=256");
@@ -1526,7 +1715,6 @@ pub fn mod_sub(circ: &mut B, x: &[QubitId], y: &[QubitId]) {
     if std::env::var("TLM_SQUARE_NO_VENT_REDUCE").ok().as_deref() == Some("1") {
         cuccaro_carry(circ, None, x, y, None, Some(&anc));
     } else {
-
         let ci = next_cuccaro_call_index();
         add_cout_vented_skip_dead(circ, x, y, &anc, ci);
     }
@@ -1554,7 +1742,11 @@ fn add_cout_vented_unctrl(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &Qub
 
 pub fn mod_rsub_vented_loaded(circ: &mut B, t1: &[QubitId], y: &[QubitId]) {
     let n = y.len();
-    assert_eq!(t1.len(), n, "mod_rsub_vented_loaded: t1,y must both be n=256 bits");
+    assert_eq!(
+        t1.len(),
+        n,
+        "mod_rsub_vented_loaded: t1,y must both be n=256 bits"
+    );
     assert_eq!(n, 256, "secp256k1 mod_rsub_vented_loaded expects n=256");
     let f_bytes = F_SECP256K1.to_le_bytes();
     let anc = circ.alloc_qubit();
@@ -1574,7 +1766,13 @@ pub fn mod_rsub_vented_loaded(circ: &mut B, t1: &[QubitId], y: &[QubitId]) {
     controlled_lt_msbs_conditional(circ, None, &y[..n], &t1[..n], MSBS, anc);
 }
 
-fn add_cout_vented_skip_dead(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId, call_index: usize) {
+fn add_cout_vented_skip_dead(
+    circ: &mut B,
+    x: &[QubitId],
+    y: &[QubitId],
+    cout: &QubitId,
+    call_index: usize,
+) {
     let n = y.len();
     assert_eq!(x.len(), n, "add_cout_vented_skip_dead: x,y width mismatch");
     let dead = |i: usize| cuccaro_call_has_structurally_dead_carry(call_index, i);
@@ -1584,7 +1782,9 @@ fn add_cout_vented_skip_dead(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(SQUARE_VENT_MARGIN);
-    let vents_budget = square_peak_hard_cap().saturating_sub(live).saturating_sub(margin);
+    let vents_budget = square_peak_hard_cap()
+        .saturating_sub(live)
+        .saturating_sub(margin);
 
     let mut a: Vec<QubitId> = y.to_vec();
     a.push(*cout);
@@ -1641,7 +1841,11 @@ fn add_cout_vented_skip_dead(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &
 
 fn add_cout_vented_unctrl_bounded(circ: &mut B, x: &[QubitId], y: &[QubitId], cout: &QubitId) {
     let n = y.len();
-    assert_eq!(x.len(), n, "add_cout_vented_unctrl_bounded: x,y width mismatch");
+    assert_eq!(
+        x.len(),
+        n,
+        "add_cout_vented_unctrl_bounded: x,y width mismatch"
+    );
     let zpad = circ.alloc_qubit();
 
     let live = circ.active_qubits as usize;
@@ -1649,7 +1853,9 @@ fn add_cout_vented_unctrl_bounded(circ: &mut B, x: &[QubitId], y: &[QubitId], co
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(SQUARE_VENT_MARGIN);
-    let headroom = square_peak_hard_cap().saturating_sub(live).saturating_sub(margin);
+    let headroom = square_peak_hard_cap()
+        .saturating_sub(live)
+        .saturating_sub(margin);
     let mut a: Vec<QubitId> = y.to_vec();
     a.push(*cout);
     let mut b: Vec<QubitId> = x.to_vec();
@@ -1782,7 +1988,14 @@ pub fn mod_sub_shifted_low(circ: &mut B, x: &[QubitId], y: &[QubitId], shift: us
         circ.x(*q);
     }
     sub_f_window(circ, &anc, y, LSBS, &f_bytes);
-    controlled_add_carry_msbs_conditional(circ, None, &y[n - MSBS..], &x[x.len() - MSBS..], MSBS, &anc);
+    controlled_add_carry_msbs_conditional(
+        circ,
+        None,
+        &y[n - MSBS..],
+        &x[x.len() - MSBS..],
+        MSBS,
+        &anc,
+    );
     circ.zero_and_free(anc);
 }
 
@@ -1876,7 +2089,11 @@ fn toggle_geq_p_minus_low3(circ: &mut B, y: &[QubitId], c: &[QubitId], target: &
 
 pub fn mod_sub_classical_low3(circ: &mut B, y: &[QubitId], c: &[BitId]) {
     assert_eq!(y.len(), 256, "mod_sub_classical_low3 expects 256-bit y");
-    assert_eq!(c.len(), 3, "mod_sub_classical_low3 expects three classical bits");
+    assert_eq!(
+        c.len(),
+        3,
+        "mod_sub_classical_low3 expects three classical bits"
+    );
 
     let cq: Vec<QubitId> = (0..3).map(|_| circ.alloc_qubit()).collect();
     for i in 0..3 {
@@ -2063,6 +2280,13 @@ pub fn mod_double_reverse(circ: &mut B, a: &[QubitId]) {
     }
 }
 
-pub fn add_f_window_pub(circ: &mut B, ctrl: &QubitId, reg: &[QubitId], lsbs: usize, c: &[u8], g_sched: Option<usize>) {
+pub fn add_f_window_pub(
+    circ: &mut B,
+    ctrl: &QubitId,
+    reg: &[QubitId],
+    lsbs: usize,
+    c: &[u8],
+    g_sched: Option<usize>,
+) {
     add_f_window(circ, ctrl, reg, lsbs, c, g_sched);
 }

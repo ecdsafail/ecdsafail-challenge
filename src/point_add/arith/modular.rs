@@ -1,4 +1,3 @@
-
 use super::*;
 
 pub(crate) fn mod_add_qq(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
@@ -32,7 +31,6 @@ pub(crate) fn mod_add_qq(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
 }
 
 pub(crate) fn mod_sub_qq(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256) {
-
     let a_copy: Vec<QubitId> = a.to_vec();
     emit_inverse(b, move |b| mod_add_qq(b, acc, &a_copy, p));
 }
@@ -95,7 +93,6 @@ pub(crate) fn mod_sub_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
 
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
     if kal_vent_modadd_enabled() {
-
         let c_low = c.as_limbs()[0];
         let q_clean2: [QubitId; 2] = [b.alloc_qubit(), b.alloc_qubit()];
         venting::cisub_dirty_2clean_classical(
@@ -116,7 +113,11 @@ pub(crate) fn mod_sub_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
 
     b.x(flag);
     mod_neg_inplace_fast(b, &a_ext[..n], p);
-    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY").ok().as_deref() == Some("1") {
+    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
         let phase = b.alloc_bit();
         b.hmr(flag, phase);
         cmp_lt_phase_conditioned(b, &acc_ext[..n], &a_ext[..n], phase);
@@ -253,10 +254,8 @@ pub(crate) fn mod_neg_inplace_fast(b: &mut B, v: &[QubitId], p: U256) {
 }
 
 pub(crate) fn mod_add_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
-
     let a = load_bits(b, bits);
     if std::env::var("MOD_ADD_QB_VENT").ok().as_deref() != Some("0") {
-
         mod_add_qq_vent(b, acc, &a, p);
     } else {
         mod_add_qq_fast(b, acc, &a, p);
@@ -265,11 +264,9 @@ pub(crate) fn mod_add_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
 }
 
 pub(crate) fn mod_add_double_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
-
     let a = load_bits(b, bits);
     mod_double_inplace_fast(b, &a, p);
     if std::env::var("MOD_ADD_DOUBLE_QB_VENT").ok().as_deref() != Some("0") {
-
         mod_add_qq_vent(b, acc, &a, p);
     } else {
         mod_add_qq_fast(b, acc, &a, p);
@@ -279,10 +276,8 @@ pub(crate) fn mod_add_double_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U
 }
 
 pub(crate) fn mod_sub_qb(b: &mut B, acc: &[QubitId], bits: &[BitId], p: U256) {
-
     let a = load_bits(b, bits);
     if std::env::var("MOD_SUB_QB_VENT").ok().as_deref() != Some("0") {
-
         mod_sub_qq_vent(b, acc, &a, p);
     } else {
         mod_sub_qq_fast(b, acc, &a, p);
@@ -457,7 +452,6 @@ pub(crate) fn mod_double_inplace_fast_with_dirty(
     let use_venting = std::env::var("KAL_VENT_DOUBLE").ok().as_deref() == Some("1")
         && dirty_src.map_or(false, |d| d.len() >= n - 2);
     if let Some(w) = double_carry_trunc_window() {
-
         cadd_nbit_const_direct_trunc_fast(b, v, c, ovf, w);
     } else if use_venting {
         let dirty = dirty_src.unwrap();
@@ -548,7 +542,6 @@ pub(crate) fn mod_shift_left_by_k(
                 cuccaro_add(b, &padded, &v_slice, c_in);
             }
         } else if is_sub {
-
             cuccaro_sub_fast(b, &padded, &v_slice, c_in);
         } else {
             cuccaro_add_fast(b, &padded, &v_slice, c_in);
@@ -829,10 +822,8 @@ pub(crate) fn mod_halve_inplace_fast_with_dirty(
 
     let use_venting = kal_vent_halve_enabled() && dirty_src.map_or(false, |d| d.len() >= n - 2);
     if let Some(w) = double_carry_trunc_window() {
-
         csub_nbit_const_direct_trunc_fast(b, v, c, ovf, w);
     } else if use_venting {
-
         let c_u64: u64 = c.as_limbs()[0] | (c.as_limbs()[1] << 32);
 
         let c_low = c.as_limbs()[0];
@@ -974,7 +965,11 @@ pub(crate) fn mod_add_qq_fast(b: &mut B, acc: &[QubitId], a: &[QubitId], p: U256
     }
     b.x(flag);
     b.cx(flag, acc_ovf);
-    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY").ok().as_deref() == Some("1") {
+    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
         let phase = b.alloc_bit();
         b.hmr(flag, phase);
         cmp_lt_phase_conditioned(b, &acc_ext[..n], &a_ext[..n], phase);
@@ -1057,7 +1052,11 @@ pub(crate) fn mod_add_qq_fast_from_zero(b: &mut B, acc: &[QubitId], a: &[QubitId
     }
     b.x(flag);
     b.cx(flag, acc_ovf);
-    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY").ok().as_deref() == Some("1") {
+    if std::env::var("MOD_FAST_FLAG_CONDITIONAL_REPLAY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
         let phase = b.alloc_bit();
         b.hmr(flag, phase);
         cmp_lt_phase_conditioned(b, &acc_ext[..n], &a_ext[..n], phase);

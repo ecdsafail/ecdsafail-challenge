@@ -1,4 +1,3 @@
-
 use super::*;
 
 pub const DIALOG_GCD_ACTIVE_ITERATIONS_ENV: &str = "DIALOG_GCD_ACTIVE_ITERATIONS";
@@ -182,19 +181,31 @@ pub(crate) fn dialog_gcd_apply_final_lowq_enabled() -> bool {
 }
 
 pub(crate) fn dialog_gcd_fused_hclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_HCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_HCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(crate) fn dialog_gcd_fused_dclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_DCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_DCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(crate) fn dialog_gcd_fused_ovfclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_OVFCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(crate) fn dialog_gcd_fused_halve_edclear_measured_enabled() -> bool {
-    std::env::var("DIALOG_GCD_FUSED_HALVE_EDCLEAR_MEASURED").ok().as_deref() == Some("1")
+    std::env::var("DIALOG_GCD_FUSED_HALVE_EDCLEAR_MEASURED")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(crate) fn dialog_gcd_apply_final_windowed_fast_blocks() -> Option<usize> {
@@ -240,7 +251,6 @@ pub(crate) fn dialog_gcd_special_clean_conditional_replay_enabled() -> bool {
 }
 
 pub(crate) fn dialog_gcd_apply_replay_swap_host_enabled() -> bool {
-
     std::env::var("DIALOG_GCD_APPLY_REPLAY_SWAP_HOST")
         .ok()
         .as_deref()
@@ -255,10 +265,7 @@ pub(crate) fn dialog_gcd_raw_tobitvector_materialized_sub_enabled() -> bool {
 }
 
 pub(crate) fn dialog_gcd_ctrl_body_vented_enabled() -> bool {
-    std::env::var("DIALOG_GCD_CTRL_BODY_VENTED")
-        .ok()
-        .as_deref()
-        != Some("0")
+    std::env::var("DIALOG_GCD_CTRL_BODY_VENTED").ok().as_deref() != Some("0")
 }
 
 pub(crate) fn dialog_gcd_raw_tobitvector_variable_width_enabled() -> bool {
@@ -368,17 +375,13 @@ pub(crate) fn dialog_gcd_k2_enabled() -> bool {
 
 pub(crate) fn dialog_gcd_k5_clean_block_enabled() -> bool {
     dialog_gcd_k2_enabled()
-        && std::env::var("DIALOG_GCD_K5_CLEAN_BLOCK")
-            .ok()
-            .as_deref()
-            == Some("1")
+        && std::env::var("DIALOG_GCD_K5_CLEAN_BLOCK").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_block_bits() -> usize {
     if dialog_gcd_k5_clean_block_enabled() {
         12
     } else if dialog_gcd_k2_pair_compress_enabled() {
-
         DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS
     } else if dialog_gcd_k2_enabled() {
         DIALOG_GCD_HIGH_TAIL_ALIAS_BLOCK_BITS + DIALOG_GCD_HIGH_TAIL_ALIAS_GROUP_SIZE
@@ -502,10 +505,7 @@ pub(crate) fn dialog_gcd_odd_u_lowbit_fastpath_enabled() -> bool {
 pub(crate) fn dialog_gcd_k2_pair_compress_enabled() -> bool {
     dialog_gcd_k2_enabled()
         && !dialog_gcd_k5_clean_block_enabled()
-        && std::env::var("DIALOG_GCD_K2_PAIR_COMPRESS")
-            .ok()
-            .as_deref()
-            == Some("1")
+        && std::env::var("DIALOG_GCD_K2_PAIR_COMPRESS").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_sidecar_group_size() -> usize {
