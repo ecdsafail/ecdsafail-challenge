@@ -1,6 +1,5 @@
-
-use super::{B, BExt};
-use crate::circuit::{QubitId};
+use super::{BExt, B};
+use crate::circuit::QubitId;
 
 fn clear_and(circ: &mut B, t: &QubitId, a: &QubitId, b: &QubitId) {
     let bit = circ.alloc_bit();
@@ -69,12 +68,7 @@ fn tail4_top32_enabled() -> bool {
     std::env::var("TLM_TAIL4_TOP32").ok().as_deref() == Some("1")
 }
 
-fn toggle_mcx_with_dirty(
-    circ: &mut B,
-    controls: &[QubitId],
-    dirty: &[QubitId],
-    target: QubitId,
-) {
+fn toggle_mcx_with_dirty(circ: &mut B, controls: &[QubitId], dirty: &[QubitId], target: QubitId) {
     debug_assert!(!controls.contains(&target));
     match controls.len() {
         0 => circ.x(target),
@@ -115,8 +109,8 @@ fn toggle_anf_with_dirty(
 fn tail4_reordered_raw(raw: &[QubitId]) -> [QubitId; 12] {
     assert_eq!(raw.len(), 12, "tail4 raw window must contain four symbols");
     [
-        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10],
-        raw[2], raw[5], raw[8], raw[11],
+        raw[0], raw[1], raw[3], raw[4], raw[6], raw[7], raw[9], raw[10], raw[2], raw[5], raw[8],
+        raw[11],
     ]
 }
 
@@ -169,7 +163,11 @@ fn decompress_tail4_top32_payload(circ: &mut B, code: &[QubitId]) -> Vec<QubitId
 }
 
 fn compress_tail4_top32(circ: &mut B, raw: &[QubitId]) -> Vec<QubitId> {
-    assert_eq!(raw.len(), 15, "tail4 hybrid window must contain five symbols");
+    assert_eq!(
+        raw.len(),
+        15,
+        "tail4 hybrid window must contain five symbols"
+    );
     let mut data = raw[..3].to_vec();
     data.extend(compress_tail4_top32_payload(circ, &raw[3..]));
     data
@@ -222,7 +220,11 @@ fn apply_op_off(circ: &mut B, w: &[&QubitId], op: (u8, u8, u8, u8), off: u8) {
 }
 
 fn apply_merge25(circ: &mut B, w: &[&QubitId], off: u8, reverse: bool) {
-    let clear: &[usize] = if reverse { &MERGE25_CLEAR_REV } else { &MERGE25_CLEAR_FWD };
+    let clear: &[usize] = if reverse {
+        &MERGE25_CLEAR_REV
+    } else {
+        &MERGE25_CLEAR_FWD
+    };
     let n = MERGE25_OPS.len();
     for step in 0..n {
         let i = if reverse { n - 1 - step } else { step };
@@ -258,7 +260,6 @@ fn compress_3sym_reverse(circ: &mut B, w: &[&QubitId; 11]) {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DialogCodec {
-
     Pair,
 
     Triple,
@@ -271,7 +272,6 @@ pub enum DialogCodec {
 }
 
 impl DialogCodec {
-
     pub fn syms(self) -> usize {
         match self {
             Self::Pair => 2,
@@ -422,7 +422,6 @@ pub fn decompress_step0_with_t1(circ: &mut B, data: &[QubitId]) -> (QubitId, Vec
 
 #[must_use]
 pub fn jump_dialog_regions(n3: usize, iters: usize) -> Vec<(DialogCodec, usize)> {
-
     let tail4 = usize::from(tail4_top32_enabled() && iters >= 6) * 5;
     let codec_syms = iters - 1 - tail4;
     let mut n3 = n3;
