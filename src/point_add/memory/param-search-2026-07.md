@@ -53,3 +53,22 @@ rc=101). `no-op` = valid but byte-identical score.
 - Net: the current point is a tight local optimum for one-knob edits. Progress
   likely requires an algorithmic/structural change (fewer Toffolis in the
   modular-inverse inner loop, or a genuinely narrower qubit layout).
+
+## Where the qubit peak actually lives
+
+Traced with `TRACE_TLM_GCD_STEPS=1 TRACE_TLM_GCD_MIN_Q=1050 build_circuit`:
+the GCD (Kaliski) steps top out at **active_max = 1,140**, yet the reported
+**global_peak = 1,152**. So the ~12 qubits that bind the score's peak are
+allocated *outside* the traced GCD loop — in a non-GCD phase
+(fold/square/affine setup). Two consequences for anyone chasing the -1,152
+lever:
+
+- Retuning `TLM_TARGET_FFG_CALL_RESERVES` / GCD-side reserves cannot lower the
+  global peak — the GCD never reaches it.
+- The fold-side reserve *is* on the peak path, but `TLM_TARGET_FOLD_RESERVE`
+  down from 4 already fails validation (it's at its floor too).
+
+Shaving even one qubit therefore needs a structural change in that non-GCD
+phase, not a reserve knob. A useful next step would be to add a peak-site trace
+(the harness already tracks `circ.peak_qubits` / `phase_active_regions`) to name
+the exact phase that holds 1,152 live qubits.
