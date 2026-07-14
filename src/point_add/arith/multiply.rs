@@ -635,7 +635,7 @@ fn square_row_windowed_apply(
     };
 
     let row_top = base + width + 1;
-    let borrow_lane = |b: &mut B, _need: usize| -> Vec<QubitId> {
+    let borrow_lane = |_b: &mut B, _need: usize| -> Vec<QubitId> {
 
         tmp_ext[row_top..row_top + _need].to_vec()
     };
@@ -646,7 +646,6 @@ fn square_row_windowed_apply(
     for (wi, &(lo, hi)) in bounds.iter().enumerate() {
         let last = wi == nwin - 1;
         let seg = build_seg(b, lo, hi);
-        let seg_w = hi - lo;
 
         let pad = b.alloc_qubit();
         let mut a_block = seg.clone();
