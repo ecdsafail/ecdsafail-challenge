@@ -1695,7 +1695,7 @@ pub fn build() -> Vec<Op> {
     // reproduces the validated winner. Forced (not set_default) to win over the C1 default.
     // The nonce only appends identity X-pairs at the tail; the dead-CCX skip-set applied
     // post-fanout (apply_m60_dead_t10) is nonce-invariant.
-    std::env::set_var("DIALOG_TAIL_NONCE", "9000624727621");
+    std::env::set_var("DIALOG_TAIL_NONCE", "9001904503906");
     configure_q1153_second512_submission_defaults();
 
     if std::env::var("TLM_SQ_SELFTEST").ok().as_deref() == Some("1") {
