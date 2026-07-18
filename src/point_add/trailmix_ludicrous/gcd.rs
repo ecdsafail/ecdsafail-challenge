@@ -682,7 +682,12 @@ fn controlled_mod_double(circ: &mut B, ctrl: &QubitId, a: &[QubitId]) {
         circ.cswap(*ctrl, *w[i], *w[i + 1]);
     }
 
-    arith::add_f_window_pub(circ, &ovf, a, arith::LSBS, &f_bytes, None);
+    let width = if std::env::var("TLM_I0_DOUBLE_52").ok().as_deref() == Some("1") {
+        arith::LSBS - 1
+    } else {
+        arith::LSBS
+    };
+    arith::add_f_window_pub(circ, &ovf, a, width, &f_bytes, None);
 
     clear_and(circ, &ovf, ctrl, &a[0]);
     circ.zero_and_free(ovf);
@@ -696,11 +701,16 @@ fn controlled_mod_double_reverse(circ: &mut B, ctrl: &QubitId, a: &[QubitId]) {
 
     circ.ccx(*ctrl, a[0], ovf);
 
-    for q in &a[..arith::LSBS] {
+    let width = if std::env::var("TLM_I0_DOUBLE_52").ok().as_deref() == Some("1") {
+        arith::LSBS - 1
+    } else {
+        arith::LSBS
+    };
+    for q in &a[..width] {
         circ.x(*q);
     }
-    arith::add_f_window_pub(circ, &ovf, a, arith::LSBS, &f_bytes, None);
-    for q in &a[..arith::LSBS] {
+    arith::add_f_window_pub(circ, &ovf, a, width, &f_bytes, None);
+    for q in &a[..width] {
         circ.x(*q);
     }
 

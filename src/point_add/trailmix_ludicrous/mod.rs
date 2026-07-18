@@ -5,6 +5,39 @@ mod comparator;
 mod constprop;
 pub mod ec_add;
 mod fused;
+
+pub(super) use fused::FoldShadowMarker;
+
+pub(super) fn collect_fold_shadow_markers(
+    sites: &[crate::point_add::OpSite],
+) -> Vec<FoldShadowMarker> {
+    fused::collect_fold_shadow_markers(sites)
+}
+
+pub(super) fn shift_fold_shadow_markers_for_rewrite(
+    markers: &mut [FoldShadowMarker],
+    first_removed: usize,
+    insertion_after: usize,
+    second_removed: usize,
+) {
+    fused::shift_fold_shadow_markers_for_rewrite(
+        markers,
+        first_removed,
+        insertion_after,
+        second_removed,
+    );
+}
+
+pub(super) fn shift_fold_shadow_markers_for_drops(
+    markers: &mut [FoldShadowMarker],
+    drops: &[usize],
+) {
+    fused::shift_fold_shadow_markers_for_drops(markers, drops);
+}
+
+pub(super) fn write_fold_shadow_markers(markers: &[FoldShadowMarker]) {
+    fused::write_fold_shadow_markers(markers);
+}
 mod gcd;
 mod gidney;
 mod mcx;
