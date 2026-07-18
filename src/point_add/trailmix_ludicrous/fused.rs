@@ -2,7 +2,25 @@
 use super::arith::{F_SECP256K1, LSBS};
 use super::{B, BExt};
 use crate::circuit::{BitId, QubitId};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+
+const SHADOW_CONTEXT_BASE: u32 = 0xd000_0000;
+
+#[derive(Clone, Copy, Debug)]
+struct FoldShadowCall {
+    call_index: usize,
+    kind: &'static str,
+    high_qubit: QubitId,
+    e: QubitId,
+    d: QubitId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FoldShadowMarker {
+    call: FoldShadowCall,
+    start_op: usize,
+    end_op: usize,
+}
 
 thread_local! {
     static FOLD_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
@@ -13,6 +31,7 @@ thread_local! {
     static FOLD_BOUNDARY_ZERO_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
     static FUSED_CDOUBLE_FWD_SHIFT_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
     static FUSED_CDOUBLE_REV_SHIFT_CALL_INDEX: Cell<usize> = const { Cell::new(0) };
+    static FOLD_SHADOW_CALLS: RefCell<Vec<FoldShadowCall>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(super) fn reset_fold_call_index() {
@@ -24,6 +43,102 @@ pub(super) fn reset_fold_call_index() {
     FOLD_BOUNDARY_ZERO_CALL_INDEX.with(|index| index.set(0));
     FUSED_CDOUBLE_FWD_SHIFT_CALL_INDEX.with(|index| index.set(0));
     FUSED_CDOUBLE_REV_SHIFT_CALL_INDEX.with(|index| index.set(0));
+    FOLD_SHADOW_CALLS.with(|calls| calls.borrow_mut().clear());
+}
+
+fn shadow_enabled() -> bool {
+    std::env::var("TLM_DOUBLE_SHADOW").ok().as_deref() == Some("1")
+}
+
+fn enter_shadow_call(call_index: usize, kind: &'static str, high: QubitId, e: QubitId, d: QubitId) -> u32 {
+    if !shadow_enabled() {
+        return 0;
+    }
+    FOLD_SHADOW_CALLS.with(|calls| {
+        calls.borrow_mut().push(FoldShadowCall {
+            call_index,
+            kind,
+            high_qubit: high,
+            e,
+            d,
+        });
+    });
+    crate::point_add::set_op_trace_context(SHADOW_CONTEXT_BASE | call_index as u32)
+}
+
+pub(super) fn collect_fold_shadow_markers(
+    sites: &[crate::point_add::OpSite],
+) -> Vec<FoldShadowMarker> {
+    let calls = FOLD_SHADOW_CALLS.with(|calls| calls.borrow().clone());
+    calls
+        .into_iter()
+        .map(|call| {
+        let context = SHADOW_CONTEXT_BASE | call.call_index as u32;
+        let mut positions = sites
+            .iter()
+            .enumerate()
+            .filter_map(|(index, site)| (site.2 == context).then_some(index));
+        let start = positions.next().unwrap_or_else(|| {
+            panic!("shadow fold call {} has no surviving operations", call.call_index)
+        });
+        let end = positions.last().unwrap_or(start) + 1;
+            FoldShadowMarker { call, start_op: start, end_op: end }
+        })
+        .collect()
+}
+
+pub(super) fn shift_fold_shadow_markers_for_rewrite(
+    markers: &mut [FoldShadowMarker],
+    first_removed: usize,
+    insertion_after: usize,
+    second_removed: usize,
+) {
+    let map = |boundary: usize| {
+        boundary
+            - usize::from(first_removed < boundary)
+            - usize::from(second_removed < boundary)
+            + usize::from(insertion_after < boundary)
+    };
+    for marker in markers {
+        marker.start_op = map(marker.start_op);
+        marker.end_op = map(marker.end_op);
+    }
+}
+
+pub(super) fn shift_fold_shadow_markers_for_drops(
+    markers: &mut [FoldShadowMarker],
+    drops: &[usize],
+) {
+    for marker in markers {
+        marker.start_op -= drops.partition_point(|&index| index < marker.start_op);
+        marker.end_op -= drops.partition_point(|&index| index < marker.end_op);
+    }
+}
+
+pub(super) fn write_fold_shadow_markers(markers: &[FoldShadowMarker]) {
+    if !shadow_enabled() {
+        return;
+    }
+    let mut out = String::from("call_index\tkind\tstart_op\tend_op\thigh_qubit\te_qubit\td_qubit\n");
+    for marker in markers {
+        let call = marker.call;
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            call.call_index,
+            call.kind,
+            marker.start_op,
+            marker.end_op,
+            call.high_qubit.0,
+            call.e.0,
+            call.d.0,
+        ));
+    }
+    let path = std::env::var("TLM_DOUBLE_SHADOW_MARKERS")
+        .unwrap_or_else(|_| "double_shadow_markers.tsv".to_owned());
+    std::fs::write(&path, out).unwrap_or_else(|error| {
+        panic!("failed to write shadow markers {path}: {error}")
+    });
+    eprintln!("TLM_DOUBLE_SHADOW: wrote {} fold markers to {}", markers.len(), path);
 }
 
 fn next_fold_call_index() -> usize {
@@ -36,6 +151,22 @@ fn next_fold_call_index() -> usize {
 
 fn active_fold_call_index() -> usize {
     ACTIVE_FOLD_CALL_INDEX.with(|index| index.get())
+}
+
+fn fold_window_width(call_index: usize) -> usize {
+    if std::env::var("TLM_FOLD_TRIM_52").ok().as_deref() != Some("1") {
+        return LSBS;
+    }
+    let excluded = std::env::var("TLM_FOLD_TRIM_52_EXCLUDE").unwrap_or_default();
+    if excluded
+        .split(',')
+        .filter_map(|value| value.trim().parse::<usize>().ok())
+        .any(|value| value == call_index)
+    {
+        LSBS
+    } else {
+        LSBS - 1
+    }
 }
 
 fn enter_fold_call_index(index: usize) -> usize {
@@ -1743,13 +1874,22 @@ fn build_fold_at(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], dirty: &
     }
 }
 
-fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &[QubitId]) {
+fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, y: &[QubitId], complement: bool) {
     let call_index = next_fold_call_index();
+    let width = fold_window_width(call_index);
+    let ylow = &y[..width];
+    let dirty = &y[width..2 * width - 1];
+    let shadow_context = enter_shadow_call(call_index, "controlled", ylow[width - 1], *e, *d);
     let prior_fold_call_index = enter_fold_call_index(call_index);
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
     let code = super::next_fold();
     let mut selected_nv = None;
+    if complement {
+        for q in ylow {
+            circ.x(*q);
+        }
+    }
     if code < 0 {
         let chunk = std::env::var("TLM_FOLD_CHUNK_FORCE")
             .ok()
@@ -1770,6 +1910,11 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
         selected_nv = Some(nv);
         build_fold_at(circ, e, d, ylow, dirty, nv);
     }
+    if complement {
+        for q in ylow {
+            circ.x(*q);
+        }
+    }
     restore_fold_call_index(prior_fold_call_index);
     if std::env::var_os("TRACE_TLM_FOLD").is_some() {
         let local_peak = circ.active_timeline[timeline_start..]
@@ -1788,10 +1933,14 @@ fn fused_fold(circ: &mut B, e: &QubitId, d: &QubitId, ylow: &[QubitId], dirty: &
             circ.current_ops_len(),
         );
     }
+    if shadow_enabled() {
+        crate::point_add::restore_op_trace_context(shadow_context);
+    }
 }
 
 fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
     let call_index = next_fold_call_index();
+    let shadow_context = enter_shadow_call(call_index, "e_only", y[LSBS - 1], *e, *e);
     let prior_fold_call_index = enter_fold_call_index(call_index);
     let timeline_start = circ.active_timeline.len();
     let entry_active = circ.active_qubits;
@@ -1829,6 +1978,9 @@ fn fused_fold_e_only(circ: &mut B, e: &QubitId, y: &[QubitId]) {
             local_peak,
             circ.current_ops_len(),
         );
+    }
+    if shadow_enabled() {
+        crate::point_add::restore_op_trace_context(shadow_context);
     }
 }
 
@@ -1873,8 +2025,7 @@ pub fn fused_double_cdouble(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
         crate::point_add::restore_op_trace_context(old_context);
     }
 
-    let borrow: Vec<QubitId> = y[LSBS..2 * LSBS - 1].to_vec();
-    fused_fold(circ, &w[n], &w[n + 1], &y[..LSBS], &borrow);
+    fused_fold(circ, &w[n], &w[n + 1], y, false);
 
     circ.cx(y[0], w[n]);
     clear_and(circ, &w[n + 1], s2, &y[1]);
@@ -1915,14 +2066,7 @@ pub fn fused_double_cdouble_reverse(circ: &mut B, s2: &QubitId, y: &[QubitId]) {
     circ.ccx(*s2, y[1], w[n + 1]);
     circ.cx(y[0], w[n]);
 
-    let borrow: Vec<QubitId> = y[LSBS..2 * LSBS - 1].to_vec();
-    for q in &y[..LSBS] {
-        circ.x(*q);
-    }
-    fused_fold(circ, &w[n], &w[n + 1], &y[..LSBS], &borrow);
-    for q in &y[..LSBS] {
-        circ.x(*q);
-    }
+    fused_fold(circ, &w[n], &w[n + 1], y, true);
 
     for i in 1..w.len() {
         let bit = i - 1;
