@@ -810,6 +810,225 @@ fn find_inverse_pairs(
     (pairs, straddle_extra)
 }
 
+/// W018 / W044: straddle-aware CCZ self-inverse cancellation.
+///
+/// CCZ is diagonal and fully symmetric in its three qubits. Two CCZ on the same
+/// unordered triple {a,b,c} compose to identity **iff**, between them, all three
+/// qubits are NET-RESTORED (their per-branch computational-basis values at the 2nd
+/// CCZ equal those at the 1st) and the condition context is unchanged. Under that
+/// premise CCZ.U.CCZ = U exactly -- an identity in value AND phase -- so removing the
+/// pair is bit-exact by construction (no phase census needed; contrast the M-60
+/// never-fire census, which had no identity and broke on the phase channel).
+///
+/// Net-restore is decided by the SAME sound analysis (`control_net_restored`) the CCX
+/// straddle path uses, applied to each of the three qubits. This pass does NOT cancel
+/// CCX -- it treats every CCX as an opaque write -- so it is a conservative lower
+/// bound on the straddle-restorable CCZ pairs, but every cancellation it makes is
+/// sound. Intended to run on the FINAL post-`apply_m60_dead_t10` stream, so it never
+/// perturbs the dead_t10 absolute-index skip-set.
+pub(crate) fn ccz_straddle_cancel(ops: Vec<Op>) -> Vec<Op> {
+    let (num_q, num_b) = dims(&ops);
+    const OPAQUE: u32 = u32::MAX;
+
+    let mut wev_q: Vec<Vec<WEvent>> = vec![Vec::new(); num_q];
+    let mut wev_b: Vec<Vec<u32>> = vec![Vec::new(); num_b];
+    let mut cond_epoch: u64 = 0;
+    let mut cond_stack: Vec<u64> = Vec::new();
+
+    #[derive(Clone, Copy)]
+    struct PendCcz {
+        idx: usize,
+        cb: u64,
+        epoch: u64,
+    }
+    let mut pending: std::collections::HashMap<(u64, u64, u64), PendCcz> =
+        std::collections::HashMap::new();
+    let mut killed = vec![false; ops.len()];
+
+    let mut total_ccz = 0usize; // real (3-distinct-qubit) CCZ seen
+    let mut candidates = 0usize; // same-triple, same cond/epoch (pre net-restore)
+    let mut cancelled = 0usize;
+
+    let push_q = |wev_q: &mut Vec<Vec<WEvent>>, q: u64, ev: WEvent| {
+        if (q as usize) < wev_q.len() {
+            wev_q[q as usize].push(ev);
+        }
+    };
+    let push_b = |wev_b: &mut Vec<Vec<u32>>, b: u64, i: u32| {
+        if (b as usize) < wev_b.len() {
+            wev_b[b as usize].push(i);
+        }
+    };
+
+    for (i, op) in ops.iter().enumerate() {
+        let iu = i as u32;
+        let ep = cond_epoch as u32;
+        match op.kind {
+            OperationType::PushCondition => {
+                cond_epoch += 1;
+                cond_stack.push(op.c_condition.0);
+            }
+            OperationType::PopCondition => {
+                cond_epoch += 1;
+                cond_stack.pop();
+            }
+            OperationType::CCZ => {
+                let mut tri = [op.q_control1.0, op.q_control2.0, op.q_target.0];
+                tri.sort_unstable();
+                if tri[2] != u64::MAX && tri[0] != tri[1] && tri[1] != tri[2] {
+                    total_ccz += 1;
+                    let key = (tri[0], tri[1], tri[2]);
+                    let cb = op.c_condition.0;
+                    let pend = pending.get(&key).copied();
+                    let mut did_cancel = false;
+                    if let Some(p) = pend {
+                        if p.cb == cb && p.epoch == cond_epoch {
+                            candidates += 1;
+                            let lo = p.idx as u32;
+                            let qs_restored = tri.iter().all(|&q| {
+                                control_net_restored(
+                                    q, p.idx, cond_epoch, &cond_stack, &wev_q, &wev_b,
+                                )
+                            });
+                            let cond_ok = cb == u64::MAX
+                                || !bit_written_between(&wev_b[cb as usize], lo, iu);
+                            let stack_ok = cond_stack.iter().all(|&sb| {
+                                sb == u64::MAX
+                                    || !bit_written_between(&wev_b[sb as usize], lo, iu)
+                            });
+                            if qs_restored && cond_ok && stack_ok {
+                                killed[p.idx] = true;
+                                killed[i] = true;
+                                did_cancel = true;
+                                cancelled += 1;
+                            }
+                        }
+                    }
+                    if did_cancel {
+                        pending.remove(&key);
+                    } else {
+                        pending.insert(
+                            key,
+                            PendCcz {
+                                idx: i,
+                                cb,
+                                epoch: cond_epoch,
+                            },
+                        );
+                    }
+                }
+                // CCZ is diagonal: writes nothing, records no write-event.
+            }
+            OperationType::CX => {
+                push_q(
+                    &mut wev_q,
+                    op.q_target.0,
+                    WEvent {
+                        idx: iu,
+                        src: op.q_control1.0 as u32,
+                        cond: op.c_condition.0 as u32,
+                        epoch: ep,
+                    },
+                );
+            }
+            OperationType::CCX
+            | OperationType::X
+            | OperationType::R => {
+                push_q(
+                    &mut wev_q,
+                    op.q_target.0,
+                    WEvent { idx: iu, src: OPAQUE, cond: OPAQUE, epoch: ep },
+                );
+            }
+            OperationType::Swap => {
+                push_q(
+                    &mut wev_q,
+                    op.q_control1.0,
+                    WEvent { idx: iu, src: OPAQUE, cond: OPAQUE, epoch: ep },
+                );
+                push_q(
+                    &mut wev_q,
+                    op.q_target.0,
+                    WEvent { idx: iu, src: OPAQUE, cond: OPAQUE, epoch: ep },
+                );
+            }
+            OperationType::Hmr => {
+                push_q(
+                    &mut wev_q,
+                    op.q_target.0,
+                    WEvent { idx: iu, src: OPAQUE, cond: OPAQUE, epoch: ep },
+                );
+                push_b(&mut wev_b, op.c_target.0, iu);
+            }
+            OperationType::BitInvert
+            | OperationType::BitStore0
+            | OperationType::BitStore1 => {
+                push_b(&mut wev_b, op.c_target.0, iu);
+            }
+            OperationType::CZ
+            | OperationType::Z
+            | OperationType::Neg
+            | OperationType::Register
+            | OperationType::AppendToRegister
+            | OperationType::DebugPrint => {}
+        }
+    }
+
+    let n_before = ops.len();
+    let kept: Vec<Op> = ops
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, op)| if killed[i] { None } else { Some(op) })
+        .collect();
+    eprintln!(
+        "  [W018 CCZ straddle] total_ccz={} same_triple_candidates={} cancelled_pairs={} removed_ccz={} -> {} ops",
+        total_ccz,
+        candidates,
+        cancelled,
+        n_before - kept.len(),
+        kept.len()
+    );
+    kept
+}
+
+/// DIRECT MEASUREMENT (corpus-independent): run the shipped, sound CCX self-inverse
+/// matcher on the FINAL post-fanout / post-dead_t10 stream. The production constprop
+/// pass runs BEFORE `single_ccx_fanout` and `apply_m60_dead_t10`, both of which rewrite
+/// the stream afterward -- so any self-inverse CCX adjacencies those two passes create
+/// have never been seen by a canceller. Every pair `find_inverse_pairs` returns is a
+/// proven self-inverse (same controls/target, clean or net-restored between) -> removing
+/// it is bit-exact. Gated OFF by default (`TLM_CCX_FINAL_CANCEL=1` to enable) so the
+/// baseline op-stream is unchanged for differential comparison. `straddle=false` by
+/// default = strict clean case only (definitely bit-exact); `TLM_CCX_FINAL_STRADDLE=1`
+/// widens to net-restore (reuses the CCX straddle path).
+pub(crate) fn ccx_final_cancel(ops: Vec<Op>) -> Vec<Op> {
+    if std::env::var("TLM_CCX_FINAL_CANCEL").ok().as_deref() != Some("1") {
+        return ops;
+    }
+    let (nq, nb) = dims(&ops);
+    let straddle = std::env::var("TLM_CCX_FINAL_STRADDLE").ok().as_deref() == Some("1");
+    let (pairs, straddle_extra) = find_inverse_pairs(&ops, nq, nb, straddle);
+    let mut killed = vec![false; ops.len()];
+    for p in &pairs {
+        killed[p.first] = true;
+        killed[p.second] = true;
+    }
+    let kept: Vec<Op> = ops
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, o)| if killed[i] { None } else { Some(o) })
+        .collect();
+    eprintln!(
+        "  [FINAL CCX cancel] straddle={} pairs={} straddle_extra={} removed_ccx={} -> {} ops",
+        straddle,
+        pairs.len(),
+        straddle_extra,
+        pairs.len() * 2,
+        kept.len()
+    );
+    kept
+}
+
 pub fn run(ops: Vec<Op>, input_qubits: &[QubitId]) -> Vec<Op> {
     let (num_q, num_b) = dims(&ops);
     let nonces_verify = std::env::var("CONSTPROP_VERIFY")
