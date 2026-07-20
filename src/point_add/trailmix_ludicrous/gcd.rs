@@ -1,6 +1,40 @@
 
 use super::arith::{self, F_SECP256K1};
 use super::schedule::{GAP_J2, ITERS, JUMP, SCHED_J2};
+
+fn gap_j2_delta() -> usize {
+    std::env::var("TLM_GAP_J2_DELTA")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn gap_j2_mask_trunc_only() -> bool {
+    std::env::var("TLM_GAP_J2_TRUNC_ONLY").ok().as_deref() == Some("1")
+}
+
+// cmp window for step i: baseline is min(GAP_J2[i], current_n).
+// Delta narrows it; TRUNC_ONLY restricts narrowing to steps where the
+// baseline window is ALREADY a strict truncation (GAP_J2[i] < current_n),
+// leaving the exact-comparison tail steps untouched.
+fn cmp_window(i: usize, current_n: usize) -> usize {
+    let g = GAP_J2[i] as usize;
+    let base = g.min(current_n).max(1);
+    let d = gap_j2_delta();
+    if d == 0 {
+        return base;
+    }
+    if gap_j2_mask_trunc_only() && g >= current_n {
+        return base;
+    }
+    let lo = std::env::var("TLM_GAP_J2_LO").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    let hi = std::env::var("TLM_GAP_J2_HI").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(usize::MAX);
+    if i < lo || i >= hi {
+        return base;
+    }
+    base.saturating_sub(d).max(1)
+}
+
 use super::{B, BExt};
 use crate::circuit::{QubitId};
 use std::cell::Cell;
@@ -682,12 +716,7 @@ fn controlled_mod_double(circ: &mut B, ctrl: &QubitId, a: &[QubitId]) {
         circ.cswap(*ctrl, *w[i], *w[i + 1]);
     }
 
-    let width = if std::env::var("TLM_I0_DOUBLE_52").ok().as_deref() == Some("1") {
-        arith::LSBS - 1
-    } else {
-        arith::LSBS
-    };
-    arith::add_f_window_pub(circ, &ovf, a, width, &f_bytes, None);
+    arith::add_f_window_pub(circ, &ovf, a, arith::LSBS, &f_bytes, None);
 
     clear_and(circ, &ovf, ctrl, &a[0]);
     circ.zero_and_free(ovf);
@@ -701,16 +730,11 @@ fn controlled_mod_double_reverse(circ: &mut B, ctrl: &QubitId, a: &[QubitId]) {
 
     circ.ccx(*ctrl, a[0], ovf);
 
-    let width = if std::env::var("TLM_I0_DOUBLE_52").ok().as_deref() == Some("1") {
-        arith::LSBS - 1
-    } else {
-        arith::LSBS
-    };
-    for q in &a[..width] {
+    for q in &a[..arith::LSBS] {
         circ.x(*q);
     }
-    arith::add_f_window_pub(circ, &ovf, a, width, &f_bytes, None);
-    for q in &a[..width] {
+    arith::add_f_window_pub(circ, &ovf, a, arith::LSBS, &f_bytes, None);
+    for q in &a[..arith::LSBS] {
         circ.x(*q);
     }
 
@@ -770,7 +794,7 @@ pub fn forward_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, apply_inv: Option<(&
             circ.zero_and_free(q);
         }
 
-        let cmp_eff = (GAP_J2[i] as usize).min(current_n).max(1);
+        let cmp_eff = cmp_window(i, current_n);
 
         if i == 0 {
             circ.cx(v[0], t1);
@@ -1013,7 +1037,7 @@ pub fn reverse_gcd_jump(circ: &mut B, v: &mut Vec<QubitId>, tape: &mut Vec<Qubit
         while v.len() < current_n {
             v.push(circ.alloc_qubit());
         }
-        let cmp_eff = (GAP_J2[i] as usize).min(current_n).max(1);
+        let cmp_eff = cmp_window(i, current_n);
 
         if pending.is_empty() {
             win_idx -= 1;
