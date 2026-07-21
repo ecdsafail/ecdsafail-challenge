@@ -1,0 +1,346 @@
+{
+  "aux_size": 12,
+  "chunk_count": 36,
+  "chunks": [
+    {
+      "compressed_bytes": 46454,
+      "compressed_sha256": "e50306258c6ba0005137a5328b5950f7d407553ad5aa31e470afaa8101b4c63a",
+      "file": "chunk-0001-0045.zst",
+      "raw_record_sha256": "235f016f2d3c62125a10cfe3d8a9132497ea5e6fdd6536882859620867fd439a",
+      "records": 1741601,
+      "step_end": 45,
+      "step_start": 1
+    },
+    {
+      "compressed_bytes": 57073,
+      "compressed_sha256": "e10f28c9baa924de490a5a5dddc7928be5d82a43a47e7826b80768a25b6d796c",
+      "file": "chunk-0046-0090.zst",
+      "raw_record_sha256": "087a604968995ed818ca8c133bfb509d72e3a52698f5f6a298f477494bd3d647",
+      "records": 1849456,
+      "step_end": 90,
+      "step_start": 46
+    },
+    {
+      "compressed_bytes": 53210,
+      "compressed_sha256": "1605bd89d3aa9ffca484fb77831f8b4da60467a3e79d61659a520253654f26a6",
+      "file": "chunk-0091-0135.zst",
+      "raw_record_sha256": "678b3bfb1fa1e63d15c8adf3fb768fc1ec0caffa4dfbf33b09701b44041c8678",
+      "records": 1926657,
+      "step_end": 135,
+      "step_start": 91
+    },
+    {
+      "compressed_bytes": 57590,
+      "compressed_sha256": "1fae9ae2ca187b2f9eb5873ab3b739e203ec0538d2d37667de94c354de87d7bc",
+      "file": "chunk-0136-0180.zst",
+      "raw_record_sha256": "16ed6646cc6e8442fb939a278be8748923dc5f16bc9aff88a6e7eed26beb076b",
+      "records": 2040244,
+      "step_end": 180,
+      "step_start": 136
+    },
+    {
+      "compressed_bytes": 55669,
+      "compressed_sha256": "aac7c0778d8bb29b3b2c3f451ba2a7e9707159777e48a04fe0c7063dfe478d2e",
+      "file": "chunk-0181-0225.zst",
+      "raw_record_sha256": "2aea47204c52dd9a6ca09df749235b427772bf1379ce2cab87e2398b87119d6d",
+      "records": 2081313,
+      "step_end": 225,
+      "step_start": 181
+    },
+    {
+      "compressed_bytes": 64740,
+      "compressed_sha256": "b94f2629dbc3deda5ff5beaacb3675bd18fbaff543ab1184110af6121a862c85",
+      "file": "chunk-0226-0270.zst",
+      "raw_record_sha256": "2d9a992245d520b077cf163148af935b93d719ef45078ac21cf86dd40a73de25",
+      "records": 2157537,
+      "step_end": 270,
+      "step_start": 226
+    },
+    {
+      "compressed_bytes": 65476,
+      "compressed_sha256": "ea72e175a97b1d61ba73e4e0e9996901e6c15f60a3a491512a25e97c460d39ed",
+      "file": "chunk-0271-0315.zst",
+      "raw_record_sha256": "cf4ab192f844e4aaeba083ead4363a08d9dbd107aa565d54b9dfcdb06af07c3c",
+      "records": 2221575,
+      "step_end": 315,
+      "step_start": 271
+    },
+    {
+      "compressed_bytes": 75494,
+      "compressed_sha256": "39b2244ca873afab53da2fef1d6aa9abcf66ef61bf40762b536de458bd0d7124",
+      "file": "chunk-0316-0360.zst",
+      "raw_record_sha256": "5c6a91e73b75bb49c89731f9be34156590b4e3da575aedaa28caaad75fa0f1c8",
+      "records": 2326989,
+      "step_end": 360,
+      "step_start": 316
+    },
+    {
+      "compressed_bytes": 77105,
+      "compressed_sha256": "37cc36636cf583af08431359a459918d4538b2b656963df3cc602ab8ae81dc2d",
+      "file": "chunk-0361-0405.zst",
+      "raw_record_sha256": "de5765497ee0fe151ddd63c60daebab0b09d90c510fbcbdff8e9c7c60f0554d3",
+      "records": 2346741,
+      "step_end": 405,
+      "step_start": 361
+    },
+    {
+      "compressed_bytes": 78338,
+      "compressed_sha256": "8a304adc7e37a9fb030d6b9c35cc85a8b49758b07040843bee9697ff68c1f5db",
+      "file": "chunk-0406-0450.zst",
+      "raw_record_sha256": "f582ee85f7ffe361b0588d4217dfe3da5dc40d09c988abc43bb311538229f3ee",
+      "records": 2408741,
+      "step_end": 450,
+      "step_start": 406
+    },
+    {
+      "compressed_bytes": 70220,
+      "compressed_sha256": "44bad6dd3d51230ce7b32bffb80957bbfb2702772e8d8d84cd7e5d57daa9cbf3",
+      "file": "chunk-0451-0495.zst",
+      "raw_record_sha256": "3caff56a6f6516f0dc78f75bb137b0c0fca382c0993a8aa0cc831dc1b276cf30",
+      "records": 2471199,
+      "step_end": 495,
+      "step_start": 451
+    },
+    {
+      "compressed_bytes": 87654,
+      "compressed_sha256": "c09d58a6f720f7c7d6564210c610830a6a5927d8768d49c5ab58c41c48deb46e",
+      "file": "chunk-0496-0540.zst",
+      "raw_record_sha256": "0bcf73067acd11d88ca50a1dd33d341adc0765f4f24dd9c90475ece2d73c7b3e",
+      "records": 2576075,
+      "step_end": 540,
+      "step_start": 496
+    },
+    {
+      "compressed_bytes": 75551,
+      "compressed_sha256": "2317cb3a0fb24b1db7c07a98353a3c49707b06070ffddbc923c7dfc6fc0174b5",
+      "file": "chunk-0541-0585.zst",
+      "raw_record_sha256": "9ce49ba8a391b49c1359a5ef26efe28592ba2cb14a0bc094e3b510869604daa6",
+      "records": 2570178,
+      "step_end": 585,
+      "step_start": 541
+    },
+    {
+      "compressed_bytes": 79377,
+      "compressed_sha256": "62e201e2844f86cc9a65a1ad3d652d250fcbfa0b7d10a6d016fc4f7a02278ca9",
+      "file": "chunk-0586-0630.zst",
+      "raw_record_sha256": "de4bc7c841a2eb656ca511f8e4bfd054640e389e35a09684fe0ddd96feb02562",
+      "records": 2606697,
+      "step_end": 630,
+      "step_start": 586
+    },
+    {
+      "compressed_bytes": 76545,
+      "compressed_sha256": "0f20f392d196a7b15549ddcb64c2054fe98752a99084c0ef4b04b8916bd4010b",
+      "file": "chunk-0631-0675.zst",
+      "raw_record_sha256": "a0c03d2520a3df8b97a9c21857f7fc47a26cab74827e04dc50cfeebe5c1c8707",
+      "records": 2632379,
+      "step_end": 675,
+      "step_start": 631
+    },
+    {
+      "compressed_bytes": 87063,
+      "compressed_sha256": "abc49bdd40bf80bee8807dcec1406693ee2190b7617c2a98c5b51b7ac5c138cc",
+      "file": "chunk-0676-0720.zst",
+      "raw_record_sha256": "887ff5b647bf047619c94197a77e5df1b4aebf841c334aecdf8e958846427fdb",
+      "records": 2707651,
+      "step_end": 720,
+      "step_start": 676
+    },
+    {
+      "compressed_bytes": 83758,
+      "compressed_sha256": "1566a4c71040d93aac6f5c938e82e5d54a0e54f3e1e012e817ac48db9683f382",
+      "file": "chunk-0721-0765.zst",
+      "raw_record_sha256": "e34dd2bc563911127fe37f35dcccfad8825c11c47f8fe989c1bb04361c19c0f0",
+      "records": 2682863,
+      "step_end": 765,
+      "step_start": 721
+    },
+    {
+      "compressed_bytes": 91673,
+      "compressed_sha256": "11e64e7eec26cd04e7d4c565e214a40a06bb69679797b7ba842542cb245c626c",
+      "file": "chunk-0766-0810.zst",
+      "raw_record_sha256": "1d0633e2f9f9a11eac2caf136eb05c311eb03cc1205d937720160244f72414ea",
+      "records": 2705055,
+      "step_end": 810,
+      "step_start": 766
+    },
+    {
+      "compressed_bytes": 91467,
+      "compressed_sha256": "ec2a7c51c527fc30ef710c670cd281db0f66c82c5b5d503a5bd7647cb2d69fc0",
+      "file": "chunk-0811-0855.zst",
+      "raw_record_sha256": "d0f22f1bdbd571b6f94cc5686e810a8ca592d1aad2531c4a9eb7cc63258aae89",
+      "records": 2722971,
+      "step_end": 855,
+      "step_start": 811
+    },
+    {
+      "compressed_bytes": 99134,
+      "compressed_sha256": "9e1ba4f34221b72c2ffe696128aa782bf0e39ca6704c6864d999276b92a54f13",
+      "file": "chunk-0856-0900.zst",
+      "raw_record_sha256": "c8f8f1fa7c21123a46b6aba55e47d9257f3ce7c0593ee9261b3799b442af9e05",
+      "records": 2792257,
+      "step_end": 900,
+      "step_start": 856
+    },
+    {
+      "compressed_bytes": 98334,
+      "compressed_sha256": "90a6f6f3d51e2e97fbd85a9b7e05064e69f7bb99f6597959c2238fceea8c8f19",
+      "file": "chunk-0901-0945.zst",
+      "raw_record_sha256": "042f7aeb655b1a11f62f36d12994f640293f710b5d387a659d7f94f9b734b734",
+      "records": 2760711,
+      "step_end": 945,
+      "step_start": 901
+    },
+    {
+      "compressed_bytes": 85917,
+      "compressed_sha256": "dc220dc33cf889ebe590e6444f6f221852bf0fce6216920f18fca9bfa58659d1",
+      "file": "chunk-0946-0990.zst",
+      "raw_record_sha256": "724c3793887a137a4c42e4264fb8c94b12c2f27e7fe2d3c2235118e93c930470",
+      "records": 2778489,
+      "step_end": 990,
+      "step_start": 946
+    },
+    {
+      "compressed_bytes": 86234,
+      "compressed_sha256": "07a99871b6291e2bae59ce665e4dcb1f2e37feb14979b3aa1f6898902d39097c",
+      "file": "chunk-0991-1035.zst",
+      "raw_record_sha256": "1c719e48758cfb4471b5b1f14ab5e96ad327fe3b617b8cc657c9df711793b871",
+      "records": 2796079,
+      "step_end": 1035,
+      "step_start": 991
+    },
+    {
+      "compressed_bytes": 119818,
+      "compressed_sha256": "dc35edc9366fc955b02d9fbc5310509983b7b6fba0775edc01cc6f4364e40de9",
+      "file": "chunk-1036-1080.zst",
+      "raw_record_sha256": "678af65a1c57b7f0dd9451b5bd3ce313456d3e09a3529e4c8ccf16aa857c88a9",
+      "records": 2820945,
+      "step_end": 1080,
+      "step_start": 1036
+    },
+    {
+      "compressed_bytes": 123858,
+      "compressed_sha256": "d8b9b728857e5a67bdb522704802ae5c092a37aa2d76c4435b9ee9420b279002",
+      "file": "chunk-1081-1125.zst",
+      "raw_record_sha256": "4ba0eb3b678f6451de7101f805cdbac59aa9479a248f152307936e2838f3d74b",
+      "records": 2727319,
+      "step_end": 1125,
+      "step_start": 1081
+    },
+    {
+      "compressed_bytes": 102248,
+      "compressed_sha256": "0dc008fa453bf7fc4d166b007ac1cc7626c64fbf95e95486737c8f6864fd66d8",
+      "file": "chunk-1126-1170.zst",
+      "raw_record_sha256": "095285e13b6ffa2b9588bc6c65356150391c64f452ff8569b5c63d8e17491214",
+      "records": 2684999,
+      "step_end": 1170,
+      "step_start": 1126
+    },
+    {
+      "compressed_bytes": 80056,
+      "compressed_sha256": "8f437899ceecd796f8359f6fd3ec10d200a92da3a8aba9764c1c2989f9f06a8d",
+      "file": "chunk-1171-1215.zst",
+      "raw_record_sha256": "0b16464b5935b1b2e2e51fc70a0a2c9f3fc9c43126137a0e46b59afd38326da5",
+      "records": 2640840,
+      "step_end": 1215,
+      "step_start": 1171
+    },
+    {
+      "compressed_bytes": 94963,
+      "compressed_sha256": "b43632e194eff7e3e2b4288e230efe8e3a8fcfb1546f0f7962e41982f8dafc0e",
+      "file": "chunk-1216-1260.zst",
+      "raw_record_sha256": "3757859e87f4a3ae0fee1d0e0f71ec38eb4eab759aaba1ee78b17e9c7943cb25",
+      "records": 2634648,
+      "step_end": 1260,
+      "step_start": 1216
+    },
+    {
+      "compressed_bytes": 92314,
+      "compressed_sha256": "85998ae628810b93686d9dba44fed50091dadcd33909965e4958350b09724209",
+      "file": "chunk-1261-1305.zst",
+      "raw_record_sha256": "5043c260f9cb1a05437d6027bc786fd2a1f17f1d20a3222680d8ffac0fc4c122",
+      "records": 2547823,
+      "step_end": 1305,
+      "step_start": 1261
+    },
+    {
+      "compressed_bytes": 88468,
+      "compressed_sha256": "22f0aa9c534aabb9162b775fb6e7263d6af237e4611d8c494d48f38e0b5f4444",
+      "file": "chunk-1306-1350.zst",
+      "raw_record_sha256": "0ce8de51c42ae63ca24a582b2e182ee500e5885ed7c6f532a8f9c0fd55f91cb9",
+      "records": 2501775,
+      "step_end": 1350,
+      "step_start": 1306
+    },
+    {
+      "compressed_bytes": 83018,
+      "compressed_sha256": "8fc333bedf177db8d83ea9971e582ff8b9aff6d8abd86c5808612609901c036f",
+      "file": "chunk-1351-1395.zst",
+      "raw_record_sha256": "f3a192534cb68a292e9541ef572e8e713e6fd1de6d45690f6154dc02549b333a",
+      "records": 2455411,
+      "step_end": 1395,
+      "step_start": 1351
+    },
+    {
+      "compressed_bytes": 76193,
+      "compressed_sha256": "f2a7e65ceb58db3621b045a412abf01308af93d43a07aebe944e7daf1e509e15",
+      "file": "chunk-1396-1440.zst",
+      "raw_record_sha256": "01a491d49814490fe224af88d89cce32160cfe7af9bfc99849f383cfa7075841",
+      "records": 2443204,
+      "step_end": 1440,
+      "step_start": 1396
+    },
+    {
+      "compressed_bytes": 73922,
+      "compressed_sha256": "5a49f0cbe7378e49953a9ae9952c66a0d54763782f8199f323825c393e9b87e1",
+      "file": "chunk-1441-1485.zst",
+      "raw_record_sha256": "641ecbdaf2bf65ca9e3601d15579e05f0cdd6137d62cf5c7add9a38ac77a89ff",
+      "records": 2361124,
+      "step_end": 1485,
+      "step_start": 1441
+    },
+    {
+      "compressed_bytes": 71293,
+      "compressed_sha256": "1e91c5683b08add44b78c145290a1db8ae07947382b574c40f22ab53499e9c5b",
+      "file": "chunk-1486-1530.zst",
+      "raw_record_sha256": "dbbe733568cf17d370fc7609fad57e48badaba1c7a06dea343811ed7e97960a2",
+      "records": 2306228,
+      "step_end": 1530,
+      "step_start": 1486
+    },
+    {
+      "compressed_bytes": 75794,
+      "compressed_sha256": "9e44a9062b5dec0b9939751d02910c1b5f45434879f74277bcee67e7ae311deb",
+      "file": "chunk-1531-1575.zst",
+      "raw_record_sha256": "aebd3ca1cb2d2a1586508baa875c9a59a2eeb3fc1b608d7384af14397fa19dd6",
+      "records": 2248900,
+      "step_end": 1575,
+      "step_start": 1531
+    },
+    {
+      "compressed_bytes": 75420,
+      "compressed_sha256": "bd7bbca920442c57132b24bb0d14372f4e344840da55fc072b2fd1e07817a0d1",
+      "file": "chunk-1576-1616.zst",
+      "raw_record_sha256": "645a77c2d62b7be3f52e0550d8416769d608f67a69834c214f32c670ade9bd6e",
+      "records": 2009211,
+      "step_end": 1616,
+      "step_start": 1576
+    }
+  ],
+  "emitted_ops_per_traversal": 104420497,
+  "executed_toffoli_per_traversal": 45453265,
+  "field_width": 256,
+  "four_traversal_emitted_ops": 417681988,
+  "four_traversal_executed_toffoli": 181813060,
+  "local_width": 578,
+  "primitive_counts": {
+    "ccx": 34696857,
+    "clean_c3x_mbu": 5378204,
+    "cx": 23020144,
+    "x": 25190680
+  },
+  "records_per_traversal": 88285885,
+  "schedule_steps": 1616,
+  "schema": "paper2607-eea-primitive-stream-aggregate-v1",
+  "source_module": "eea_circuit_s835_exactwidth_dirty12"
+}
