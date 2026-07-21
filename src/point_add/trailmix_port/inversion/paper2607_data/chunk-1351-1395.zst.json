@@ -1,0 +1,474 @@
+{
+  "aux_size": 22,
+  "compressed_bytes": 158353,
+  "counts": {
+    "ccx": 1383665,
+    "clean_c3x_mbu": 91114,
+    "cx": 1269733,
+    "x": 1242802
+  },
+  "executed_toffoli": 1565893,
+  "measurement_uncompute": false,
+  "n": 256,
+  "per_step": [
+    {
+      "counts": {
+        "ccx": 27396,
+        "clean_c3x_mbu": 2042,
+        "cx": 26454,
+        "x": 24366
+      },
+      "records": 80258,
+      "step": 1351
+    },
+    {
+      "counts": {
+        "ccx": 41836,
+        "clean_c3x_mbu": 2050,
+        "cx": 34163,
+        "x": 38362
+      },
+      "records": 116411,
+      "step": 1352
+    },
+    {
+      "counts": {
+        "ccx": 27380,
+        "clean_c3x_mbu": 2038,
+        "cx": 26442,
+        "x": 24350
+      },
+      "records": 80210,
+      "step": 1353
+    },
+    {
+      "counts": {
+        "ccx": 27401,
+        "clean_c3x_mbu": 2046,
+        "cx": 26450,
+        "x": 24366
+      },
+      "records": 80263,
+      "step": 1354
+    },
+    {
+      "counts": {
+        "ccx": 27396,
+        "clean_c3x_mbu": 2042,
+        "cx": 26454,
+        "x": 24366
+      },
+      "records": 80258,
+      "step": 1355
+    },
+    {
+      "counts": {
+        "ccx": 41792,
+        "clean_c3x_mbu": 2050,
+        "cx": 34137,
+        "x": 38314
+      },
+      "records": 116293,
+      "step": 1356
+    },
+    {
+      "counts": {
+        "ccx": 27374,
+        "clean_c3x_mbu": 2038,
+        "cx": 26434,
+        "x": 24342
+      },
+      "records": 80188,
+      "step": 1357
+    },
+    {
+      "counts": {
+        "ccx": 27401,
+        "clean_c3x_mbu": 2046,
+        "cx": 26450,
+        "x": 24366
+      },
+      "records": 80263,
+      "step": 1358
+    },
+    {
+      "counts": {
+        "ccx": 27396,
+        "clean_c3x_mbu": 2042,
+        "cx": 26454,
+        "x": 24366
+      },
+      "records": 80258,
+      "step": 1359
+    },
+    {
+      "counts": {
+        "ccx": 41705,
+        "clean_c3x_mbu": 2042,
+        "cx": 34081,
+        "x": 38242
+      },
+      "records": 116070,
+      "step": 1360
+    },
+    {
+      "counts": {
+        "ccx": 27341,
+        "clean_c3x_mbu": 2030,
+        "cx": 26410,
+        "x": 24326
+      },
+      "records": 80107,
+      "step": 1361
+    },
+    {
+      "counts": {
+        "ccx": 27362,
+        "clean_c3x_mbu": 2038,
+        "cx": 26418,
+        "x": 24342
+      },
+      "records": 80160,
+      "step": 1362
+    },
+    {
+      "counts": {
+        "ccx": 27351,
+        "clean_c3x_mbu": 2034,
+        "cx": 26414,
+        "x": 24334
+      },
+      "records": 80133,
+      "step": 1363
+    },
+    {
+      "counts": {
+        "ccx": 41613,
+        "clean_c3x_mbu": 2042,
+        "cx": 34031,
+        "x": 38146
+      },
+      "records": 115832,
+      "step": 1364
+    },
+    {
+      "counts": {
+        "ccx": 27335,
+        "clean_c3x_mbu": 2030,
+        "cx": 26402,
+        "x": 24318
+      },
+      "records": 80085,
+      "step": 1365
+    },
+    {
+      "counts": {
+        "ccx": 27329,
+        "clean_c3x_mbu": 2030,
+        "cx": 26394,
+        "x": 24310
+      },
+      "records": 80063,
+      "step": 1366
+    },
+    {
+      "counts": {
+        "ccx": 27318,
+        "clean_c3x_mbu": 2026,
+        "cx": 26390,
+        "x": 24302
+      },
+      "records": 80036,
+      "step": 1367
+    },
+    {
+      "counts": {
+        "ccx": 41500,
+        "clean_c3x_mbu": 2034,
+        "cx": 33977,
+        "x": 38050
+      },
+      "records": 115561,
+      "step": 1368
+    },
+    {
+      "counts": {
+        "ccx": 27302,
+        "clean_c3x_mbu": 2022,
+        "cx": 26378,
+        "x": 24286
+      },
+      "records": 79988,
+      "step": 1369
+    },
+    {
+      "counts": {
+        "ccx": 27329,
+        "clean_c3x_mbu": 2030,
+        "cx": 26394,
+        "x": 24310
+      },
+      "records": 80063,
+      "step": 1370
+    },
+    {
+      "counts": {
+        "ccx": 27312,
+        "clean_c3x_mbu": 2026,
+        "cx": 26382,
+        "x": 24294
+      },
+      "records": 80014,
+      "step": 1371
+    },
+    {
+      "counts": {
+        "ccx": 41408,
+        "clean_c3x_mbu": 2034,
+        "cx": 33927,
+        "x": 37954
+      },
+      "records": 115323,
+      "step": 1372
+    },
+    {
+      "counts": {
+        "ccx": 27302,
+        "clean_c3x_mbu": 2022,
+        "cx": 26378,
+        "x": 24286
+      },
+      "records": 79988,
+      "step": 1373
+    },
+    {
+      "counts": {
+        "ccx": 27323,
+        "clean_c3x_mbu": 2030,
+        "cx": 26386,
+        "x": 24302
+      },
+      "records": 80041,
+      "step": 1374
+    },
+    {
+      "counts": {
+        "ccx": 27279,
+        "clean_c3x_mbu": 2018,
+        "cx": 26358,
+        "x": 24278
+      },
+      "records": 79933,
+      "step": 1375
+    },
+    {
+      "counts": {
+        "ccx": 41321,
+        "clean_c3x_mbu": 2026,
+        "cx": 33871,
+        "x": 37882
+      },
+      "records": 115100,
+      "step": 1376
+    },
+    {
+      "counts": {
+        "ccx": 27257,
+        "clean_c3x_mbu": 2014,
+        "cx": 26338,
+        "x": 24254
+      },
+      "records": 79863,
+      "step": 1377
+    },
+    {
+      "counts": {
+        "ccx": 27290,
+        "clean_c3x_mbu": 2022,
+        "cx": 26362,
+        "x": 24286
+      },
+      "records": 79960,
+      "step": 1378
+    },
+    {
+      "counts": {
+        "ccx": 27273,
+        "clean_c3x_mbu": 2018,
+        "cx": 26350,
+        "x": 24270
+      },
+      "records": 79911,
+      "step": 1379
+    },
+    {
+      "counts": {
+        "ccx": 41229,
+        "clean_c3x_mbu": 2026,
+        "cx": 33821,
+        "x": 37786
+      },
+      "records": 114862,
+      "step": 1380
+    },
+    {
+      "counts": {
+        "ccx": 27224,
+        "clean_c3x_mbu": 2006,
+        "cx": 26314,
+        "x": 24190
+      },
+      "records": 79734,
+      "step": 1381
+    },
+    {
+      "counts": {
+        "ccx": 27245,
+        "clean_c3x_mbu": 2014,
+        "cx": 26322,
+        "x": 24206
+      },
+      "records": 79787,
+      "step": 1382
+    },
+    {
+      "counts": {
+        "ccx": 27240,
+        "clean_c3x_mbu": 2010,
+        "cx": 26326,
+        "x": 24206
+      },
+      "records": 79782,
+      "step": 1383
+    },
+    {
+      "counts": {
+        "ccx": 41144,
+        "clean_c3x_mbu": 2018,
+        "cx": 33775,
+        "x": 37674
+      },
+      "records": 114611,
+      "step": 1384
+    },
+    {
+      "counts": {
+        "ccx": 27218,
+        "clean_c3x_mbu": 2006,
+        "cx": 26306,
+        "x": 24182
+      },
+      "records": 79712,
+      "step": 1385
+    },
+    {
+      "counts": {
+        "ccx": 27245,
+        "clean_c3x_mbu": 2014,
+        "cx": 26322,
+        "x": 24206
+      },
+      "records": 79787,
+      "step": 1386
+    },
+    {
+      "counts": {
+        "ccx": 27240,
+        "clean_c3x_mbu": 2010,
+        "cx": 26326,
+        "x": 24206
+      },
+      "records": 79782,
+      "step": 1387
+    },
+    {
+      "counts": {
+        "ccx": 41094,
+        "clean_c3x_mbu": 2018,
+        "cx": 33741,
+        "x": 37618
+      },
+      "records": 114471,
+      "step": 1388
+    },
+    {
+      "counts": {
+        "ccx": 27218,
+        "clean_c3x_mbu": 2006,
+        "cx": 26306,
+        "x": 24182
+      },
+      "records": 79712,
+      "step": 1389
+    },
+    {
+      "counts": {
+        "ccx": 27206,
+        "clean_c3x_mbu": 2006,
+        "cx": 26290,
+        "x": 24182
+      },
+      "records": 79684,
+      "step": 1390
+    },
+    {
+      "counts": {
+        "ccx": 27195,
+        "clean_c3x_mbu": 2002,
+        "cx": 26286,
+        "x": 24174
+      },
+      "records": 79657,
+      "step": 1391
+    },
+    {
+      "counts": {
+        "ccx": 40965,
+        "clean_c3x_mbu": 2010,
+        "cx": 33669,
+        "x": 37506
+      },
+      "records": 114150,
+      "step": 1392
+    },
+    {
+      "counts": {
+        "ccx": 27179,
+        "clean_c3x_mbu": 1998,
+        "cx": 26274,
+        "x": 24158
+      },
+      "records": 79609,
+      "step": 1393
+    },
+    {
+      "counts": {
+        "ccx": 27206,
+        "clean_c3x_mbu": 2006,
+        "cx": 26290,
+        "x": 24182
+      },
+      "records": 79684,
+      "step": 1394
+    },
+    {
+      "counts": {
+        "ccx": 27195,
+        "clean_c3x_mbu": 2002,
+        "cx": 26286,
+        "x": 24174
+      },
+      "records": 79657,
+      "step": 1395
+    }
+  ],
+  "qubits": 581,
+  "raw_record_sha256": "b7d23bf21878d421ed281e30854c52fe4ac0cc47a8e78ba0b16d786e2df412db",
+  "record_bytes": 8,
+  "records": 3987314,
+  "schedule_end": 1616,
+  "schema": "paper2607-eea-primitive-stream-v3",
+  "source_module": "eea_circuit_s835_fastdual_aux22",
+  "step_end": 1395,
+  "step_start": 1351
+}

@@ -1,6 +1,20 @@
-
+//! Multiplication and squaring: schoolbook + Karatsuba multiply, symmetric
+//! squaring (incl. self-hosted / hosted variants), the controlled add/subtract
+//! used by the schoolbook walk, and the `squaring_sub_from_acc_*` reducers.
 use super::*;
 
+/// Low-peak variant of `mod_mul_write_into_zero_acc_schoolbook`: uses
+/// `schoolbook_mul_into_addsub_lowq` + `_inverse_lowq` instead of the fast
+/// variants, saving ~n qubits at peak at the cost of ~n extra Toffolis per
+/// row.
+///
+/// NOTE: microbench (n=256) shows this DOES NOT reduce the local peak
+/// (schoolbook_fast 1797 = schoolbook_lowq 1797); the Solinas reduction +
+/// acc lifetimes already dominate, and the lowq carry saving is hidden
+/// underneath. We also observed a deterministic phase-garbage batch when
+/// wiring this in at pair1_mul1 (1/20480 shots, ALT_SEED tag=5, across
+/// two runs), so this helper is currently DEAD CODE kept only as a paper
+/// trail for the negative result. See `autoresearch.ideas.md`.
 #[allow(dead_code)]
 pub(crate) fn mod_mul_write_into_zero_acc_schoolbook_lowq(
     b: &mut B,
@@ -42,6 +56,15 @@ pub(crate) fn mod_mul_write_into_zero_acc_schoolbook_lowq(
     b.free_vec(&tmp_ext);
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// Litinski add-subtract (arXiv:2410.00899) primitives
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+/// Low-peak variant of `controlled_add_subtract_fast` using non-fast
+/// Cuccaro (no carry ancillae). Saves ~n qubits of transient peak at the
+/// cost of ~n extra Toffolis per call. Useful when called inside the
+/// Kaliski-body mul sites where peak is tight.
 pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
     let n = x.len();
     debug_assert_eq!(acc.len(), n + 1);
@@ -70,6 +93,7 @@ pub(crate) fn controlled_add_subtract_lowq(b: &mut B, x: &[QubitId], acc: &[Qubi
     b.free(pad);
 }
 
+/// Inverse of `controlled_add_subtract_lowq`.
 pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc: &[QubitId], ctrl: QubitId) {
     let n = x.len();
     debug_assert_eq!(acc.len(), n + 1);
@@ -98,6 +122,11 @@ pub(crate) fn controlled_add_subtract_lowq_inverse(b: &mut B, x: &[QubitId], acc
     b.free(pad);
 }
 
+/// Low-peak variant of `schoolbook_mul_into_addsub`: uses non-fast Cuccaro
+/// (`cuccaro_add`) inside the `controlled_add_subtract` core and in the
+/// correction adders. Saves roughly `n` transient qubits at peak vs. the
+/// `_fast` variant at the cost of ~n extra Toffolis per row. Top-level
+/// semantics identical to `schoolbook_mul_into_addsub`.
 pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[QubitId], tmp_ext: &[QubitId]) {
     let n = x.len();
     debug_assert_eq!(y.len(), n);
@@ -113,6 +142,7 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[Qub
         controlled_add_subtract_lowq(b, x, &slice, y[k]);
     }
 
+    // +2^n * (y + 1)
     {
         let pad = b.alloc_qubit();
         let mut y_ext = y.to_vec();
@@ -126,8 +156,10 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[Qub
         b.free(pad);
     }
 
+    // -2^{2n}
     b.x(wide[2 * n]);
 
+    // -x full (2n+1)-bit sub
     {
         let mut x_ext: Vec<QubitId> = x.to_vec();
         while x_ext.len() < 2 * n + 1 {
@@ -142,6 +174,7 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[Qub
         }
     }
 
+    // +2^n * x
     {
         let pad = b.alloc_qubit();
         let mut x_ext = x.to_vec();
@@ -156,6 +189,7 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq(b: &mut B, x: &[QubitId], y: &[Qub
     b.free(low);
 }
 
+/// Exact gate-level inverse of `schoolbook_mul_into_addsub_lowq`.
 pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
     b: &mut B,
     x: &[QubitId],
@@ -171,6 +205,7 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
     wide.push(low);
     wide.extend_from_slice(tmp_ext);
 
+    // Reverse correction 4: sub x at bit n.
     {
         let pad = b.alloc_qubit();
         let mut x_ext = x.to_vec();
@@ -181,7 +216,7 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
         b.free(c_in);
         b.free(pad);
     }
-
+    // Reverse correction 3.
     {
         let mut x_ext: Vec<QubitId> = x.to_vec();
         while x_ext.len() < 2 * n + 1 {
@@ -195,9 +230,9 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
             b.free(q);
         }
     }
-
+    // Reverse correction 2.
     b.x(wide[2 * n]);
-
+    // Reverse correction 1.
     {
         let pad = b.alloc_qubit();
         let mut y_ext = y.to_vec();
@@ -217,6 +252,10 @@ pub(crate) fn schoolbook_mul_into_addsub_lowq_inverse(
 
     b.free(low);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  1-level Karatsuba multiplication
+// ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) fn karatsuba_half_sum_compute(b: &mut B, lo: &[QubitId], hi: &[QubitId], acc: &[QubitId]) {
     let h = lo.len();
@@ -244,14 +283,26 @@ pub(crate) fn karatsuba_half_sum_uncompute(b: &mut B, lo: &[QubitId], hi: &[Qubi
     }
 }
 
+// ─── 2-level Karatsuba variants (recursive on inner half-mults) ───
+// Costs 2 extra z1_inner registers of ~2*(n/4+1) qubits each (~260 total for n=256).
+// Higher peak qubits; use only at low-peak mul sites.
+
+/// Symmetric schoolbook for squaring: x² = sum_i x[i]·2^(2i) + sum_{i<j} 2·x[i]·x[j]·2^(i+j).
+/// Each cross-product is computed ONCE (instead of twice in full schoolbook),
+/// halving the AND count + Cuccaro_add length. Saves ~130k CCX per squaring.
+///
+/// Row i layout (width n-i): bit 0 = diagonal x[i] at position 2i, bit 1 = 0
+/// (gap), bit k+2 = cross-product (x[i] AND x[i+1+k]) at position i+(i+1+k)+1.
 pub(crate) fn schoolbook_square_symmetric(b: &mut B, x: &[QubitId], tmp_ext: &[QubitId]) {
     let n = x.len();
     debug_assert_eq!(tmp_ext.len(), 2 * n);
     for i in 0..n {
-
+        // Width: bit 0 = diag at pos 2i, bit 1 = gap, bits 2..(n-i) = cross-
+        // products at positions 2i+2..i+n. Last bit index = n-i, so width = n-i+1.
+        // Edge case: i = n-1 has only the diagonal, width = 1.
         let width = if i == n - 1 { 1 } else { n - i + 1 };
         let num_cross = if i + 1 < n { n - i - 1 } else { 0 };
-
+        // num_cross = number of cross-products in this row = width - 2 when width >= 2.
         let row = b.alloc_qubits(width);
         b.cx(x[i], row[0]);
         for k in 0..num_cross {
@@ -360,6 +411,11 @@ pub(crate) fn schoolbook_square_symmetric_lowq_inverse(b: &mut B, x: &[QubitId],
     }
 }
 
+/// Like `schoolbook_square_symmetric` (fast, measurement UMA) but the per-row
+/// Cuccaro carry lane is hosted on a caller-supplied clean register `host`
+/// (returned clean) instead of a fresh allocation. Toffoli-identical to the
+/// fast square, peak-identical to the lowq square — used for the z0 lobe of the
+/// round84 Karatsuba square, where the not-yet-written z2 slice is clean scratch.
 pub(crate) fn schoolbook_square_symmetric_hosted(
     b: &mut B,
     x: &[QubitId],
@@ -381,7 +437,8 @@ pub(crate) fn schoolbook_square_symmetric_hosted(
         }
         let slice: Vec<QubitId> = tmp_ext[2 * i..2 * i + width + 1].to_vec();
         if square_selfhost_safe_lane_reuse_enabled() {
-
+            // The z2 sibling host is clean and disjoint from x and z0.  It has
+            // ample room for both the width carry lanes and one clean c_in.
             assert!(host.len() > width);
             cuccaro_add_fast_low_to_ext_borrowed_carries(
                 b,
@@ -468,6 +525,11 @@ pub(crate) fn schoolbook_square_symmetric_hosted_inverse(
     }
 }
 
+/// Experimental square-only reclaim.  This is deliberately opt-in: every lane
+/// borrowed by the prototype is either an untouched high tail of the square
+/// accumulator, a caller-proved square bit that is exactly zero, or a clean
+/// sibling square destination.  Dirty-but-idle data and operand aliases are not
+/// eligible.
 pub(crate) fn square_selfhost_safe_lane_reuse_enabled() -> bool {
     std::env::var("SQUARE_SELFHOST_SAFE_LANE_REUSE")
         .ok()
@@ -492,6 +554,27 @@ pub(crate) fn square_selfhost_gate_suffix_carries(n: usize) -> usize {
         .min(n.saturating_sub(1))
 }
 
+/// Like `schoolbook_square_symmetric_lowq` but converts the per-row Cuccaro
+/// UMA-uncompute (CCX, executed every shot) into measurement-based (fast)
+/// uncompute, WITHOUT a separate clean host register. The fast carry lane is
+/// hosted on the slice's OWN not-yet-written high zeros
+/// (`tmp_ext[2i+width+1 ..]`, which rows 0..=i never touch) topped up with a
+/// small global remainder (<=3 qubits, since the lane width exceeds the clean
+/// tail by exactly the 3-bit diagonal/gap/pad overhead). Unlike
+/// `schoolbook_square_symmetric_hosted` this needs no sibling clean register,
+/// so it applies where the sibling slice is occupied (the Karatsuba z2 square).
+/// Peak rises only by the global remainder (<=3); Toffoli drops by the whole
+/// UMA-uncompute. Under `SQUARE_SELFHOST_SAFE_LANE_REUSE=1`, the source-high
+/// zero is represented structurally (no allocated `pad`) and an optional
+/// caller-proved clean supplement is consumed before the global remainder. The
+/// borrowed carries are returned clean by the HMR uncompute.
+/// Peak-bounded row window for the selfhosted square. When set (>=2), each
+/// schoolbook square row's add into `tmp_ext` is sliced into this many windows;
+/// the transient row register holds only one window's worth of cross-term
+/// qubits at a time (peak ~= 1024 + width/windows + boundary carries) instead of
+/// the full row (peak ~= 1024 + 257). Value-exact: the same product lands in
+/// `tmp_ext`. Cost: a per-boundary carry-clean comparator that rebuilds the row
+/// prefix (extra CCX), traded for the dropped peak qubits.
 pub(crate) fn square_row_windows() -> usize {
     std::env::var("SQUARE_ROW_WINDOWS")
         .ok()
@@ -499,6 +582,8 @@ pub(crate) fn square_row_windows() -> usize {
         .unwrap_or(0)
 }
 
+/// Minimum row width below which a row is built monolithically (windowing a
+/// narrow row buys no peak but still pays the comparator tax).
 fn square_row_window_min_width() -> usize {
     std::env::var("SQUARE_ROW_WINDOW_MIN_WIDTH")
         .ok()
@@ -506,6 +591,12 @@ fn square_row_window_min_width() -> usize {
         .unwrap_or(96)
 }
 
+/// When >0, each row is windowed into the *minimum* number of windows that
+/// keeps every window's source segment <= this width. Rows narrow enough to fit
+/// in one segment are built monolithically (no comparator tax). This minimizes
+/// the carry-recovery comparator overhead: only the rows wide enough to break
+/// the peak budget get windowed, and only into as many windows as needed. When
+/// set, it overrides the fixed SQUARE_ROW_WINDOWS count.
 fn square_row_max_seg() -> usize {
     std::env::var("SQUARE_ROW_MAX_SEG")
         .ok()
@@ -513,6 +604,11 @@ fn square_row_max_seg() -> usize {
         .unwrap_or(0)
 }
 
+/// Optional truncation for the row-window boundary-carry cleanup comparator.
+/// Default 0 means exact/full-width.  When set below the segment width, cleanup
+/// compares only the high suffix of the segment and final partial sum.  This is
+/// a deliberate island-hunt knob: it keeps the same low peak and saves Toffoli,
+/// but wrong suffix ties leave the boundary carry dirty.
 fn square_cleanup_direction(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "f" | "forward" | "false" | "0" => Some(false),
@@ -576,21 +672,25 @@ fn square_row_window_measured_carry_clear_enabled() -> bool {
         == Some("1")
 }
 
+/// Set row bit `j` of square row `i` into `t`. Bit 0 = x_i (diagonal low),
+/// bit 1 = 0 (gap), bit 2+k = x_i & x_{i+1+k} (doubled cross term).
 fn square_row_bit_set(b: &mut B, x: &[QubitId], i: usize, j: usize, t: QubitId) {
     if j == 0 {
         b.cx(x[i], t);
     } else if j == 1 {
-
+        // gap bit: zero, nothing to do
     } else {
         b.ccx(x[i], x[i + 1 + (j - 2)], t);
     }
 }
 
+/// Measurement-based clear of a row bit set by `square_row_bit_set` (the bit is
+/// known to equal its set expression at clear time).
 fn square_row_bit_clear_hmr(b: &mut B, x: &[QubitId], i: usize, j: usize, t: QubitId) {
     if j == 0 {
         b.cx(x[i], t);
     } else if j == 1 {
-
+        // gap bit: nothing
     } else {
         let m = b.alloc_bit();
         b.hmr(t, m);
@@ -598,6 +698,21 @@ fn square_row_bit_clear_hmr(b: &mut B, x: &[QubitId], i: usize, j: usize, t: Qub
     }
 }
 
+/// Windowed selfhosted square row add: `tmp_ext[2i ..] += row_i` where
+/// `row_i` has `width` bits, built one window at a time. `forward=true` adds,
+/// `forward=false` subtracts (the inverse). Value-identical to a single
+/// `cuccaro_{add,sub}` of the full row into `tmp_ext[2i..2i+width+1]`.
+///
+/// The full-width add is split into a chain of low-to-ext adds. Window `w`
+/// covers row bits `[lo..hi)` and writes `tmp_ext[base+lo .. base+hi+1]` (the
+/// extra high cell absorbs the window carry). Because windows are contiguous in
+/// `tmp_ext`, window `w`'s carry lands in `tmp_ext[base+hi]`, which is the low
+/// cell of window `w+1` — so the carry chains *through* `tmp_ext` with no
+/// separate carry-out ancilla and no boundary comparators. The per-window
+/// Cuccaro carry lane is borrowed from `tmp_ext`'s not-yet-written high zeros
+/// (rows `0..=i` never touch `tmp_ext[2i+width+1 ..]`), topped up by a small
+/// global remainder, so the transient overhead is only the `seg_w`-wide source
+/// window. Forward order low→high; inverse must mirror it high→low.
 fn square_row_windowed_apply(
     b: &mut B,
     x: &[QubitId],
@@ -610,6 +725,7 @@ fn square_row_windowed_apply(
     let base = 2 * i;
     let windows = windows.max(1).min(width);
 
+    // Window boundaries over the row bit range [0, width).
     let bounds: Vec<(usize, usize)> = (0..windows)
         .map(|w| {
             let lo = (w * width) / windows;
@@ -619,6 +735,20 @@ fn square_row_windowed_apply(
         .filter(|&(lo, hi)| hi > lo)
         .collect();
     let nwin = bounds.len();
+
+    // Each interior window's carry-out (forward) / borrow-out (inverse) is
+    // captured in a fresh clean ancilla `cout`, fed as the carry/borrow-IN of
+    // the next window so the carry ripples across the boundary into the
+    // accumulator. The final window captures its carry into tmp_ext[base+width].
+    // Interior couts are NOT clean after being consumed as the next c_in
+    // (Cuccaro restores c_in to the carry value), so they are uncomputed by a
+    // *local* width-bounded comparator that recovers the carry from the final
+    // partial sum and the rebuilt source window — peak stays ~1024 + 2*seg_w.
+    //
+    // The inverse (sub) is built as the structural mirror of the forward (add):
+    // same window order and carry chaining, add->sub, with the borrow-recovery
+    // comparator X-wrapped per the Cuccaro sub convention. It SUBTRACTS the same
+    // row value the forward ADDED, so tmp_ext returns to its pre-square state.
 
     let build_seg = |b: &mut B, lo: usize, hi: usize| -> Vec<QubitId> {
         let seg = b.alloc_qubits(hi - lo);
@@ -634,12 +764,20 @@ fn square_row_windowed_apply(
         b.free_vec(seg);
     };
 
-    let row_top = base + width + 1;
+    // The Cuccaro carry lane for each window add/sub is borrowed from tmp_ext's
+    // clean high tail (positions beyond this row's footprint base+width+1, which
+    // no row 0..=i touches), so the per-window transient overhead is only the
+    // seg_w source bits + a 0-pad + the cout ancilla (~seg_w+2), never an
+    // allocated carry array. The interior carry-out cleanup uses the *slow*
+    // (carry-array-free) comparator, so cleanup is peak-flat (+0 beyond seg).
+    let row_top = base + width + 1; // first clean tmp_ext cell above the row.
     let borrow_lane = |b: &mut B, _need: usize| -> Vec<QubitId> {
-
+        // Always available: tmp_ext beyond row_top is clean and >= seg_w wide
+        // for every window (seg_w <= width and the high tail is wide enough).
         tmp_ext[row_top..row_top + _need].to_vec()
     };
 
+    // carry/borrow-in for window 0 is a clean zero.
     let mut carry_in = b.alloc_qubit();
     let first_carry = carry_in;
     let mut couts: Vec<(QubitId, usize, usize, QubitId, usize)> = Vec::new();
@@ -647,12 +785,12 @@ fn square_row_windowed_apply(
         let last = wi == nwin - 1;
         let seg = build_seg(b, lo, hi);
         let seg_w = hi - lo;
-
+        // Build a_block = seg ++ 0pad, acc_block = tmp[lo..hi] ++ high, n = seg_w+1.
         let pad = b.alloc_qubit();
         let mut a_block = seg.clone();
         a_block.push(pad);
         let high = if last {
-
+            // Final window: high carry lands in the (clean) tmp_ext[base+width].
             tmp_ext[base + hi]
         } else {
             b.alloc_qubit()
@@ -668,14 +806,18 @@ fn square_row_windowed_apply(
         }
         b.free(pad);
         if last {
-
+            // nothing extra: carry already in tmp_ext[base+width].
         } else {
             couts.push((high, lo, hi, carry_in, wi));
             carry_in = high;
         }
         clear_seg(b, lo, &seg);
     }
-
+    // Reverse sweep: clean each interior cout with a local comparator. The
+    // measured-uncompute fast comparator (~n CCX) borrows its n-wide carry lane
+    // from tmp_ext's clean high tail, so cleanup adds no peak qubits. Setting
+    // SQUARE_ROW_WINDOW_SLOW_CMP=1 falls back to the carry-array-free slow
+    // comparator (~2n CCX, also peak-flat) for cross-checking.
     let slow_cmp = std::env::var("SQUARE_ROW_WINDOW_SLOW_CMP").ok().as_deref() == Some("1");
     let measured_clear = square_row_window_measured_carry_clear_enabled();
     for &(cout, lo, hi, cin, window) in couts.iter().rev() {
@@ -749,7 +891,7 @@ fn square_row_windowed_apply(
             let seg = build_seg(b, lo, hi);
             let carries = tmp_ext[row_top..row_top + seg_w].to_vec();
             if forward {
-
+                // carry_out = (partial_sum < seg + cin)
                 if measured_clear {
                     let phase = b.alloc_bit();
                     b.hmr(cout, phase);
@@ -769,7 +911,7 @@ fn square_row_windowed_apply(
                     );
                 }
             } else {
-
+                // borrow_out = (seg + cin > partial_diff)
                 for k in 0..seg_w {
                     b.x(seg[k]);
                 }
@@ -984,10 +1126,16 @@ pub(crate) fn schoolbook_square_symmetric_lowq_selfhosted_inverse_with_clean_sup
     }
 }
 
+/// Gate for the measured-uncompute (self-hosted) Karatsuba z2 square. Defaults
+/// ON; set KARA_Z2_SELFHOST=0 to fall back to the plain ancilla-free lowq z2
+/// square (CCX UMA-uncompute).
 pub(crate) fn kara_z2_selfhost_enabled() -> bool {
     std::env::var("KARA_Z2_SELFHOST").ok().as_deref() != Some("0")
 }
 
+/// Gate for the measured-uncompute (self-hosted) round84 x-tail full-width
+/// lam^2 square. Defaults ON; set XTAIL_SQ_SELFHOST=0 to fall back to the plain
+/// ancilla-free lowq square (CCX UMA-uncompute).
 pub(crate) fn xtail_sq_selfhost_enabled() -> bool {
     std::env::var("XTAIL_SQ_SELFHOST").ok().as_deref() != Some("0")
 }
@@ -999,6 +1147,14 @@ fn round84_inplace_solinas_fold_enabled() -> bool {
         == Some("1")
 }
 
+// tofprof CAT-4 lever: the in-place Solinas fold/unfold build their adders from
+// the COHERENT cuccaro_add/sub (maj/uma, ~2 CCX/bit, 0 carry ancilla). The
+// fold/unfold phases run at active=1160, i.e. 137 qubits below the 1297 peak, so
+// the SMALL adders (quotient*c product = 33-bit, narrow correction = 66-bit,
+// quotient-update spill <=34-bit) can use the MEASURED cuccaro_*_fast (~1 CCX/bit
+// + Hmr-uncompute) peak-neutrally => ~1 CCX/bit saved on those. The BIG fold-step
+// adders (224..256-bit) are left coherent (a fast version would need ~256 carry
+// lanes -> 1160+256=1416 > 1297 = peak-positive). Default OFF (byte-identical).
 fn round84_fold_fast_add_enabled() -> bool {
     std::env::var("ROUND84_FOLD_FAST_ADD").ok().as_deref() == Some("1")
 }
@@ -1110,7 +1266,7 @@ fn round84_update_fold_quotient(
 }
 
 fn round84_compute_quotient_c_product(b: &mut B, quotient: &[QubitId], dirty: &[QubitId]) -> Vec<QubitId> {
-
+    // quotient <= c, so its low 33 bits suffice and quotient*c fits in 66 bits.
     let q = &quotient[..33];
     let product = b.alloc_qubits(66);
     for i in 0..q.len() {
@@ -1170,7 +1326,7 @@ fn round84_uncompute_quotient_c_product(b: &mut B, quotient: &[QubitId], product
             if round84_qprod_vent_pad_enabled()
                 && (product.len() - shift - q.len()) >= round84_qprod_vent_pad_min_width()
             {
-
+                // uncompute = inverse op: add->sub, sub->add.
                 round84_qprod_shifted_addsub_vented(b, q, product, shift, !add, dirty);
                 continue;
             }
@@ -1289,6 +1445,12 @@ fn round84_sub_narrow_correction(
     }
 }
 
+/// Reversibly fold `hi*c` into `lo`, where `c = 2^256-p`.
+///
+/// Each signed shifted add/sub retains its 2^256 quotient contribution. The
+/// five contributions are accumulated into a 34-bit register, multiplied by
+/// sparse `c` once, and added to `lo`. The returned state is sufficient to
+/// restore the original square after `lo` has been consumed.
 fn round84_fold_hi_into_lo_aggregate(
     b: &mut B,
     lo: &[QubitId],
@@ -1297,7 +1459,7 @@ fn round84_fold_hi_into_lo_aggregate(
 ) -> Round84AggregateFold {
     let n = lo.len();
     let quotient = b.alloc_qubits(34);
-
+    // c = 2^32 + 977 = 2^32 + 2^10 - 2^5 - 2^4 + 1.
     let terms = [
         (0usize, true),
         (4, false),
@@ -1386,21 +1548,32 @@ fn round84_unfold_hi_from_lo_aggregate(
     b.free_vec(&state.quotient);
 }
 
+/// Schoolbook squarer with Bennett uncompute. For squaring `tmp_ext = x*x`
+/// (2n bits, no mod reduction), then sub from acc with on-the-fly Solinas
+/// reduction, then uncompute tmp_ext via gate-level inverse. Saves ~170k
+/// CCX vs walk-x squaring (459k → 289k) by avoiding 256 expensive
+/// cmod_add_qq calls (each 5n) in favor of 2n²=131k of cheap AND+Cuccaro.
 pub(crate) fn squaring_sub_from_acc_schoolbook(b: &mut B, acc: &[QubitId], x: &[QubitId], p: U256) {
     let n = acc.len();
     debug_assert_eq!(n, 256);
     debug_assert_eq!(x.len(), n);
     let c = U256::MAX.wrapping_sub(p).wrapping_add(U256::from(1));
 
+    // Wide accumulator (2n bits) starts at 0.
     let tmp_ext = b.alloc_qubits(2 * n);
 
+    // Phase 1: symmetric schoolbook tmp_ext = x*x (~half the CCX of full).
     schoolbook_square_symmetric(b, x, &tmp_ext);
 
+    // Phase 2: subtract (lo + hi*c mod p) from acc.
+    // For each set bit k of c, sub (hi shifted by k mod p) from acc, by
+    // walking hi via mod_double in place. Sub lo first.
     let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
     let hi: Vec<QubitId> = tmp_ext[n..2 * n].to_vec();
     mod_sub_qq_fast(b, acc, &lo, p);
     let _ = c;
-
+    // 977 consolidation: c = {+2^0, +2^4, -2^6, +2^10, +2^32}. For acc-=hi·c, signs flip:
+    // acc -= hi·2^0, acc -= hi·2^4, acc += hi·2^6, acc -= hi·2^10, acc -= hi·2^32.
     mod_sub_qq_fast(b, acc, &hi, p);
     for _ in 0..4 {
         mod_double_inplace_fast(b, &hi, p);
@@ -1409,7 +1582,7 @@ pub(crate) fn squaring_sub_from_acc_schoolbook(b: &mut B, acc: &[QubitId], x: &[
     for _ in 0..2 {
         mod_double_inplace_fast(b, &hi, p);
     }
-    mod_add_qq_fast(b, acc, &hi, p);
+    mod_add_qq_fast(b, acc, &hi, p); // sign flipped
     for _ in 0..4 {
         mod_double_inplace_fast(b, &hi, p);
     }
@@ -1421,11 +1594,35 @@ pub(crate) fn squaring_sub_from_acc_schoolbook(b: &mut B, acc: &[QubitId], x: &[
         mod_halve_inplace_fast(b, &hi, p);
     }
 
+    // Phase 3: uncompute tmp_ext via symmetric schoolbook inverse.
     schoolbook_square_symmetric_inverse(b, x, &tmp_ext);
 
     b.free_vec(&tmp_ext);
 }
 
+/// Squaring-aware 1-level Karatsuba variant of [`squaring_sub_from_acc_schoolbook`].
+///
+/// Computes `acc -= x^2 mod p` (Solinas-reduced) via a 1-level Karatsuba
+/// SQUARE. Split `x = hi‖lo` (`h = n/2` bits each) and form the three
+/// SYMMETRIC sub-squares
+///   z0 = lo^2,  z2 = hi^2,  z1 = (lo+hi)^2,
+/// then combine `z1 -= z0 + z2` (= 2·lo·hi) and add the middle term:
+///   x^2 = z0 + (z1 - z0 - z2)·2^h + z2·2^{2h}.
+/// Each sub-square is the existing symmetric square (`schoolbook_square_symmetric`,
+/// cross-products counted once via Gidney-uncomputed AND lanes), so the dominant
+/// cross-product AND budget drops ~25 % vs the symmetric 256-bit schoolbook
+/// square: 3·(n/2)(n/2-1)/2 cross ANDs instead of n(n-1)/2. Using a plain
+/// Karatsuba MUL with x=y would re-introduce the cross terms and be strictly
+/// worse — the symmetry of the SQUARE is what buys the win.
+///
+/// Peak control: the (lo+hi)^2 square is emitted FIRST, before the 2n-bit
+/// `tmp_ext` result register is allocated, and its `x_sum` operand is freed
+/// before `tmp_ext` is taken — so the z1 step (z1_reg + x_sum + row) and the
+/// z0/z2 step (tmp_ext + z1_reg + row) never coexist. The combine carries use
+/// the non-fast (ancilla-free) Cuccaro, and the Solinas lanes default to the
+/// low-peak set (non-fast add/sub, direct-const double/halve, lowq shift) so the
+/// extra z1_reg register (2(h+1) q) is absorbed without pushing the affine
+/// square phase over the global GCD-body peak binder (~1567 < 1698).
 pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[QubitId], p: U256) {
     let n = acc.len();
     debug_assert_eq!(n, 256);
@@ -1434,12 +1631,21 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
     let x_lo: Vec<QubitId> = x[0..h].to_vec();
     let x_hi: Vec<QubitId> = x[h..n].to_vec();
 
+    // z1_reg holds z1 = (lo+hi)^2, width 2*(h+1).
     let mut z1_reg = b.alloc_qubits(2 * (h + 1));
-
+    // KARA_FREE_Z1_TOPBIT: after z1 -= z0; z1 -= z2, z1_reg holds 2*lo*hi < 2^257,
+    // so its top bit (index 2(h+1)-1 = 257) is provably 0 throughout the Solinas
+    // peak. Free it for that window; re-grab a fresh zero before z1 += z2 restores
+    // (lo+hi)^2 for the inverse uncompute. Bennett-clean (free zero, alloc zero).
     let free_z1_top = std::env::var("KARA_FREE_Z1_TOPBIT").ok().as_deref() == Some("1");
-
+    // The z0=lo^2 / z2=hi^2 squares coexist with tmp_ext(2n)+z1_reg, and the
+    // _fast symmetric square allocates a ~(h)-wide cuccaro carry lane on top of
+    // its ~(h)-wide row — that lane is the round84 peak binder. The ancilla-free
+    // _lowq square drops the carry lane (peak −~h) at a higher Toffoli cost.
+    // z1=(lo+hi)^2 is computed before tmp_ext (low peak), so it stays _fast.
     let z02_lowq = std::env::var("KARA_Z02_LOWQ").ok().as_deref() == Some("1");
 
+    // ── Forward z1 = (lo+hi)^2 FIRST (tmp_ext not yet allocated → low peak). ──
     {
         let x_sum = b.alloc_qubits(h + 1);
         karatsuba_half_sum_compute(b, &x_lo, &x_hi, &x_sum);
@@ -1448,12 +1654,16 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         b.free_vec(&x_sum);
     }
 
+    // 2n-bit result accumulator for x^2 (allocated after the z1 square so its
+    // 2n qubits never coexist with the z1 operand/row registers).
     let tmp_ext = b.alloc_qubits(2 * n);
 
+    // z0 = lo^2 → tmp_ext[0..2h], z2 = hi^2 → tmp_ext[2h..4h].
     {
         let slice: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
         if z02_lowq {
-
+            // z2 slice (tmp_ext[2h..4h]) is still clean here → host z0's fast
+            // carry there (Toffoli-free peak drop) instead of paying lowq.
             let host: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
             schoolbook_square_symmetric_hosted(b, &x_lo, &slice, &host);
         } else {
@@ -1465,7 +1675,10 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         if z02_lowq {
             if kara_z2_selfhost_enabled() {
                 if square_selfhost_safe_lane_reuse_enabled() {
-
+                    // z1=(lo+hi)^2 and z0=lo^2 are exact integer squares here.
+                    // Every square is 0 or 1 mod 4, so bit 1 of each register is
+                    // provably |0>.  Both lanes are disjoint from x_hi, z2, and
+                    // z2's own untouched-tail carry lanes.
                     let clean_square_bits = [z1_reg[1], tmp_ext[1]];
                     schoolbook_square_symmetric_lowq_selfhosted_with_clean_supplement(
                         b,
@@ -1484,6 +1697,8 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         }
     }
 
+    // Combine: z1 -= z0; z1 -= z2; mid (tmp_ext[h..4h]) += z1. Non-fast Cuccaro
+    // (no carry ancilla) keeps the peak flat while tmp_ext + z1_reg are live.
     {
         let pad = b.alloc_qubits(2);
         let mut z0_ext: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
@@ -1498,7 +1713,7 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         sub_nbit_qq(b, &z2_ext, &z1_reg);
         b.free_vec(&pad);
     }
-
+    // z1_reg == 2*lo*hi < 2^257 here ⇒ bit 257 is 0. Release it for the peak window.
     if free_z1_top {
         let top = z1_reg.pop().expect("z1_reg width 2*(h+1) >= 2");
         b.free(top);
@@ -1512,12 +1727,26 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         b.free_vec(&pad);
     }
 
+    // ── Solinas reduction: acc -= (lo + hi·c) mod p. ──
+    // z1_reg (2(h+1) q) is still live through this whole block, so the lanes
+    // that allocate a full-width carry ancilla (fast Cuccaro add/sub, fast
+    // shift) bind the affine-square phase peak. Each lane defaults to its
+    // low-peak (ancilla-free) variant so the phase peak stays below the global
+    // GCD-body binder; per-lane env knobs select the higher-peak fast variants
+    // for measurement (each computes the SAME value on `acc`, so any mix is
+    // value-correct):
+    //   KARA_SOL_MOD_FAST=1   → fast mod add/sub          (else non-fast)
+    //   KARA_SOL_DBL_FAST=1   → fast in-place double/halve (else direct-const)
+    //   KARA_SOL_SHIFT_FAST=1 → fast shift-by-22          (else lowq shift)
     let mod_fast = std::env::var("KARA_SOL_MOD_FAST").ok().as_deref() == Some("1");
     let dbl_fast = std::env::var("KARA_SOL_DBL_FAST").ok().as_deref() == Some("1");
     let shift_fast = std::env::var("KARA_SOL_SHIFT_FAST").ok().as_deref() == Some("1");
     let lo: Vec<QubitId> = tmp_ext[0..n].to_vec();
     let hi: Vec<QubitId> = tmp_ext[n..2 * n].to_vec();
-
+    // The non-fast mod_add/sub materialize a 256-q load_const for the Solinas
+    // `c` correction, which coexists with tmp_ext + z1_reg and binds the phase
+    // peak. The vent form hosts that correction on the operand `a_ext` (dirty,
+    // value-preserved) for 2 clean qubits, dropping the transient ~n.
     let mod_vent = std::env::var("KARA_SOL_MOD_VENT").ok().as_deref() == Some("1");
     let mod_sub = |b: &mut B, acc: &[QubitId], a: &[QubitId]| {
         if mod_vent {
@@ -1561,19 +1790,29 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
     for _ in 0..2 {
         mod_dbl(b, &hi);
     }
-    mod_add(b, acc, &hi);
+    mod_add(b, acc, &hi); // sign flipped
     for _ in 0..4 {
         mod_dbl(b, &hi);
     }
     mod_sub(b, acc, &hi);
     b.set_phase("r84k_sol_shift");
-
+    // The shift-by-22 lane binds the affine-square phase peak: its lowq form
+    // allocates a ~(n+1)-wide `padded` scratch on top of the live z1_reg+tmp_ext,
+    // overflowing the free pool. `acc` (tx) is idle and value-preserved during the
+    // shift itself, so the dirty-borrow form hosts that scratch on `acc` (venting
+    // 2-clean), dropping the phase peak well under the GCD-apply binder. Same value
+    // on `acc`; gated so it can be A/B compared.
     let shift_dirty = std::env::var("ROUND84_XTAIL_BORROW_CARRIES")
         .ok()
         .as_deref()
         == Some("1");
     if shift_dirty {
-
+        // Dirty-doubles form of `acc -= hi * 2^22 mod p`: 22 in-place doubles
+        // (each borrows `acc` via Gidney venting) avoid the shift's persistent
+        // k-wide `spill` lane that — stacked on the live z1_reg+tmp_ext base —
+        // pushed the shift/mid-sub over the GCD-apply binder. `acc` is idle and
+        // value-preserved during each double/halve, so the phase peak drops well
+        // under 1558. Mirrors the schoolbook_peak_lowq D1 reduction lane.
         b.set_phase("r84k_sol_dbl22");
         for _ in 0..22 {
             mod_dbl(b, &hi);
@@ -1605,6 +1844,7 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         mod_hlv(b, &hi);
     }
 
+    // ── Inverse combine: mid -= z1; z1 += z2; z1 += z0. ──
     b.set_phase("r84k_inv_combine");
     {
         let pad = b.alloc_qubits(3 * h - z1_reg.len());
@@ -1614,7 +1854,7 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         sub_nbit_qq(b, &z1_ext, &acc_slice);
         b.free_vec(&pad);
     }
-
+    // Restore z1_reg top bit (fresh zero) before z1 += z2 can re-set it.
     if free_z1_top {
         let top = b.alloc_qubit();
         z1_reg.push(top);
@@ -1634,13 +1874,16 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
         b.free_vec(&pad);
     }
 
+    // Uncompute z2, z0 (reverse of forward compute order), then free tmp_ext.
     b.set_phase("r84k_z_inv_squares");
     {
         let slice: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
         if z02_lowq {
             if kara_z2_selfhost_enabled() {
                 if square_selfhost_safe_lane_reuse_enabled() {
-
+                    // Inverse-combine restored the exact z1 and z0 squares
+                    // before this block, so their square-bit-1 lanes are clean
+                    // scratch again (the mirror of the forward z2 proof).
                     let clean_square_bits = [z1_reg[1], tmp_ext[1]];
                     schoolbook_square_symmetric_lowq_selfhosted_inverse_with_clean_supplement(
                         b,
@@ -1661,7 +1904,8 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
     {
         let slice: Vec<QubitId> = tmp_ext[0..2 * h].to_vec();
         if z02_lowq {
-
+            // z2 slice was just uncomputed above → clean again, host inv-z0's
+            // borrow there (mirror of the forward z0 hosting).
             let host: Vec<QubitId> = tmp_ext[2 * h..4 * h].to_vec();
             schoolbook_square_symmetric_hosted_inverse(b, &x_lo, &slice, &host);
         } else {
@@ -1670,6 +1914,7 @@ pub(crate) fn squaring_sub_from_acc_karatsuba(b: &mut B, acc: &[QubitId], x: &[Q
     }
     b.free_vec(&tmp_ext);
 
+    // Uncompute z1 last (mirrors the forward z1-first ordering, tmp_ext freed).
     {
         let x_sum = b.alloc_qubits(h + 1);
         karatsuba_half_sum_compute(b, &x_lo, &x_hi, &x_sum);
@@ -1772,10 +2017,32 @@ pub(crate) fn squaring_sub_from_acc_walk_controls_lowq(b: &mut B, acc: &[QubitId
     b.free_vec(&ctrl_copy);
 }
 
+ 
+// HYP-12 lever (the round84 Solinas fold/unfold wall @1221). The fold's
+// quotient*c product is built by shifted adds of the 33-bit quotient `q` into
+// the 66-bit `product`. To match widths the caller zero-extends `q` with a
+// `pad` whose width is `product.len()-shift-33` (=29 at shift=4). MEASURED:
+// the shift=4 pad (29 transient |0> lanes) is the SOLE binder that pins the
+// fold phase at 1221 (UNQ_sh4=1221, the next is UNQ_sh5=1219). The high `pad`
+// bits are all 0, so the work on `product[shift+33..]` is a pure carry ripple,
+// not a real add. This lever replaces the 29-lane pad with a single carry
+// `wrap` + a Gidney measure-vented carry ripple (`ciadd/cisub_dirty_2clean`,
+// borrowing the idle `acc`/`dirty` lanes + 2 clean, uncompute=0) and an
+// ancilla-free `cmp_lt_into` wrap-uncompute (1 c_in, ~n CCX, no carry array).
+// Net: the qprod transient drops from product+~30 to product+~3 => the fold
+// peak falls below 1221, exposing the global drop to 1220 (with SEG<=193 the
+// square is already <=1220 there). Value-exact (a permutation that round-
+// trips); default OFF (byte-identical base).
 fn round84_qprod_vent_pad_enabled() -> bool {
     std::env::var("ROUND84_QPROD_VENT_PAD").ok().as_deref() == Some("1")
 }
 
+// Only the WIDEST-pad shifted add binds the fold peak (MEASURED: shift=4 pins
+// 1221, shift=5 sits at 1219). Venting the narrower-pad shifts adds Toffoli
+// (a cmp_lt wrap-uncompute + a vented ripple) for no peak gain, so by default
+// the lever only vents shifts whose pad width exceeds this threshold. The
+// shift=4 pad is `66-4-33 = 29`; shift=5 is 28; set the cutoff at 29 so only
+// shift=4 vents. Override with ROUND84_QPROD_VENT_PAD_MINW to vent more.
 fn round84_qprod_vent_pad_min_width() -> usize {
     std::env::var("ROUND84_QPROD_VENT_PAD_MINW")
         .ok()
@@ -1783,6 +2050,18 @@ fn round84_qprod_vent_pad_min_width() -> usize {
         .unwrap_or(29)
 }
 
+// NOTE (measured): venting must cover BOTH the fold's qprod-uncompute AND the
+// unfold's qprod-compute — each builds the 66-bit product with the 29-lane
+// shift=4 pad and reaches 1221 (the fold-compute @1220 and unfold-uncompute
+// @1220 are 1 below, but the round-trip needs all four product builds vented
+// to clear the wall). The lever therefore vents every shift>=MINW build in
+// both compute and uncompute.
+
+/// One shifted small-add of `q` (33-bit) into `product[shift..]`, with the
+/// high zero-extension realized as a vented carry ripple instead of a `pad`.
+/// `add=true` => `product[shift..] += q`; `add=false` => `-= q`. The carry/
+/// borrow `wrap` is recomputed-and-freed in place (no residue), so this is the
+/// exact width-matched equivalent of the padded `cuccaro_add/sub` it replaces.
 fn round84_qprod_shifted_addsub_vented(
     b: &mut B,
     q: &[QubitId],
@@ -1791,11 +2070,13 @@ fn round84_qprod_shifted_addsub_vented(
     add: bool,
     dirty: &[QubitId],
 ) {
-    let m = q.len();
+    let m = q.len(); // 33
     let total = product.len() - shift;
     debug_assert!(total >= m);
-    let high_w = total - m;
+    let high_w = total - m; // width of the zero-extension (carry ripple region)
 
+    // The vent helper needs n>4 dirty/clean lanes; for tiny tails fall back to
+    // the padded coherent add (these shifts never bind the peak).
     if high_w < 5 || dirty.len() < high_w.saturating_sub(2) {
         let target = &product[shift..];
         let pad = b.alloc_qubits(high_w);
@@ -1816,11 +2097,11 @@ fn round84_qprod_shifted_addsub_vented(
     let high = &product[shift + m..];
 
     if add {
-
+        // product[shift..shift+m] += q, carry-out -> wrap.
         let c_in = b.alloc_qubit();
         cuccaro_add_low_to_ext_clean(b, q, &low_ext, c_in);
         b.free(c_in);
-
+        // Ripple the carry: product[shift+m..] += wrap (vented, dirty-borrowed).
         let clean2 = [b.alloc_qubit(), b.alloc_qubit()];
         venting::ciadd_dirty_2clean_classical(
             b,
@@ -1833,19 +2114,19 @@ fn round84_qprod_shifted_addsub_vented(
         );
         b.free(clean2[1]);
         b.free(clean2[0]);
-
+        // Uncompute wrap: carry == (new_low < q). cmp_lt_into uses 1 c_in only.
         cmp_lt_into(b, &product[shift..shift + m], q, wrap);
     } else {
-
+        // product[shift..shift+m] -= q, borrow-out -> wrap.
         let c_in = b.alloc_qubit();
         cuccaro_sub_low_to_ext_clean(b, q, &low_ext, c_in);
         b.free(c_in);
-
+        // Ripple the borrow: product[shift+m..] -= wrap (vented).
         let clean2 = [b.alloc_qubit(), b.alloc_qubit()];
         venting::cisub_dirty_2clean_classical(b, high, &dirty[..high_w - 2], &clean2, 1, wrap);
         b.free(clean2[1]);
         b.free(clean2[0]);
-
+        // Uncompute wrap: borrow == carry_out(new_low + q) == (~q < new_low).
         for &qb in q {
             b.x(qb);
         }
@@ -1855,562 +2136,4 @@ fn round84_qprod_shifted_addsub_vented(
         }
     }
     b.free(wrap);
-}
-
-pub(crate) fn cross_addsub_stage1(
-    b: &mut B,
-    prod: &[QubitId],
-    off: usize,
-    addend: &[QubitId],
-    ctrl: QubitId,
-) {
-    let w = prod.len();
-    let m = addend.len();
-    if m == 0 {
-        return;
-    }
-    debug_assert!(off + m <= w);
-    let t = b.alloc_qubits(w);
-    for k in 0..m {
-        b.cx(addend[k], t[off + k]);
-    }
-    b.x(ctrl);
-    for k in 0..w {
-        b.cx(ctrl, t[k]);
-    }
-    let cin = b.alloc_qubit();
-    b.cx(ctrl, cin);
-    cuccaro_add(b, &t, prod, cin);
-    b.cx(ctrl, cin);
-    for k in 0..w {
-        b.cx(ctrl, t[k]);
-    }
-    b.x(ctrl);
-    for k in 0..m {
-        b.cx(addend[k], t[off + k]);
-    }
-    b.free(cin);
-    b.free_vec(&t);
-}
-
-pub(crate) fn square_addsub_stage1(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-    debug_assert_eq!(prod.len(), 2 * n);
-
-    for i in 0..n {
-        let m = n - 1 - i;
-        if m == 0 {
-            continue;
-        }
-        let off = 2 * i + 1;
-        cross_addsub_stage1(b, prod, off, &x[i + 1..n], x[i]);
-    }
-
-    let t = b.alloc_qubits(2 * n);
-    for i in 0..n {
-        let p = 2 * i + 1;
-        if p < 2 * n {
-            b.cx(x[i], t[p]);
-        }
-    }
-    let cin = b.alloc_qubit();
-    cuccaro_add(b, &t, prod, cin);
-    b.free(cin);
-    for i in 0..n {
-        let p = 2 * i + 1;
-        if p < 2 * n {
-            b.cx(x[i], t[p]);
-        }
-    }
-    b.free_vec(&t);
-
-    let zero_ctrl = b.alloc_qubit();
-    cross_addsub_stage1(b, prod, 0, x, zero_ctrl);
-    b.free(zero_ctrl);
-}
-
-fn square_corr_forward(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-
-    let zeros = b.alloc_qubits(n);
-    let mut a2d: Vec<QubitId> = Vec::with_capacity(2 * n);
-    for i in 0..n {
-        a2d.push(zeros[i]);
-        a2d.push(x[i]);
-    }
-    let cin = b.alloc_qubit();
-    cuccaro_add(b, &a2d, prod, cin);
-    b.free(cin);
-    b.free_vec(&zeros);
-
-    let pad = b.alloc_qubits(n);
-    let mut xext = x.to_vec();
-    xext.extend_from_slice(&pad);
-    let cinx = b.alloc_qubit();
-    cuccaro_sub(b, &xext, prod, cinx);
-    b.free(cinx);
-    b.free_vec(&pad);
-
-    let p1 = b.alloc_qubit();
-    let mut a = x[0..n - 1].to_vec();
-    a.push(p1);
-    let high: Vec<QubitId> = prod[n..2 * n].to_vec();
-    let cinl = b.alloc_qubit();
-    b.x(cinl);
-    cuccaro_add(b, &a, &high, cinl);
-    b.x(cinl);
-    b.free(cinl);
-    b.free(p1);
-
-    b.x(prod[2 * n - 1]);
-}
-
-fn square_corr_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-
-    b.x(prod[2 * n - 1]);
-
-    let p1 = b.alloc_qubit();
-    let mut a = x[0..n - 1].to_vec();
-    a.push(p1);
-    let high: Vec<QubitId> = prod[n..2 * n].to_vec();
-    let cinl = b.alloc_qubit();
-    b.x(cinl);
-    cuccaro_sub(b, &a, &high, cinl);
-    b.x(cinl);
-    b.free(cinl);
-    b.free(p1);
-
-    let pad = b.alloc_qubits(n);
-    let mut xext = x.to_vec();
-    xext.extend_from_slice(&pad);
-    let cinx = b.alloc_qubit();
-    cuccaro_add(b, &xext, prod, cinx);
-    b.free(cinx);
-    b.free_vec(&pad);
-
-    let zeros = b.alloc_qubits(n);
-    let mut a2d: Vec<QubitId> = Vec::with_capacity(2 * n);
-    for i in 0..n {
-        a2d.push(zeros[i]);
-        a2d.push(x[i]);
-    }
-    let cin = b.alloc_qubit();
-    cuccaro_sub(b, &a2d, prod, cin);
-    b.free(cin);
-    b.free_vec(&zeros);
-}
-
-pub(crate) fn square_addsub_local(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-    debug_assert_eq!(prod.len(), 2 * n);
-
-    for i in 0..n {
-        let m = n - 1 - i;
-        if m == 0 {
-            continue;
-        }
-        let off = 2 * i + 1;
-        let slice: Vec<QubitId> = prod[off..off + m + 1].to_vec();
-        controlled_add_subtract_lowq(b, &x[i + 1..n], &slice, x[i]);
-    }
-
-    let t = b.alloc_qubits(2 * n);
-    for i in 0..n {
-        let p = 2 * i + 1;
-        if p < 2 * n {
-            b.cx(x[i], t[p]);
-        }
-    }
-    let cin = b.alloc_qubit();
-    cuccaro_add(b, &t, prod, cin);
-    b.free(cin);
-    for i in 0..n {
-        let p = 2 * i + 1;
-        if p < 2 * n {
-            b.cx(x[i], t[p]);
-        }
-    }
-    b.free_vec(&t);
-
-    let zc = b.alloc_qubit();
-    cross_addsub_stage1(b, prod, 0, x, zc);
-    b.free(zc);
-
-    if n >= 2 {
-        let oc = b.alloc_qubit();
-        b.x(oc);
-        cross_addsub_stage1(b, prod, n, &x[0..n - 1], oc);
-        b.x(oc);
-        b.free(oc);
-    }
-
-    let t2 = b.alloc_qubits(2 * n);
-    b.x(t2[2 * n - 1]);
-    b.x(t2[n]);
-    let cin2 = b.alloc_qubit();
-    cuccaro_add(b, &t2, prod, cin2);
-    b.free(cin2);
-    b.x(t2[2 * n - 1]);
-    b.x(t2[n]);
-    b.free_vec(&t2);
-}
-
-pub(crate) fn controlled_add_subtract_vented_borrowed(
-    b: &mut B,
-    x: &[QubitId],
-    acc: &[QubitId],
-    ctrl: QubitId,
-    carries: &[QubitId],
-) {
-    let n = x.len();
-    debug_assert_eq!(acc.len(), n + 1);
-    let pad = b.alloc_qubit();
-    let mut x_ext = x.to_vec();
-    x_ext.push(pad);
-    let c_in = b.alloc_qubit();
-    b.x(ctrl);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.cx(ctrl, c_in);
-    cuccaro_add_fast_borrowed_carries(b, &x_ext, acc, c_in, carries);
-    b.cx(ctrl, c_in);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.x(ctrl);
-    b.free(c_in);
-    b.free(pad);
-}
-
-pub(crate) fn square_addsub_vented(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-    debug_assert_eq!(prod.len(), 2 * n);
-    for i in 0..n {
-        let m = n - 1 - i;
-        if m == 0 {
-            continue;
-        }
-        let off = 2 * i + 1;
-        let slice: Vec<QubitId> = prod[off..off + m + 1].to_vec();
-
-        let hi = off + m + 1;
-        let need = m;
-        let carries: Vec<QubitId> = prod[hi..hi + need].to_vec();
-        controlled_add_subtract_vented_borrowed(b, &x[i + 1..n], &slice, x[i], &carries);
-    }
-
-    square_corr_forward(b, x, prod);
-}
-
-pub(crate) fn square_addsub_local_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-    debug_assert_eq!(prod.len(), 2 * n);
-    let t2 = b.alloc_qubits(2 * n);
-    b.x(t2[2 * n - 1]);
-    b.x(t2[n]);
-    let cin2 = b.alloc_qubit();
-    cuccaro_sub(b, &t2, prod, cin2);
-    b.free(cin2);
-    b.x(t2[2 * n - 1]);
-    b.x(t2[n]);
-    b.free_vec(&t2);
-    if n >= 2 {
-        let zc = b.alloc_qubit();
-        cross_addsub_stage1(b, prod, n, &x[0..n - 1], zc);
-        b.free(zc);
-    }
-    let oc = b.alloc_qubit();
-    b.x(oc);
-    cross_addsub_stage1(b, prod, 0, x, oc);
-    b.x(oc);
-    b.free(oc);
-    let t = b.alloc_qubits(2 * n);
-    for i in 0..n {
-        let p = 2 * i + 1;
-        if p < 2 * n {
-            b.cx(x[i], t[p]);
-        }
-    }
-    let cin = b.alloc_qubit();
-    cuccaro_sub(b, &t, prod, cin);
-    b.free(cin);
-    for i in 0..n {
-        let p = 2 * i + 1;
-        if p < 2 * n {
-            b.cx(x[i], t[p]);
-        }
-    }
-    b.free_vec(&t);
-    for i in (0..n).rev() {
-        let m = n - 1 - i;
-        if m == 0 {
-            continue;
-        }
-        let off = 2 * i + 1;
-        let slice: Vec<QubitId> = prod[off..off + m + 1].to_vec();
-        controlled_add_subtract_lowq_inverse(b, &x[i + 1..n], &slice, x[i]);
-    }
-}
-
-pub(crate) fn controlled_add_subtract_vented_borrowed_inverse(
-    b: &mut B,
-    x: &[QubitId],
-    acc: &[QubitId],
-    ctrl: QubitId,
-    carries: &[QubitId],
-) {
-    let n = x.len();
-    debug_assert_eq!(acc.len(), n + 1);
-    let pad = b.alloc_qubit();
-    let mut x_ext = x.to_vec();
-    x_ext.push(pad);
-    let c_in = b.alloc_qubit();
-    b.x(ctrl);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.cx(ctrl, c_in);
-    cuccaro_sub_fast_borrowed_carries(b, &x_ext, acc, c_in, carries);
-    b.cx(ctrl, c_in);
-    for i in 0..n {
-        b.cx(ctrl, x_ext[i]);
-    }
-    b.x(ctrl);
-    b.free(c_in);
-    b.free(pad);
-}
-
-pub(crate) fn square_addsub_vented_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
-    let n = x.len();
-    debug_assert_eq!(prod.len(), 2 * n);
-
-    square_corr_inverse(b, x, prod);
-
-    for i in (0..n).rev() {
-        let m = n - 1 - i;
-        if m == 0 {
-            continue;
-        }
-        let off = 2 * i + 1;
-        let slice: Vec<QubitId> = prod[off..off + m + 1].to_vec();
-        let hi = off + m + 1;
-        let carries: Vec<QubitId> = prod[hi..hi + m].to_vec();
-        controlled_add_subtract_vented_borrowed_inverse(b, &x[i + 1..n], &slice, x[i], &carries);
-    }
-}
-
-pub(crate) mod square_addsub_selftest {
-    use super::*;
-    use crate::sim::Simulator;
-    use crate::circuit::OperationType;
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-
-    fn count_tof(ops: &[crate::circuit::Op]) -> usize {
-        ops.iter()
-            .filter(|o| matches!(o.kind, OperationType::CCX | OperationType::CCZ))
-            .count()
-    }
-
-    pub(crate) fn toffoli_compare() {
-        for &n in &[128usize, 129] {
-            let mut b1 = B::new();
-            let x1 = b1.alloc_qubits(n);
-            let p1 = b1.alloc_qubits(2 * n);
-            schoolbook_square_symmetric(&mut b1, &x1, &p1);
-            let cur = count_tof(&b1.ops);
-            let peak_cur = b1.peak_qubits;
-
-            let mut b2 = B::new();
-            let x2 = b2.alloc_qubits(n);
-            let p2 = b2.alloc_qubits(2 * n);
-            square_addsub_vented(&mut b2, &x2, &p2);
-            let new = count_tof(&b2.ops);
-            let peak_new = b2.peak_qubits;
-
-            println!(
-                "  SQ_TOF n={n}: current(AND) CCX={cur} peakQ={peak_cur} | addsub_vented CCX={new} peakQ={peak_new} | delta={}",
-                cur as i64 - new as i64
-            );
-        }
-    }
-
-    pub(crate) fn run() {
-        let big = std::env::var("TLM_SQ_SELFTEST_BIG").ok().as_deref() == Some("1");
-        exhaustive_small_n();
-        random_large_n(if big { 4096 } else { 64 });
-        println!("  SQ_SELFTEST (vented): bit-exact vs classical x^2 — 0 divergence");
-        inverse_drains_to_zero(if big { 4096 } else { 256 });
-        println!("  SQ_SELFTEST (inverse): forward+inverse drains prod to 0, clean");
-        toffoli_compare();
-    }
-
-    fn inverse_drains_to_zero(count: usize) {
-        for &n in &[1usize, 2, 3, 8, 32, 127, 128, 129] {
-            let mut seed = sha3::Shake256::default();
-            seed.update(b"missed3-inv");
-            seed.update(&[n as u8]);
-            let mut xof = seed.finalize_xof();
-            let mut buf = [0u8; 32];
-            let batches = (count / 64).max(1);
-            for batch in 0..batches {
-                let mut xs = Vec::with_capacity(64);
-                for _ in 0..64 {
-                    xof.read(&mut buf);
-                    let mut v = U256::from_le_bytes(buf);
-                    if n < 256 {
-                        v &= (U256::from(1u64) << n) - U256::from(1u64);
-                    }
-                    xs.push(v);
-                }
-                let mut b = B::new();
-                let x = b.alloc_qubits(n);
-                let prod = b.alloc_qubits(2 * n);
-                square_addsub_vented(&mut b, &x, &prod);
-                square_addsub_vented_inverse(&mut b, &x, &prod);
-                let nq = b.next_qubit as usize;
-                let nb = b.next_bit as usize;
-                let mut s2 = sha3::Shake256::default();
-                s2.update(b"missed3-inv-sim");
-                s2.update(&[n as u8, batch as u8]);
-                let mut xof2 = s2.finalize_xof();
-                let mut sim = Simulator::new(nq, nb, &mut xof2);
-                sim.clear_for_shot();
-                for (shot, xv) in xs.iter().enumerate() {
-                    for i in 0..n {
-                        if xv.bit(i) {
-                            *sim.qubit_mut(x[i]) |= 1u64 << shot;
-                        }
-                    }
-                }
-                sim.apply_iter(b.ops.iter());
-                assert_eq!(sim.phase, 0, "inv n={n} b{batch}: phase garbage");
-
-                let mut is_x = vec![false; nq];
-                for &q in x.iter() {
-                    is_x[q.0 as usize] = true;
-                }
-                for q in 0..nq {
-                    if !is_x[q] {
-                        assert_eq!(
-                            sim.qubit(QubitId(q as u64)),
-                            0,
-                            "inv n={n} b{batch}: nonzero q{q} (prod/ancilla not drained)"
-                        );
-                    }
-                }
-                for (shot, xv) in xs.iter().enumerate() {
-                    for i in 0..n {
-                        let got = (sim.qubit(x[i]) >> shot) & 1 == 1;
-                        assert_eq!(got, xv.bit(i), "inv n={n} b{batch}: x[{i}] corrupted");
-                    }
-                }
-            }
-        }
-    }
-
-    fn check_square(n: usize, xs: &[U256], label: &str) {
-        assert!(xs.len() <= 64);
-        let mut b = B::new();
-        let x = b.alloc_qubits(n);
-        let prod = b.alloc_qubits(2 * n);
-        square_addsub_vented(&mut b, &x, &prod);
-        let nq = b.next_qubit as usize;
-        let nb = b.next_bit as usize;
-
-        let mut seed = sha3::Shake256::default();
-        seed.update(b"missed3-square-addsub-stage1");
-        seed.update(label.as_bytes());
-        let mut xof = seed.finalize_xof();
-
-        let mut sim = Simulator::new(nq, nb, &mut xof);
-        sim.clear_for_shot();
-        for (shot, xv) in xs.iter().enumerate() {
-            for i in 0..n {
-                if xv.bit(i) {
-                    *sim.qubit_mut(x[i]) |= 1u64 << shot;
-                }
-            }
-        }
-        sim.apply_iter(b.ops.iter());
-
-        let cond_mask: u64 = if xs.len() == 64 {
-            u64::MAX
-        } else {
-            (1u64 << xs.len()) - 1
-        };
-        if sim.phase & cond_mask != 0 {
-            let mut is_reg = vec![false; nq];
-            for &q in x.iter().chain(prod.iter()) {
-                is_reg[q.0 as usize] = true;
-            }
-            for q in 0..nq {
-                let v = sim.qubit(QubitId(q as u64)) & cond_mask;
-                if !is_reg[q] && v != 0 {
-                    eprintln!("  DIRTY q{q} = {v:#018x}");
-                }
-            }
-            panic!("{label}: phase garbage {:#018x}", sim.phase & cond_mask);
-        }
-
-        for (shot, xv) in xs.iter().enumerate() {
-            let mut out = U256::ZERO;
-            for i in 0..(2 * n) {
-                if (sim.qubit(prod[i]) >> shot) & 1 == 1 {
-                    out |= U256::from(1u64) << i;
-                }
-            }
-            let expect = xv.wrapping_mul(*xv);
-            assert_eq!(out, expect, "{label}: shot {shot} x={xv:#x} got {out:#x}");
-        }
-
-        let mut is_reg = vec![false; nq];
-        for &q in x.iter().chain(prod.iter()) {
-            is_reg[q.0 as usize] = true;
-        }
-        for q in 0..nq {
-            if !is_reg[q] {
-                assert_eq!(
-                    sim.qubit(QubitId(q as u64)) & cond_mask,
-                    0,
-                    "{label}: dirty ancilla q{q}"
-                );
-            }
-        }
-    }
-
-    fn exhaustive_small_n() {
-        for n in 1..=6usize {
-            let limit = 1usize << n;
-            let xs: Vec<U256> = (0..limit).map(|v| U256::from(v as u64)).collect();
-
-            for chunk in xs.chunks(64) {
-                check_square(n, chunk, &format!("exhaustive-n{n}"));
-            }
-        }
-    }
-
-    fn random_large_n(batches: usize) {
-        for &n in &[8usize, 16, 32, 64, 127, 128, 129] {
-            let mut seed = sha3::Shake256::default();
-            seed.update(b"missed3-rand");
-            seed.update(&[n as u8]);
-            let mut xof = seed.finalize_xof();
-            let mut buf = [0u8; 32];
-            for batch in 0..batches {
-                let mut xs = Vec::with_capacity(64);
-                for _ in 0..64 {
-                    xof.read(&mut buf);
-                    let mut v = U256::from_le_bytes(buf);
-
-                    if n < 256 {
-                        v &= (U256::from(1u64) << n) - U256::from(1u64);
-                    }
-                    xs.push(v);
-                }
-                check_square(n, &xs, &format!("rand-n{n}-b{batch}"));
-            }
-        }
-    }
 }

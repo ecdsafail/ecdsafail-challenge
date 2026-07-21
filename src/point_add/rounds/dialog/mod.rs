@@ -1,4 +1,9 @@
-
+//! Dialog-GCD modular inversion. This `mod.rs` holds the raw-log path (config
+//! levers, per-step comparators, controlled add/sub, tobitvector / ipmul /
+//! quotient / apply emitters, and the `emit_dialog_gcd_raw_pa` driver). The
+//! `compressed` sidecar (round763 compressor + runway/composite scratch + the
+//! `emit_dialog_gcd_compressed_sidecar_*` block-lifecycle emitters) lives in the
+//! sibling module.
 use super::*;
 
 mod compressed;
@@ -15,7 +20,8 @@ pub(crate) fn round84_emit_fused_square_xtail(
 ) {
     b.set_phase("round84_fused_square_xtail_dx_sub_lam_square_lowq");
     if std::env::var("ROUND84_XTAIL_KARATSUBA").ok().as_deref() == Some("1") {
-
+        // Squaring-aware 1-level Karatsuba square (default OFF). Overrides the
+        // ROUND84_XTAIL_SCHOOLBOOK default set in configure_ecdsafail_submission_route.
         squaring_sub_from_acc_karatsuba(b, tx, lam, p);
     } else if std::env::var("ROUND84_XTAIL_WALK_SQUARE").ok().as_deref() == Some("1") {
         squaring_sub_from_acc_walk_controls_lowq(b, tx, lam, p);
@@ -32,6 +38,7 @@ pub(crate) fn round84_emit_fused_square_xtail(
     b.set_phase("round84_fused_square_xtail_negate_to_x3");
     mod_neg_inplace_fast(b, tx, p);
 }
+
 
 pub(crate) fn dialog_gcd_cmp_gt_truncated_into_width(
     b: &mut B,
@@ -69,6 +76,13 @@ pub(crate) fn dialog_gcd_branch_bits_host_comparator_enabled() -> bool {
         == Some("1")
 }
 
+/// Truncated controlled branch-bit comparator that hosts its borrow `c_in` +
+/// `carries` transient on a borrowed clean slice (the idle future-log region)
+/// when one of sufficient length is supplied, freeing the peak qubit the fresh
+/// allocation would otherwise consume at the branch_bits instant. Falls back to
+/// the self-allocating comparator when no slice (or a too-short one) is given, so
+/// behaviour is identical to `dialog_gcd_ccx_cmp_gt_truncated_into_width` in that
+/// case. Value-exact either way.
 pub(crate) fn dialog_gcd_ccx_cmp_gt_truncated_into_width_hosted(
     b: &mut B,
     u: &[QubitId],
@@ -85,7 +99,13 @@ pub(crate) fn dialog_gcd_ccx_cmp_gt_truncated_into_width_hosted(
     let cmp_u = &v[start..];
     let cmp_v = &u[start..];
     let n = cmp_u.len();
-
+    // Need c_in (1) + carries (n) = n+1 clean lanes. PARTIAL hosting: borrow the
+    // future-log prefix that fits and allocate only the deficit, instead of
+    // all-or-nothing (which fully self-allocs n+1 at the late GCD steps where the
+    // slice runs short, pinning the branch_bits peak at 1446). The borrowed-carries
+    // comparator indexes c_in and each carries[i] independently, so a gathered
+    // [borrowed_prefix ++ owned] vec is value-identical; borrowed lanes are restored
+    // to |0> by the measured backward inv-MAJ sweep, owned lanes are freed.
     let need = n + 1;
     let avail = borrowed.map(|s| s.len()).unwrap_or(0);
     if dialog_gcd_partial_host_comparator_enabled() && avail > 0 && avail < need {
@@ -213,6 +233,7 @@ pub(crate) fn dialog_gcd_partial_host_comparator_enabled() -> bool {
         != Some("0")
 }
 
+
 pub(crate) fn dialog_gcd_shift_right_assuming_even(b: &mut B, v: &[QubitId]) {
     assert!(!v.is_empty());
     for i in 0..v.len() - 1 {
@@ -228,7 +249,10 @@ pub(crate) fn dialog_gcd_unshift_right_assuming_even(b: &mut B, v: &[QubitId]) {
 }
 
 pub(crate) fn dialog_gcd_width_margin() -> f64 {
-
+    // W-TRUNC safety margin added to the empirical bit-length envelope.
+    // Default 37.0 reproduces pldallairedemers' baseline byte-for-byte.
+    // Lowering it tightens every GCD-body width (cswap/sub/add) -> fewer
+    // Toffoli, peak-neutral (early steps clamp at N). Co-tune with reroll.
     std::env::var("DIALOG_GCD_WIDTH_MARGIN")
         .ok()
         .and_then(|s| s.parse::<f64>().ok())
@@ -237,7 +261,8 @@ pub(crate) fn dialog_gcd_width_margin() -> f64 {
 }
 
 pub(crate) fn dialog_gcd_width_slope() -> f64 {
-
+    // Per-step shrink rate of the realizable max(bitlen(u),bitlen(v)).
+    // Default 0.5*1.415 = 0.7075 reproduces the baseline.
     std::env::var("DIALOG_GCD_WIDTH_SLOPE_X1000")
         .ok()
         .and_then(|s| s.parse::<f64>().ok())
@@ -303,6 +328,19 @@ pub(crate) fn dialog_gcd_fused_fold_carry_trunc_window(
     .or_else(double_carry_trunc_window)
 }
 
+/// Carry-tail truncation window for the materialized controlled sub/add BODY
+/// (and its gated LOAD). Default 0 (OFF). When `w > 0`, the controlled
+/// `acc -= ctrl·subtrahend` / `acc += ctrl·addend` only loads + ripples the
+/// low `active_width - w` bits. The GCD work registers u/v are bounded by the
+/// realizable bitlen, which sits `WIDTH_MARGIN` (=28) bits below `active_width`,
+/// so the top `w <= margin` bits of both operands are 0 in the no-truncation
+/// regime: the gated LOAD there is `ctrl & 0 = 0` and the body's top carries
+/// are 0, so neither the load nor the carry ripple above `active_width - w`
+/// affects the result. Failure mode (a step whose realizable bitlen actually
+/// reaches into the truncated window) is selected away by the co-tuned reroll,
+/// exactly like the global WIDTH_MARGIN — but applied to the sub/add ONLY,
+/// leaving the cswap and comparator at full active_width. Returns the truncated
+/// body width, clamped to >= 2.
 pub(crate) fn dialog_gcd_body_carry_band_trim(step: usize) -> Option<usize> {
     let trims = std::env::var("DIALOG_GCD_BODY_CARRY_BAND_TRIMS").ok()?;
     if trims.trim().is_empty() {
@@ -355,43 +393,23 @@ pub(crate) fn dialog_gcd_body_carry_trunc_width(active_width: usize, step: usize
     if dialog_gcd_trio_width_notch_enabled() && step == dialog_gcd_trio_width_notch_step() {
         w = w.saturating_add(dialog_gcd_trio_width_notch_extra());
     }
-
+    // Multi-step binder notch (gated, default OFF). When
+    // DIALOG_GCD_BINDER_NOTCH_STEPS lists `step`, trim an extra
+    // DIALOG_GCD_BINDER_NOTCH_EXTRA (default 2) high bits off the materialized
+    // sub/add body at THIS step too. Under the active nocin body the composite
+    // scratch ask is want = 2*body_len-1, so trimming body_w by k drops the
+    // owned deficit (and thus the compressed-block trio peak) by k at each
+    // listed binder step. Value-exact on the reachable GCD support: at the
+    // width-clamped binder steps the realizable bitlen sits WIDTH_MARGIN below
+    // active_width, so the trimmed top bits of both operands are |0> (the gated
+    // load there is ctrl & 0 = 0 and the carry ripple above the cut is 0).
+    // Absent the env this is a no-op -> byte-identical to the accepted stream.
     if dialog_gcd_binder_notch_steps().contains(&step) {
         w = w.saturating_add(dialog_gcd_binder_notch_extra());
     }
     w = w.saturating_add(dialog_gcd_binder_notch_map_extra(step));
     w = w.saturating_sub(dialog_gcd_body_step_giveback(step));
     active_width.saturating_sub(w).max(2)
-}
-
-pub(crate) fn dialog_gcd_vented_body_band_trim_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_BAND_TRIM").ok().as_deref() == Some("1")
-}
-
-pub(crate) fn dialog_gcd_vented_body_width(n: usize, step: usize) -> usize {
-    if !dialog_gcd_vented_body_band_trim_enabled() {
-        return n;
-    }
-    if let Some(u) = std::env::var("DIALOG_GCD_VENTED_BODY_UNIFORM_TRIM")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&u| u > 0)
-    {
-        return n.saturating_sub(u).max(2);
-    }
-    let mut w = dialog_gcd_body_carry_trunc_width(n, step).min(n).max(2);
-
-    if let Some(cap) = std::env::var("DIALOG_GCD_VENTED_BODY_TRIM_CAP")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-    {
-        w = w.max(n.saturating_sub(cap)).min(n);
-    }
-    w
-}
-
-pub(crate) fn dialog_gcd_vented_body_odd_lowbit_enabled() -> bool {
-    std::env::var("DIALOG_GCD_VENTED_BODY_ODD_LOWBIT").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_binder_notch_steps() -> Vec<usize> {
@@ -429,7 +447,8 @@ pub(crate) fn dialog_gcd_binder_notch_map_extra(step: usize) -> usize {
 }
 
 pub(crate) fn dialog_gcd_trio_width_notch_enabled() -> bool {
-
+    // Default-on successor from aaf9616: the current route inherited its body
+    // geometry, and this one-step notch is needed to reclaim the 1306q tier.
     std::env::var("DIALOG_GCD_TRIO_WIDTH_NOTCH").ok().as_deref() != Some("0")
 }
 
@@ -447,28 +466,59 @@ pub(crate) fn dialog_gcd_trio_width_notch_extra() -> usize {
         .unwrap_or(2)
 }
 
-pub(crate) fn dialog_gcd_host_gated_enabled() -> bool {
 
+pub(crate) fn dialog_gcd_host_gated_enabled() -> bool {
+    // Port of our KAL_GZ_EARLY_RECOVER carry-pool relocation: host the
+    // materialized `gated` register (width = active_width, up to 256 at peak)
+    // on the provably-|0> future-log slots that already host the ripple carry,
+    // instead of allocating fresh ancilla. The borrowed slice (when long enough
+    // for carry + gated = 2n-1) is split: [..n-1] = carry, [n-1..2n-1] = gated.
+    // Both are restored to |0> (carry by the adder, gated by measurement-clear),
+    // so the future-log slots are clean for the future blocks that own them.
+    // Peak-neutral->down: removes the +256 fresh ancilla at the GCD-body peak.
+    // Default off = byte-identical baseline.
     std::env::var("DIALOG_GCD_HOST_GATED").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_body_host_cin_enabled() -> bool {
-
+    // When the odd-u low-bit fastpath is active (body_start>=1), the low gated
+    // slot gated[0] is never loaded or cleared, so it stays |0> across the body
+    // and is distinct from the operands and the borrowed carry lane. Hosting the
+    // Cuccaro carry-in there instead of a fresh alloc removes the single qubit
+    // that pinned the materialized add/sub BODY one slot above the marker tier.
+    // Value-exact (c_in=0 is the carry-in either way; returned to |0>).
     std::env::var("DIALOG_GCD_BODY_HOST_CIN").ok().as_deref() == Some("1")
 }
 
 pub(crate) fn dialog_gcd_selected_body_nocin_enabled() -> bool {
-
+    // Successor to BODY_HOST_CIN for the odd-lowbit fastpath (body_start>=1):
+    // the materialized selected add/sub body consumes NO physical incoming-carry
+    // lane at all. The carry/borrow into body_start=1 is semantically zero on the
+    // reachable GCD support (subtrahend[0]=1, acc[0]=ctrl), so the Cuccaro chain
+    // is seeded from the known-zero with the c_in register folded out entirely
+    // (see cuccaro_{add,sub}_fast_borrowed_carries_no_cin). This drops the
+    // selected-body host demand from 2*body_w-1 to 2*body_w-3 (one structural gap
+    // lane + the former c_in lane both vanish), moving the three GCD tobitvector
+    // siblings off the 1320 tier without reusing the wrapper-unsafe gap-as-c_in
+    // slice that the COMPACT probe (closed) tried. Default off until traced.
     matches!(
         std::env::var("DIALOG_GCD_SELECTED_BODY_NOCIN").ok().as_deref(),
         Some("1") | Some("2")
     )
 }
 
+/// Diagnostic mode 2: use the no-c_in BODY but keep the legacy `2n-1` composite
+/// pool and BODY_HOST_CIN slice offsets (gated = c[n-1..2n-1], its [0] left
+/// unused/clean). This isolates the body arithmetic from the host repack — it
+/// yields no peak win (pool unchanged) but, if eval is 0/0/0, proves the no-c_in
+/// body is route-correct and any failure under mode 1 is in the host compaction.
 pub(crate) fn dialog_gcd_selected_body_nocin_keep_pool() -> bool {
     std::env::var("DIALOG_GCD_SELECTED_BODY_NOCIN").ok().as_deref() == Some("2")
 }
 
+/// Per-step count of high source bits streamed through the controlled low-q
+/// suffix instead of being materialized. A value of one uses the cheaper
+/// top-bit specialization. Default off when the map is absent.
 pub(crate) fn dialog_gcd_selected_body_stream_suffix_bits(step: usize, body_len: usize) -> usize {
     let Ok(map) = std::env::var("DIALOG_GCD_SELECTED_BODY_STREAM_SUFFIX_MAP") else {
         return 0;
@@ -510,6 +560,14 @@ pub(crate) fn dialog_gcd_late_borrow_uv_high_enabled() -> bool {
         == Some("1")
 }
 
+/// Pick the carry/gated borrow slice for a GCD step. Prefer the compressed
+/// future-log; when it is too short to host the full gated(n)+carry(n-1) lane
+/// (late steps, where the compressed future region has shrunk), fall back to the
+/// high zero bits of `u`. By the same premise the width truncation relies on,
+/// `u < 2^active_width` here so `u[active_width..]` is |0>; it is already
+/// allocated, so borrowing it as scratch is peak-neutral and adds no failure
+/// modes (any input with nonzero u-high already fails the truncation). The
+/// returned slice is disjoint from `u[..active_width]` and the `v` accumulator.
 pub(crate) fn dialog_gcd_pick_borrow_slice<'a>(
     future: Option<&'a [QubitId]>,
     u: &'a [QubitId],
@@ -552,7 +610,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
         {
             2 * (body_len - 1)
         } else if dialog_gcd_selected_body_nocin_keep_pool() {
-
+            // Legacy gated offset c[n..n+body_len] needs the full 2n-1 pool.
             (n + body_len).max(2 * body_len - 1)
         } else {
             2 * body_len - 1
@@ -617,11 +675,16 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
                 }
                 return;
             }
-
+            // No-physical-c_in body: host demand 2*body_len-1 (== 2*body_w-3).
+            // carries = borrowed[..body_len-1], gated = borrowed[body_len-1..2*body_len-1].
+            // Diagnostic keep-pool (mode 2) instead uses the BODY_HOST_CIN offsets
+            // (carries low, gated = c[n-1+1..] on the legacy 2n-1 pool) to isolate
+            // the body arithmetic from the host repack.
             let c = borrowed_carries.expect("nocin requires borrowed carries");
             let (carries, gated): (&[QubitId], &[QubitId]) =
                 if dialog_gcd_selected_body_nocin_keep_pool() {
-
+                    // Legacy gated = c[n-1..2n-1]; gated[0]=c[n-1] is the unused
+                    // (clean) former c_in slot, so operand lands on c[n..2n-1].
                     let carry_need = body_len - 1;
                     (&c[..carry_need], &c[n..n + body_len])
                 } else {
@@ -632,7 +695,9 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             for j in 0..body_len {
                 b.ccx(ctrl, subtrahend[body_start + j], gated[j]);
             }
-
+            // Reachable GCD states have subtrahend[0]=1 and acc[0]=ctrl here:
+            // ctrl - ctrl has result bit 0 and no borrow into bit 1 (the omitted
+            // c_in). This is exactly the premise the no-c_in body relies on.
             b.cx(ctrl, acc[0]);
             b.set_phase("dialog_gcd_raw_tobitvector_materialized_sub_body");
             cuccaro_sub_fast_borrowed_carries_no_cin(
@@ -649,7 +714,8 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             }
             return;
         }
-
+        // Host the gated register on the tail of the borrowed clean slice when
+        // it is long enough for both carry (n-1) and gated (n).
         let gated_host: Option<&[QubitId]> = if dialog_gcd_host_gated_enabled() {
             borrowed_carries.and_then(|c| {
                 if c.len() >= 2 * n - 1 {
@@ -674,7 +740,8 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             b.ccx(ctrl, subtrahend[i], gated[i]);
         }
         if odd_lowbit_fast {
-
+            // Reachable GCD states have subtrahend[0]=1 and acc[0]=ctrl here:
+            // ctrl - ctrl has result bit 0 and no borrow into bit 1.
             b.cx(ctrl, acc[0]);
         }
         b.set_phase("dialog_gcd_raw_tobitvector_materialized_sub_body");
@@ -683,7 +750,8 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
                 borrowed_carries.filter(|carries| carries.len() >= body_len.saturating_sub(1))
             {
                 if dialog_gcd_body_host_cin_enabled() && body_start >= 1 {
-
+                    // gated[0] is unused (load/clear start at body_start) and |0>:
+                    // use it as the Cuccaro carry-in, dropping the fresh c_in alloc.
                     cuccaro_sub_fast_borrowed_carries(
                         b,
                         &gated[body_start..body_w],
@@ -718,17 +786,7 @@ pub(crate) fn dialog_gcd_controlled_sub_selected(
             if let Some(vents) =
                 borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
             {
-                let bw = dialog_gcd_vented_body_width(n, step);
-                if dialog_gcd_vented_body_odd_lowbit_enabled()
-                    && dialog_gcd_odd_u_lowbit_fastpath_enabled()
-                    && bw >= 3
-                {
-
-                    b.cx(ctrl, acc[0]);
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
-                } else {
-                    cuccaro_sub_ctrl_vented(b, &subtrahend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
-                }
+                cuccaro_sub_ctrl_vented(b, subtrahend, acc, ctrl, &vents[..n - 1]);
                 return;
             }
         }
@@ -763,7 +821,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
         {
             2 * (body_len - 1)
         } else if dialog_gcd_selected_body_nocin_keep_pool() {
-
+            // Legacy gated offset c[n..n+body_len] needs the full 2n-1 pool.
             (n + body_len).max(2 * body_len - 1)
         } else {
             2 * body_len - 1
@@ -828,7 +886,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
                 }
                 return;
             }
-
+            // No-physical-c_in inverse body: host demand 2*body_len-1 (==2*body_w-3).
             let c = borrowed_carries.expect("nocin requires borrowed carries");
             let (carries, gated): (&[QubitId], &[QubitId]) =
                 if dialog_gcd_selected_body_nocin_keep_pool() {
@@ -842,7 +900,8 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
             for j in 0..body_len {
                 b.ccx(ctrl, addend[body_start + j], gated[j]);
             }
-
+            // In reverse, acc[0] is zero after unshift and addend[0]=1: adding
+            // ctrl sets the low result bit with no carry into bit 1 (omitted c_in).
             b.cx(ctrl, acc[0]);
             b.set_phase("dialog_gcd_raw_tobitvector_materialized_add_body");
             cuccaro_add_fast_borrowed_carries_no_cin(
@@ -883,7 +942,8 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
             b.ccx(ctrl, addend[i], gated[i]);
         }
         if odd_lowbit_fast {
-
+            // In reverse, acc[0] is zero after unshift and addend[0]=1:
+            // adding ctrl sets the low result bit with no carry into bit 1.
             b.cx(ctrl, acc[0]);
         }
         b.set_phase("dialog_gcd_raw_tobitvector_materialized_add_body");
@@ -892,7 +952,8 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
                 borrowed_carries.filter(|carries| carries.len() >= body_len.saturating_sub(1))
             {
                 if dialog_gcd_body_host_cin_enabled() && body_start >= 1 {
-
+                    // gated[0] is unused (load/clear start at body_start) and |0>:
+                    // use it as the Cuccaro carry-in, dropping the fresh c_in alloc.
                     cuccaro_add_fast_borrowed_carries(
                         b,
                         &gated[body_start..body_w],
@@ -927,17 +988,7 @@ pub(crate) fn dialog_gcd_controlled_add_selected(
             if let Some(vents) =
                 borrowed_carries.filter(|c| n >= 2 && c.len() >= n - 1)
             {
-                let bw = dialog_gcd_vented_body_width(n, step);
-                if dialog_gcd_vented_body_odd_lowbit_enabled()
-                    && dialog_gcd_odd_u_lowbit_fastpath_enabled()
-                    && bw >= 3
-                {
-
-                    b.cx(ctrl, acc[0]);
-                    cuccaro_add_ctrl_vented(b, &addend[1..bw], &acc[1..bw], ctrl, &vents[..bw - 2]);
-                } else {
-                    cuccaro_add_ctrl_vented(b, &addend[..bw], &acc[..bw], ctrl, &vents[..bw - 1]);
-                }
+                cuccaro_add_ctrl_vented(b, addend, acc, ctrl, &vents[..n - 1]);
                 return;
             }
         }
@@ -1074,6 +1125,7 @@ pub(crate) fn emit_dialog_gcd_raw_tobitvector_steps_reverse(
     }
 }
 
+
 pub(crate) fn dialog_gcd_cmod_add_pseudomersenne_lowq(
     b: &mut B,
     acc: &[QubitId],
@@ -1098,9 +1150,17 @@ pub(crate) fn dialog_gcd_cmod_add_pseudomersenne_lowq(
     b.free(c_in);
     b.free(a_ovf);
 
+    // If the controlled 256-bit add overflowed, subtract p by adding
+    // c = 2^256 - p to the low word.  The low slice is the explicit
+    // approximation knob: carry beyond this window is treated as a rare
+    // arithmetic failure branch, not as phase dirt.
     b.set_phase("dialog_gcd_direct_special_overflow_fold");
     cadd_nbit_const_fast(b, &acc[..DIALOG_GCD_SPECIAL_ADD_LSBS], c, acc_ovf);
 
+    // For successful branches this is the exact overflow cleanup identity:
+    // after subtracting p, the final low word is smaller than the addend iff
+    // the overflow branch happened.  The omitted no-overflow sum>=p case is
+    // the approximation budgeted by the caller.
     b.set_phase("dialog_gcd_direct_special_overflow_clean");
     cmp_lt_into(b, acc, a, acc_ovf);
     unext_reg(b, acc_ovf);
@@ -1682,7 +1742,8 @@ pub(crate) fn dialog_gcd_add_ctrl_chunked_low_to_ext(
     let blocks = blocks.max(2).min(ext_n);
     let mut carry = c_in;
     let mut lo = 0usize;
-
+    // The low-to-extended-register primitive represents the source high zero
+    // implicitly. Otherwise reserve one borrowed cell for that transient lane.
     let implicit_high_zero = dialog_gcd_apply_implicit_high_zero_enabled();
     let zero_host = (!implicit_high_zero)
         .then(|| clean_scratch.first().copied())
@@ -2090,7 +2151,9 @@ pub(crate) fn dialog_gcd_cmod_add_materialized_pseudomersenne_chunked(
             .as_deref()
             == Some("1")
         {
-
+            // The chunk carry-in is back to |0> after the raw sum and is idle
+            // during the fold, so it is a valid carry host alongside the
+            // remaining clean scratch.
             clean_scratch
         } else {
             &[]
@@ -2189,7 +2252,8 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_chunked(
             .as_deref()
             == Some("1")
         {
-
+            // The chunk borrow-in is back to |0> after the raw difference and
+            // can host one fold borrow without increasing the live set.
             clean_scratch
         } else {
             &[]
@@ -2330,7 +2394,9 @@ pub(crate) fn dialog_gcd_cmod_sub_materialized_pseudomersenne_with_clean_scratch
 
     b.set_phase("dialog_gcd_materialized_special_raw_difference");
     if dialog_gcd_measured_apply_sub_enabled() {
-
+        // Measured (Gidney) difference: ~n Toffoli instead of the ~2n of the
+        // non-fast cuccaro_sub uncompute. Peak-safe: the symmetric apply ADD
+        // already runs cuccaro_add_fast with its carry lane in this same phase.
         let c_in = b.alloc_qubit();
         if let Some(w) = dialog_gcd_apply_window_blocks() {
             cuccaro_sub_fast_windowed_low_to_ext(b, &f, &acc_ext, c_in, w);
@@ -2578,6 +2644,7 @@ pub(crate) fn emit_dialog_gcd_raw_apply_bitvector_reverse_borrowed_subtrahend(
         mod_halve_inplace_fast(b, y, p);
     }
 }
+
 
 pub(crate) fn emit_dialog_gcd_raw_ipmul(b: &mut B, factor: &[QubitId], target: &[QubitId], p: U256) {
     assert_eq!(factor.len(), N);
@@ -2832,3 +2899,4 @@ pub(crate) fn emit_dialog_gcd_raw_pa(
         mod_add_qb(b, tx, ox, p);
     }
 }
+
