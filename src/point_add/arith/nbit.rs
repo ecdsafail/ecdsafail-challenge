@@ -7,6 +7,7 @@ pub(crate) fn add_nbit_qq_fast(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     b.free(c_in);
 }
 
+/// Fast `acc -= a mod 2^n` using measurement-based Cuccaro.
 pub(crate) fn sub_nbit_qq_fast(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     assert_eq!(a.len(), acc.len());
     let c_in = b.alloc_qubit();
@@ -47,6 +48,8 @@ fn maj3_into_clean_2ccx(b: &mut B, x: QubitId, y: QubitId, z: QubitId, target: Q
     b.cx(x, z);
 }
 
+/// Exact measured add of a short source into a longer accumulator, without
+/// materializing the zero-valued high suffix of the source.
 pub(crate) fn add_short_to_long_qq_fast_no_cin(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     let m = a.len();
     let n = acc.len();
@@ -101,6 +104,8 @@ pub(crate) fn add_short_to_long_qq_fast_no_cin(b: &mut B, a: &[QubitId], acc: &[
     b.free_vec(&carries);
 }
 
+/// Exact measured subtract of a short source from a longer accumulator, without
+/// materializing the zero-valued high suffix of the source.
 pub(crate) fn sub_short_to_long_qq_fast_no_cin(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     let m = a.len();
     let n = acc.len();
@@ -153,6 +158,11 @@ pub(crate) fn sub_short_to_long_qq_fast_no_cin(b: &mut B, a: &[QubitId], acc: &[
     b.free_vec(&borrows);
 }
 
+/// `acc += a mod 2^n`. Caller must pre-extend both slices if they want the
+/// top carry absorbed into the accumulator (i.e. pass n+1-bit slices with
+/// top bits 0 to get a full n+1-bit add). The carry-out beyond the slice
+/// is discarded via `R` on the `z` ancilla — safe when both inputs fit
+/// in n-1 bits (as in our mod-p layer where both < 2p < 2^{n+1}).
 pub(crate) fn add_nbit_qq(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     assert_eq!(a.len(), acc.len());
     let c_in = b.alloc_qubit();
@@ -167,6 +177,7 @@ pub(crate) fn sub_nbit_qq(b: &mut B, a: &[QubitId], acc: &[QubitId]) {
     b.free(c_in);
 }
 
+
 pub(crate) fn add_nbit_const(b: &mut B, acc: &[QubitId], c: U256) {
     let n = acc.len();
     let a = load_const(b, n, c);
@@ -180,3 +191,5 @@ pub(crate) fn sub_nbit_const(b: &mut B, acc: &[QubitId], c: U256) {
     sub_nbit_qq(b, &a, acc);
     unload_const(b, &a, c);
 }
+
+
