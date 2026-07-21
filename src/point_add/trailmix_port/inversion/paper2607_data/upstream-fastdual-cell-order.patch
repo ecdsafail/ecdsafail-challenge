@@ -1,0 +1,55 @@
+diff --git a/eea_circuit_s835_fastdual.py b/eea_circuit_s835_fastdual.py
+index 90f1d39..cac671a 100644
+--- a/eea_circuit_s835_fastdual.py
++++ b/eea_circuit_s835_fastdual.py
+@@ -254,12 +254,12 @@ def lc_interval_addsub_unary_gate(*, n: int, k: int, K: int, len_width: int, shi
+     def leaf_first(j: int, rj: Qubit, lj: Qubit) -> None:
+         addend, tgt = qpair(j)
+         qc.cx(rj, acc)
+-        _e._apply_cell(qc, mode, "first", acc, addend, tgt, carry, cell_pool)
++        _e._apply_cell(qc, mode, "first", acc, carry, tgt, addend, cell_pool)
+         qc.cx(lj, acc)
+     if top_special:
+         _toggle_eq_const_under_ctrl_direct(qc, endpoint=l_s, const=top_rel, ctrl=Ctrl[0], acc=acc, scratch=eq_scratch)
+         addend, tgt = qpair(top_rel)
+-        _e._apply_cell(qc, mode, "first", acc, addend, tgt, carry, cell_pool)
++        _e._apply_cell(qc, mode, "first", acc, carry, tgt, addend, cell_pool)
+         _toggle_eq_const_under_ctrl_direct(qc, endpoint=l_q, const=top_rel, ctrl=Ctrl[0], acc=acc, scratch=eq_scratch)
+     dual_unary_iteration_tight(qc, index_a=l_s, index_b=l_q, labels=labels_main,
+                             ctrl_a=Ctrl[0], ctrl_b=Ctrl[0], ancillas_a=anc_a,
+@@ -269,7 +269,7 @@ def lc_interval_addsub_unary_gate(*, n: int, k: int, K: int, len_width: int, shi
+     def leaf_second(j: int, rj: Qubit, lj: Qubit) -> None:
+         addend, tgt = qpair(j)
+         qc.cx(lj, acc)
+-        _e._apply_cell(qc, mode, "second", acc, addend, tgt, carry, cell_pool)
++        _e._apply_cell(qc, mode, "second", acc, carry, tgt, addend, cell_pool)
+         qc.cx(rj, acc)
+     dual_unary_iteration_tight(qc, index_a=l_s, index_b=l_q, labels=labels_main,
+                             ctrl_a=Ctrl[0], ctrl_b=Ctrl[0], ancillas_a=anc_a,
+@@ -277,7 +277,7 @@ def lc_interval_addsub_unary_gate(*, n: int, k: int, K: int, len_width: int, shi
+     if top_special:
+         _toggle_eq_const_under_ctrl_direct(qc, endpoint=l_q, const=top_rel, ctrl=Ctrl[0], acc=acc, scratch=eq_scratch)
+         addend, tgt = qpair(top_rel)
+-        _e._apply_cell(qc, mode, "second", acc, addend, tgt, carry, cell_pool)
++        _e._apply_cell(qc, mode, "second", acc, carry, tgt, addend, cell_pool)
+         _toggle_eq_const_under_ctrl_direct(qc, endpoint=l_s, const=top_rel, ctrl=Ctrl[0], acc=acc, scratch=eq_scratch)
+     _e.add_const_mod_2n(qc, l_s, k, cs[:shift_width] + [carry])
+     _e.add_const_mod_2n(qc, l_q, k, cs[:len_width] + [carry])
+@@ -320,7 +320,7 @@ def lc_prefix_addsub_unary_gate(*, k: int, K: int, len_width: int,
+     def leaf_first(j: int, ej: Qubit) -> None:
+         addend, tgt = qpair(j)
+         qc.cx(ej, acc)
+-        _e._apply_cell(qc, mode, "first", acc, addend, tgt, carry, cell_pool)
++        _e._apply_cell(qc, mode, "first", acc, carry, tgt, addend, cell_pool)
+         if j == k:
+             qc.cx(Ctrl[0], acc)
+     unary_iteration_tight(qc, index_reg=l_t, labels=list(range(k, K + 1)), ctrl=Ctrl[0], ancillas=path, leaf_fn=leaf_first, order="dec")
+@@ -329,7 +329,7 @@ def lc_prefix_addsub_unary_gate(*, k: int, K: int, len_width: int,
+     qc.cx(Ctrl[0], acc)
+     def leaf_second(j: int, ej: Qubit) -> None:
+         addend, tgt = qpair(j)
+-        _e._apply_cell(qc, mode, "second", acc, addend, tgt, carry, cell_pool)
++        _e._apply_cell(qc, mode, "second", acc, carry, tgt, addend, cell_pool)
+         qc.cx(ej, acc)
+     unary_iteration_tight(qc, index_reg=l_t, labels=list(range(k, K + 1)), ctrl=Ctrl[0], ancillas=path, leaf_fn=leaf_second, order="inc")
+     _e.sub_const_mod_2n(qc, l_t, 2, cs)

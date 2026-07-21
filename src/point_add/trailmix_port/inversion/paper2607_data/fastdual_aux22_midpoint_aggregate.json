@@ -1,0 +1,38 @@
+{
+  "assertions": {
+    "aggregate_matches_delta_sum": true,
+    "exact_per_step_delta": true,
+    "exact_width": true
+  },
+  "aux_size": 22,
+  "distinct_t_windows": 257,
+  "emitted_ops_per_traversal": 149005883,
+  "executed_toffoli_saved_per_traversal": 3773112,
+  "field_width": 256,
+  "integrated_pa_qubits": 837,
+  "local_width": 581,
+  "new_executed_toffoli_per_traversal": 55826377,
+  "new_four_traversal_executed_toffoli": 223305508,
+  "new_full_pa_toffoli": 233983614,
+  "old_executed_toffoli_per_traversal": 59599489,
+  "old_four_traversal_executed_toffoli": 238397956,
+  "old_full_pa_toffoli": 249076062,
+  "per_step_delta": "2685 - 2*M",
+  "per_step_delta_max": 2683,
+  "per_step_delta_min": 2171,
+  "per_step_executed_toffoli_max": 51684,
+  "per_step_executed_toffoli_min": 22667,
+  "primitive_counts": {
+    "ccx": 48643673,
+    "clean_c3x_mbu": 3591352,
+    "cx": 42217202,
+    "x": 43779600
+  },
+  "records_per_traversal": 138231827,
+  "schedule_steps": 1616,
+  "schema": "paper2607-eea-midpoint-fusion-count-v1",
+  "source_module": "eea_circuit_s835_fastdual_aux22.py",
+  "source_sha256": "64f946390fdca47b66e538cb6c2ffdd3015a5e0f61f0fc65fb9aa2a4a41efa60",
+  "sum_t_window_widths": 282924,
+  "window_certificate_sha256": "3e1961f5550249604bf044edb65f1d1bc403ed75bd7178e283685ddb4f3cb880"
+}
