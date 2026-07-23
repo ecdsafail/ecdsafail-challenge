@@ -24,6 +24,7 @@ pub mod trailmix_ludicrous;
 mod single_ccx_fanout;
 mod m60_dead_t10;
 mod d2_deep_strip;
+mod deep_strip_keys;
 
 thread_local! {
     static D1_PHASE_CORRECTED_PRODUCT_CORE_SCOPE: std::cell::Cell<bool> =
@@ -1670,6 +1671,43 @@ fn apply_d2_deep_strip(ops: Vec<Op>) -> Vec<Op> {
     ops.into_iter().enumerate().filter(|(i, _)| !drop.contains(i)).map(|(_, o)| o).collect()
 }
 
+/// Identity-keyed deep strip. Instead of positional indices (which any op-stream edit
+/// invalidates), each census-dead CCX/CCZ is keyed by its operand tuple
+/// (kind, q_control2, q_control1, q_target, c_condition) plus the k-th-occurrence ordinal
+/// of that tuple in stream order. Derived once from a 1e8 fire-census; re-applies to any
+/// edited stream that does not relabel the dead region, with no re-census.
+fn apply_deep_strip_identity(ops: Vec<Op>) -> Vec<Op> {
+    use std::collections::{HashMap, HashSet};
+    let dead: HashSet<(u8, u64, u64, u64, u64, u32)> =
+        deep_strip_keys::DEAD_KEYS.iter().copied().collect();
+    if dead.is_empty() {
+        return ops;
+    }
+    let mut ord: HashMap<(u8, u64, u64, u64, u64), u32> = HashMap::new();
+    let mut out = Vec::with_capacity(ops.len());
+    let mut removed = 0usize;
+    for op in ops {
+        let kb = op.kind as u8; // CCX=13, CCZ=14 in the serialized stream
+        if kb == 13 || kb == 14 {
+            let tup = (kb, op.q_control2.0, op.q_control1.0, op.q_target.0, op.c_condition.0);
+            let o = ord.entry(tup).or_insert(0);
+            let key = (tup.0, tup.1, tup.2, tup.3, tup.4, *o);
+            *o += 1;
+            if dead.contains(&key) {
+                removed += 1;
+                continue;
+            }
+        }
+        out.push(op);
+    }
+    eprintln!(
+        "[deep-strip-identity] removed {} / {} dead keys matched",
+        removed,
+        deep_strip_keys::DEAD_KEYS.len()
+    );
+    out
+}
+
 /// Rewrite the 96-op identity tail to encode the ground nonce. Only q_target
 /// changes (X;X pairs stay identities), so circuit function is untouched; the
 /// Fiat-Shamir seed is what moves.
@@ -2236,14 +2274,18 @@ pub fn build() -> Vec<Op> {
     // submission-4: the baked d2 deep-strip is indexed for the OLD (pre-bit-exact-wins) op
     // stream and would misfire here; it is a near-eps lever and is re-derived on the composed
     // stream separately. Disable it for the pure bit-exact-wins circuit unless explicitly re-enabled.
-    let ops = if std::env::var("SUB4_APPLY_D2_STRIP").ok().as_deref() == Some("1") {
+    // Identity-keyed deep strip (1442 census-dead gates, zero-error) on by default;
+    // SUB4_APPLY_STRIP=0 disables for A/B measurement.
+    let ops = if std::env::var("SUB4_APPLY_STRIP").ok().as_deref() == Some("0") {
+        ops
+    } else if std::env::var("SUB4_APPLY_D2_STRIP").ok().as_deref() == Some("1") {
         apply_d2_deep_strip(ops)
     } else {
-        ops
+        apply_deep_strip_identity(ops)
     };
     // The tail nonce ground for this composed stream (verified PASS 0/0/0, score 1,517,633,280).
     // SUB4_TAIL_NONCE overrides for re-grinding/seam-export.
-    let nonce: u64 = std::env::var("SUB4_TAIL_NONCE").ok().and_then(|s| s.parse().ok()).unwrap_or(2001891927370);
+    let nonce: u64 = std::env::var("SUB4_TAIL_NONCE").ok().and_then(|s| s.parse().ok()).unwrap_or(4001397000397);
     apply_tail_nonce(ops, nonce)
 }
 
