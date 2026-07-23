@@ -399,9 +399,9 @@ fn cuccaro_call_has_structurally_dead_carry(call_index: usize, bit: usize) -> bo
     }
     match call_index {
 
-        12 | 25 => (1..=127).contains(&bit),
+        12 | 25 => (0..=127).contains(&bit),
         37 => bit <= 135,
-        19 => (1..=127).contains(&bit),
+        19 => (0..=127).contains(&bit),
         20 | 26 => bit >= 148,
         13 => bit >= 150,
         21 => matches!(bit, 147 | 148) || (150..=251).contains(&bit),

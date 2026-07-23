@@ -114,6 +114,122 @@ pub(crate) fn cuccaro_add_fast_borrowed_carries(
     b.cx(c_in, acc[0]);
 }
 
+/// UMA specialized for a `w` operand bit that is provably |0> at entry (M023).
+///
+/// The plain `uma(x, y, w) = ccx(x,y,w); cx(w,x); cx(x,y)` uncomputes a target that,
+/// for a zero-entry operand, holds exactly `AND(x, y)` (the carry the matching `maj`
+/// ANDed into a fresh |0>). Its Toffoli can therefore be replaced with the shipped
+/// measurement-based AND-uncompute idiom (`hmr` + `cz_if`, identical to the one used in
+/// `cuccaro_add_fast` above), removing one CCX per site, bit-exactly. `cx(w,x)` is a
+/// no-op because `w` is |0> after the measured clear, so only the trailing `cx(x,y)`
+/// survives.
+pub(crate) fn uma_from_zero(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
+    let m = b.alloc_bit();
+    b.hmr(w, m);
+    b.cz_if(x, y, m);
+    b.cx(x, y);
+}
+
+/// inv-MAJ specialized for a `w` operand bit that is provably |0> at entry (M023).
+///
+/// Mirror of `uma_from_zero` for the subtract chain: the plain
+/// `inv_maj(x, y, w) = ccx(x,y,w); cx(w,x); cx(w,y)` uncomputes `w = AND(x, y)`; both
+/// trailing CXs are no-ops once `w` is cleared, so the whole gate reduces to the measured
+/// AND-uncompute.
+pub(crate) fn inv_maj_from_zero(b: &mut B, x: QubitId, y: QubitId, w: QubitId) {
+    let m = b.alloc_bit();
+    b.hmr(w, m);
+    b.cz_if(x, y, m);
+}
+
+/// `cuccaro_add` variant that routes the UMA uncompute of every provably-|0> operand bit
+/// (`zero[i] == true`) through `uma_from_zero`. With an all-false mask this is byte-identical
+/// to `cuccaro_add`.
+pub(crate) fn cuccaro_add_from_zero(
+    b: &mut B,
+    a: &[QubitId],
+    acc: &[QubitId],
+    c_in: QubitId,
+    zero: &[bool],
+) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    assert_eq!(n, zero.len());
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        b.cx(c_in, acc[0]);
+        b.cx(a[0], acc[0]);
+        return;
+    }
+
+    maj(b, c_in, acc[0], a[0]);
+    for i in 1..n - 1 {
+        maj(b, a[i - 1], acc[i], a[i]);
+    }
+
+    b.cx(a[n - 2], acc[n - 1]);
+    b.cx(a[n - 1], acc[n - 1]);
+
+    for i in (1..n - 1).rev() {
+        if zero[i] {
+            uma_from_zero(b, a[i - 1], acc[i], a[i]);
+        } else {
+            uma(b, a[i - 1], acc[i], a[i]);
+        }
+    }
+    if zero[0] {
+        uma_from_zero(b, c_in, acc[0], a[0]);
+    } else {
+        uma(b, c_in, acc[0], a[0]);
+    }
+}
+
+/// `cuccaro_sub` variant that routes the inv-MAJ uncompute of every provably-|0> operand bit
+/// (`zero[i] == true`) through `inv_maj_from_zero`. With an all-false mask this is
+/// byte-identical to `cuccaro_sub`.
+pub(crate) fn cuccaro_sub_from_zero(
+    b: &mut B,
+    a: &[QubitId],
+    acc: &[QubitId],
+    c_in: QubitId,
+    zero: &[bool],
+) {
+    let n = a.len();
+    assert_eq!(n, acc.len());
+    assert_eq!(n, zero.len());
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        b.cx(a[0], acc[0]);
+        b.cx(c_in, acc[0]);
+        return;
+    }
+
+    inv_uma(b, c_in, acc[0], a[0]);
+    for i in 1..n - 1 {
+        inv_uma(b, a[i - 1], acc[i], a[i]);
+    }
+
+    b.cx(a[n - 1], acc[n - 1]);
+    b.cx(a[n - 2], acc[n - 1]);
+
+    for i in (1..n - 1).rev() {
+        if zero[i] {
+            inv_maj_from_zero(b, a[i - 1], acc[i], a[i]);
+        } else {
+            inv_maj(b, a[i - 1], acc[i], a[i]);
+        }
+    }
+    if zero[0] {
+        inv_maj_from_zero(b, c_in, acc[0], a[0]);
+    } else {
+        inv_maj(b, c_in, acc[0], a[0]);
+    }
+}
+
 pub(crate) fn cuccaro_add(b: &mut B, a: &[QubitId], acc: &[QubitId], c_in: QubitId) {
     let n = a.len();
     assert_eq!(n, acc.len());

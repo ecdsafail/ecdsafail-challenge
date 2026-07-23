@@ -226,6 +226,26 @@ fn apply_merge25(circ: &mut B, w: &[&QubitId], off: u8, reverse: bool) {
     let n = MERGE25_OPS.len();
     for step in 0..n {
         let i = if reverse { n - 1 - step } else { step };
+        // E208: ops 18..=26 form one 5-control Toffoli w12 ^= AND(w8,w9,w10,w13,w14),
+        // 9 Toffoli-class gates (2 clean anc). Replace with mcx_clean_k: 7 gates, 3 clean anc.
+        // 5-ctrl Toffoli is an involution => same call for forward and reverse.
+        if i == 18 {
+            super::mcx::mcx_clean_k(
+                circ,
+                &[
+                    w[(8 - off) as usize],
+                    w[(9 - off) as usize],
+                    w[(10 - off) as usize],
+                    w[(13 - off) as usize],
+                    w[(14 - off) as usize],
+                ],
+                w[(12 - off) as usize],
+            );
+            continue;
+        }
+        if (19..=26).contains(&i) {
+            continue;
+        }
         let op = MERGE25_OPS[i];
         if clear.contains(&i) {
             clear_and(
