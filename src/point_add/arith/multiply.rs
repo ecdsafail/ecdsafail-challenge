@@ -1929,8 +1929,17 @@ pub(crate) fn square_addsub_stage1(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     b.free(zero_ctrl);
 }
 
+/// M023: when `TLM_SQUARE_FROM_ZERO=1`, specialize the provably-|0> operand bits of the
+/// `square_corr_forward`/`inverse` correction adders to the measured (`hmr`+`cz_if`)
+/// AND-uncompute, removing one CCX per zero operand bit, bit-exactly. Read once and cached.
+fn square_from_zero_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TLM_SQUARE_FROM_ZERO").ok().as_deref() == Some("1"))
+}
+
 fn square_corr_forward(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     let n = x.len();
+    let fz = square_from_zero_enabled();
 
     let zeros = b.alloc_qubits(n);
     let mut a2d: Vec<QubitId> = Vec::with_capacity(2 * n);
@@ -1939,7 +1948,13 @@ fn square_corr_forward(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
         a2d.push(x[i]);
     }
     let cin = b.alloc_qubit();
-    cuccaro_add(b, &a2d, prod, cin);
+    if fz {
+        // a2d = [zeros[0], x[0], zeros[1], x[1], ...] -> even indices are |0>.
+        let mask: Vec<bool> = (0..2 * n).map(|j| j % 2 == 0).collect();
+        cuccaro_add_from_zero(b, &a2d, prod, cin, &mask);
+    } else {
+        cuccaro_add(b, &a2d, prod, cin);
+    }
     b.free(cin);
     b.free_vec(&zeros);
 
@@ -1947,7 +1962,13 @@ fn square_corr_forward(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     let mut xext = x.to_vec();
     xext.extend_from_slice(&pad);
     let cinx = b.alloc_qubit();
-    cuccaro_sub(b, &xext, prod, cinx);
+    if fz {
+        // xext = x || pad[n] -> the high half (indices >= n) is |0>.
+        let mask: Vec<bool> = (0..2 * n).map(|j| j >= n).collect();
+        cuccaro_sub_from_zero(b, &xext, prod, cinx, &mask);
+    } else {
+        cuccaro_sub(b, &xext, prod, cinx);
+    }
     b.free(cinx);
     b.free_vec(&pad);
 
@@ -1957,7 +1978,13 @@ fn square_corr_forward(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     let high: Vec<QubitId> = prod[n..2 * n].to_vec();
     let cinl = b.alloc_qubit();
     b.x(cinl);
-    cuccaro_add(b, &a, &high, cinl);
+    if fz {
+        // a = x[0..n-1] || p1 -> only the top bit is |0> (no UMA there; 0 savings, harmless).
+        let mask: Vec<bool> = (0..n).map(|j| j == n - 1).collect();
+        cuccaro_add_from_zero(b, &a, &high, cinl, &mask);
+    } else {
+        cuccaro_add(b, &a, &high, cinl);
+    }
     b.x(cinl);
     b.free(cinl);
     b.free(p1);
@@ -1967,6 +1994,7 @@ fn square_corr_forward(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
 
 fn square_corr_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     let n = x.len();
+    let fz = square_from_zero_enabled();
 
     b.x(prod[2 * n - 1]);
 
@@ -1976,7 +2004,13 @@ fn square_corr_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     let high: Vec<QubitId> = prod[n..2 * n].to_vec();
     let cinl = b.alloc_qubit();
     b.x(cinl);
-    cuccaro_sub(b, &a, &high, cinl);
+    if fz {
+        // a = x[0..n-1] || p1 -> only the top bit is |0> (no inv-MAJ there; 0 savings).
+        let mask: Vec<bool> = (0..n).map(|j| j == n - 1).collect();
+        cuccaro_sub_from_zero(b, &a, &high, cinl, &mask);
+    } else {
+        cuccaro_sub(b, &a, &high, cinl);
+    }
     b.x(cinl);
     b.free(cinl);
     b.free(p1);
@@ -1985,7 +2019,13 @@ fn square_corr_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
     let mut xext = x.to_vec();
     xext.extend_from_slice(&pad);
     let cinx = b.alloc_qubit();
-    cuccaro_add(b, &xext, prod, cinx);
+    if fz {
+        // xext = x || pad[n] -> the high half (indices >= n) is |0>.
+        let mask: Vec<bool> = (0..2 * n).map(|j| j >= n).collect();
+        cuccaro_add_from_zero(b, &xext, prod, cinx, &mask);
+    } else {
+        cuccaro_add(b, &xext, prod, cinx);
+    }
     b.free(cinx);
     b.free_vec(&pad);
 
@@ -1996,7 +2036,13 @@ fn square_corr_inverse(b: &mut B, x: &[QubitId], prod: &[QubitId]) {
         a2d.push(x[i]);
     }
     let cin = b.alloc_qubit();
-    cuccaro_sub(b, &a2d, prod, cin);
+    if fz {
+        // a2d = [zeros[0], x[0], zeros[1], x[1], ...] -> even indices are |0>.
+        let mask: Vec<bool> = (0..2 * n).map(|j| j % 2 == 0).collect();
+        cuccaro_sub_from_zero(b, &a2d, prod, cin, &mask);
+    } else {
+        cuccaro_sub(b, &a2d, prod, cin);
+    }
     b.free(cin);
     b.free_vec(&zeros);
 }
