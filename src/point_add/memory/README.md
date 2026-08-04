@@ -11,8 +11,10 @@ re-entry commands. These notes live under `src/point_add` so they travel with su
 | `04-traps.md` | four ways an env knob silently no-ops, positional addressing, validation gates |
 | `05-qubit-reduction.md` | the measured qubit programme, including the exchange-rate trap |
 | `06-research-status.md` | latest research handoff: certified baseline, scoped results, counterexamples, unresolved work, re-entry conditions |
+| `07-syntactic-certification.md` | three closed routes to a stream-agnostic dead-gate certificate, each with a passing control; why the 46,286 never-firing gates need a semantic argument |
 | `repro/` | compact tested programs retained to reproduce or extend the durable claims |
 | [`repro/world_model.py`](repro/world_model.py) | executable evidence, invalidation, history-replay, and promotion-gate model |
+| [`repro/hotness.rs`](repro/hotness.rs) | per-gate charge/fire census; self-gating — aborts unless it reconstructs the scorer's own Toffoli total |
 
 The single most important operational fact: **a persistent-set reduction only pays if you lower `TLM_TARGET_Q` by the
 same amount**, because the vent pool expands to fill whatever you free. The second most important: **only a
